@@ -83,15 +83,36 @@ jobs:
 
             # 최신 이미지 풀 및 컨테이너 교체
             docker pull $IMAGE_PATH:${{ github.sha }}
+
+            docker network create icore-net || true
+
             docker stop icore-back || true
             docker rm icore-back || true
+
+            docker stop icore-scraper || true
+            docker rm icore-scraper || true
+
             docker run -d \
               --name icore-back \
               --restart unless-stopped \
+              --network icore-net \
               -p 8000:8000 \
               -e ENVIRONMENT=production \
               -e DATABASE_URL='${{ secrets.BACK_DATABASE_URL }}' \
               -e GCS_BUCKET='${{ secrets.GCS_BUCKET }}' \
               -e LANDING_CDN_BASE_URL='${{ secrets.LANDING_CDN_BASE_URL }}' \
-              -e SCRAPER_PRIVATE_API_BASE='${{ secrets.SCRAPER_PRIVATE_API_BASE }}' \
+              -e SCRAPER_PRIVATE_API_BASE='http://icore-scraper:8081' \
               $IMAGE_PATH:${{ github.sha }}
+
+            docker run -d \
+              --name icore-scraper \
+              --restart unless-stopped \
+              --network icore-net \
+              -p 8081:8081 \
+              -e ENVIRONMENT=production \
+              -e DATABASE_URL='${{ secrets.BACK_DATABASE_URL }}' \
+              -e GCS_BUCKET='${{ secrets.GCS_BUCKET }}' \
+              -e LANDING_CDN_BASE_URL='${{ secrets.LANDING_CDN_BASE_URL }}' \
+              -e SCRAPER_PRIVATE_API_BASE='http://icore-scraper:8081' \
+              $IMAGE_PATH:${{ github.sha }} \
+              uvicorn main:app --host 0.0.0.0 --port 8081
