@@ -3,14 +3,7 @@ name: back-ci-cd
 on:
   push:
     branches:
-      - main
-    paths:
-      - "**"
-  pull_request:
-    branches:
-      - main
-    paths:
-      - "**"
+      - back
 
 env:
   PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
