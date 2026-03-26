@@ -9,7 +9,7 @@ def create_static_deployment(request: DeployRequest) -> DeployResponse:
     deployment_id = str(uuid4())
     landing_page_id = str(uuid4())
     target_path = (
-        f"gs://{settings.gcs_bucket}/landings/{request.business_topic}/{request.slug}/index.html"
+        f"gs://{settings.client_web_bucket}/landings/{request.business_topic}/{request.slug}/index.html"
     )
 
     if request.custom_domain:
@@ -17,7 +17,7 @@ def create_static_deployment(request: DeployRequest) -> DeployResponse:
     elif settings.landing_cdn_base_url:
         public_url = f"{settings.landing_cdn_base_url.rstrip('/')}/landings/{request.business_topic}/{request.slug}/"
     else:
-        public_url = f"https://storage.googleapis.com/{settings.gcs_bucket}/landings/{request.business_topic}/{request.slug}/"
+        public_url = f"https://storage.googleapis.com/{settings.client_web_bucket}/landings/{request.business_topic}/{request.slug}/"
 
     timestamp = datetime.now(timezone.utc).isoformat()
     message = (

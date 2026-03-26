@@ -26,7 +26,7 @@ def _build_public_url(business_topic: str, slug: str, custom_domain: str | None)
         base = settings.landing_cdn_base_url.rstrip("/")
         return f"{base}/landings/{clean_topic}/{slug}/"
 
-    return f"https://storage.googleapis.com/{settings.gcs_bucket}/landings/{clean_topic}/{slug}/"
+    return f"https://storage.googleapis.com/{settings.client_web_bucket}/landings/{clean_topic}/{slug}/"
 
 
 def _to_landing_page_schema(model: LandingPageModel) -> LandingPage:
@@ -100,7 +100,7 @@ def create_landing_page(db: Session, request: DeployRequest) -> DeployResponse:
     db.commit()
 
     deployment_id = str(uuid4())
-    target_path = f"gs://{settings.gcs_bucket}/landings/{clean_topic}/{request.slug}/index.html"
+    target_path = f"gs://{settings.client_web_bucket}/landings/{clean_topic}/{request.slug}/index.html"
 
     return DeployResponse(
         deployment_id=deployment_id,
