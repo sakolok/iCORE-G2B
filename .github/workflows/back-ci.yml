@@ -98,13 +98,13 @@ jobs:
               --network icore-net \
               -p 8000:8000 \
               -e ENVIRONMENT=production \
-              -e DATABASE_URL='${{ secrets.BACK_DATABASE_URL }}' \
-              -e BUCKET_ADMIN_WEB='${{ secrets.BUCKET_ADMIN_WEB }}' \
-              -e BUCKET_CLIENT_WEB='${{ secrets.BUCKET_CLIENT_WEB }}' \
-              -e BUCKET_MEDIA_ASSETS='${{ secrets.BUCKET_MEDIA_ASSETS }}' \
-              -e BUCKET_SITE_TEMPLATES='${{ secrets.BUCKET_SITE_TEMPLATES }}' \
-              -e LANDING_CDN_BASE_URL='${{ secrets.LANDING_CDN_BASE_URL }}' \
-              -e SCRAPER_PRIVATE_API_BASE='http://icore-scraper:8081' \
+              -e DATABASE_URL="${{ secrets.BACK_DATABASE_URL }}" \
+              -e BUCKET_ADMIN_WEB="${{ secrets.BUCKET_ADMIN_WEB }}" \
+              -e BUCKET_CLIENT_WEB="${{ secrets.BUCKET_CLIENT_WEB }}" \
+              -e BUCKET_MEDIA_ASSETS="${{ secrets.BUCKET_MEDIA_ASSETS }}" \
+              -e BUCKET_SITE_TEMPLATES="${{ secrets.BUCKET_SITE_TEMPLATES }}" \
+              -e LANDING_CDN_BASE_URL="${{ secrets.LANDING_CDN_BASE_URL }}" \
+              -e SCRAPER_PRIVATE_API_BASE="http://icore-scraper:8081" \
               $IMAGE_PATH:${{ github.sha }}
 
             docker run -d \
@@ -113,12 +113,12 @@ jobs:
               --network icore-net \
               -p 8081:8081 \
               -e ENVIRONMENT=production \
-              -e DATABASE_URL='${{ secrets.BACK_DATABASE_URL }}' \
-              -e BUCKET_ADMIN_WEB='${{ secrets.BUCKET_ADMIN_WEB }}' \
-              -e BUCKET_CLIENT_WEB='${{ secrets.BUCKET_CLIENT_WEB }}' \
-              -e BUCKET_MEDIA_ASSETS='${{ secrets.BUCKET_MEDIA_ASSETS }}' \
-              -e BUCKET_SITE_TEMPLATES='${{ secrets.BUCKET_SITE_TEMPLATES }}' \
-              -e LANDING_CDN_BASE_URL='${{ secrets.LANDING_CDN_BASE_URL }}' \
-              -e SCRAPER_PRIVATE_API_BASE='http://icore-scraper:8081' \
+              -e DATABASE_URL="${{ secrets.BACK_DATABASE_URL }}" \
+              -e BUCKET_ADMIN_WEB="${{ secrets.BUCKET_ADMIN_WEB }}" \
+              -e BUCKET_CLIENT_WEB="${{ secrets.BUCKET_CLIENT_WEB }}" \
+              -e BUCKET_MEDIA_ASSETS="${{ secrets.BUCKET_MEDIA_ASSETS }}" \
+              -e BUCKET_SITE_TEMPLATES="${{ secrets.BUCKET_SITE_TEMPLATES }}" \
+              -e LANDING_CDN_BASE_URL="${{ secrets.LANDING_CDN_BASE_URL }}" \
+              -e SCRAPER_PRIVATE_API_BASE="http://icore-scraper:8081" \
               $IMAGE_PATH:${{ github.sha }} \
               uvicorn main:app --host 0.0.0.0 --port 8081
