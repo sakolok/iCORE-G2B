@@ -1,26 +1,38 @@
-from uuid import uuid4
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
 
-from fastapi import APIRouter
-
-from app.data.store import store
-from app.schemas import BusinessSite, CreateBusinessSiteRequest
+from app.data.database import get_db
+from app.schemas import LandingPage, UpdateLandingPageRequest
+from app.services.platform_service import (
+    delete_landing_page,
+    list_landing_pages,
+    update_landing_page,
+)
 
 router = APIRouter(prefix="/api/sites", tags=["site-manager"])
 
 
-@router.get("", response_model=list[BusinessSite])
-def list_business_sites() -> list[BusinessSite]:
-    return store.business_sites
+@router.get("", response_model=list[LandingPage])
+def list_business_sites(db: Session = Depends(get_db)) -> list[LandingPage]:
+    return list_landing_pages(db)
 
 
-@router.post("", response_model=BusinessSite)
-def create_business_site(request: CreateBusinessSiteRequest) -> BusinessSite:
-    site = BusinessSite(
-        id=str(uuid4()),
-        topic=request.topic,
-        name=request.name,
-        url=request.url,
-        status=request.status,
-    )
-    store.business_sites.append(site)
-    return site
+@router.put("/{landing_page_id}", response_model=LandingPage)
+def update_business_site(
+    landing_page_id: str,
+    request: UpdateLandingPageRequest,
+    db: Session = Depends(get_db),
+) -> LandingPage:
+    try:
+        return update_landing_page(db, landing_page_id, request)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.delete("/{landing_page_id}")
+def remove_business_site(landing_page_id: str, db: Session = Depends(get_db)) -> dict:
+    try:
+        delete_landing_page(db, landing_page_id)
+        return {"success": True}
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc

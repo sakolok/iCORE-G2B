@@ -1,31 +1,35 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+from sqlalchemy.orm import Session
 
-from app.data.store import store
+from app.data.database import get_db
 from app.schemas import ScraperConfig, TriggerScraperRequest, TriggerScraperResponse
-from app.services.scraper_proxy import (
-    build_scraper_config_payload,
-    build_scraper_trigger_response,
+from app.services.platform_service import (
+    create_scraper_task,
+    get_scraper_config,
+    upsert_scraper_config,
 )
 
 router = APIRouter(prefix="/api/scraper", tags=["scraper"])
 
 
 @router.get("/config", response_model=ScraperConfig)
-def get_scraper_config() -> ScraperConfig:
-    return store.scraper_config
+def fetch_scraper_config(db: Session = Depends(get_db)) -> ScraperConfig:
+    return get_scraper_config(db)
 
 
 @router.put("/config")
-def update_scraper_config(config: ScraperConfig) -> dict:
-    store.scraper_config = config
-    payload = build_scraper_config_payload(config)
+def update_scraper_config(config: ScraperConfig, db: Session = Depends(get_db)) -> dict:
+    saved_config = upsert_scraper_config(db, config)
     return {
         "success": True,
-        "message": "Scraper 설정이 저장되었고 Private Subnet API 전달용 payload가 생성되었습니다.",
-        "forward_payload": payload,
+        "message": "Scraper 설정이 저장되었습니다.",
+        "config": saved_config.model_dump(mode="json"),
     }
 
 
 @router.post("/trigger", response_model=TriggerScraperResponse)
-def trigger_scraper(request: TriggerScraperRequest) -> TriggerScraperResponse:
-    return build_scraper_trigger_response(request.reason)
+def trigger_scraper(
+    request: TriggerScraperRequest, db: Session = Depends(get_db)
+) -> TriggerScraperResponse:
+    config = get_scraper_config(db)
+    return create_scraper_task(config=config, reason=request.reason)

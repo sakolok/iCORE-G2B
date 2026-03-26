@@ -57,7 +57,7 @@ jobs:
 
   deploy-vm:
     needs: test-and-build
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/back'
     runs-on: ubuntu-latest
     steps:
       - name: Deploy on GCP VM via SSH
@@ -74,4 +74,9 @@ jobs:
               --name icore-back \
               --restart unless-stopped \
               -p 8000:8000 \
+              -e ENVIRONMENT=production \
+              -e DATABASE_URL='${{ secrets.BACK_DATABASE_URL }}' \
+              -e GCS_BUCKET='${{ secrets.GCS_BUCKET }}' \
+              -e LANDING_CDN_BASE_URL='${{ secrets.LANDING_CDN_BASE_URL }}' \
+              -e SCRAPER_PRIVATE_API_BASE='${{ secrets.SCRAPER_PRIVATE_API_BASE }}' \
               gcr.io/${{ secrets.GCP_PROJECT_ID }}/icore-back:${{ github.sha }}

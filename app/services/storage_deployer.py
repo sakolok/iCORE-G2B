@@ -7,12 +7,15 @@ from app.schemas import DeployRequest, DeployResponse
 
 def create_static_deployment(request: DeployRequest) -> DeployResponse:
     deployment_id = str(uuid4())
+    landing_page_id = str(uuid4())
     target_path = (
         f"gs://{settings.gcs_bucket}/landings/{request.business_topic}/{request.slug}/index.html"
     )
 
     if request.custom_domain:
         public_url = f"https://{request.custom_domain}"
+    elif settings.landing_cdn_base_url:
+        public_url = f"{settings.landing_cdn_base_url.rstrip('/')}/landings/{request.business_topic}/{request.slug}/"
     else:
         public_url = f"https://storage.googleapis.com/{settings.gcs_bucket}/landings/{request.business_topic}/{request.slug}/"
 
@@ -24,6 +27,7 @@ def create_static_deployment(request: DeployRequest) -> DeployResponse:
 
     return DeployResponse(
         deployment_id=deployment_id,
+        landing_page_id=landing_page_id,
         target_path=target_path,
         public_url=public_url,
         cdn_enabled=True,

@@ -1,7 +1,6 @@
 from datetime import time
-from uuid import uuid4
 
-from app.schemas import BusinessSite, LandingTemplate, ScraperConfig
+from app.schemas import LandingTemplate, ScraperConfig
 
 
 class InMemoryStore:
@@ -27,27 +26,14 @@ class InMemoryStore:
             ),
         ]
 
-        self.business_sites: list[BusinessSite] = [
-            BusinessSite(
-                id=str(uuid4()),
-                topic="Google 교육",
-                name="Vertex AI 실무 캠프",
-                url="https://example.com/google-vertex-camp",
-                status="active",
-            ),
-            BusinessSite(
-                id=str(uuid4()),
-                topic="AWS 교육",
-                name="클라우드 아키텍처 부트캠프",
-                url="https://example.com/aws-architecture-bootcamp",
-                status="active",
-            ),
-        ]
-
         self.scraper_config = ScraperConfig(
             enabled=True,
+            schedule_mode="daily",
             notify_time=time(hour=9, minute=0),
-            receiver_email="ops@icore.local",
+            interval_minutes=60,
+            dedup_mode="notice_id",
+            dedup_retention_hours=48,
+            receiver_emails=["admin@icore.local"],
             keywords=["클라우드", "AI", "교육"],
         )
 
