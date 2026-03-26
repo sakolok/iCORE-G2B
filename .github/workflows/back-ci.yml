@@ -1,16 +1,27 @@
-name: back-ci
+name: back-ci-cd
 
 on:
   push:
+    branches:
+      - main
     paths:
       - "**"
   pull_request:
+    branches:
+      - main
     paths:
       - "**"
+
+env:
+  PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  IMAGE_NAME: icore-back
 
 jobs:
   test-and-build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -28,5 +39,46 @@ jobs:
       - name: Validate FastAPI app import
         run: python -c "import main; print(main.app.title)"
 
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Configure Docker for GCR
+        run: gcloud auth configure-docker gcr.io --quiet
+
       - name: Build Docker image
-        run: docker build -t icore-back:ci .
+        run: |
+          docker build -t gcr.io/${PROJECT_ID}/${IMAGE_NAME}:${GITHUB_SHA} .
+          docker tag gcr.io/${PROJECT_ID}/${IMAGE_NAME}:${GITHUB_SHA} gcr.io/${PROJECT_ID}/${IMAGE_NAME}:latest
+
+      - name: Push Docker image to GCR
+        run: |
+          docker push gcr.io/${PROJECT_ID}/${IMAGE_NAME}:${GITHUB_SHA}
+          docker push gcr.io/${PROJECT_ID}/${IMAGE_NAME}:latest
+
+  deploy-vm:
+    needs: test-and-build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy on GCP VM via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.GCP_VM_HOST }}
+          username: ${{ secrets.GCP_VM_USER }}
+          key: ${{ secrets.GCP_VM_SSH_KEY }}
+          script: |
+            docker pull gcr.io/${{ secrets.GCP_PROJECT_ID }}/icore-back:${{ github.sha }}
+            docker stop icore-back || true
+            docker rm icore-back || true
+            docker run -d \
+              --name icore-back \
+              --restart unless-stopped \
+              -p 8000:8000 \
+              gcr.io/${{ secrets.GCP_PROJECT_ID }}/icore-back:${{ github.sha }}
