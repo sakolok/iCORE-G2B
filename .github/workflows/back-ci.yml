@@ -84,6 +84,8 @@ jobs:
             # 최신 이미지 풀 및 컨테이너 교체
             docker pull $IMAGE_PATH:${{ github.sha }}
 
+            set +H
+
             docker network create icore-net || true
 
             docker stop icore-back || true
