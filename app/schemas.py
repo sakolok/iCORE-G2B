@@ -11,6 +11,24 @@ class LandingTemplate(BaseModel):
     preview_style: str
 
 
+class LandingTemplateDetail(BaseModel):
+    id: str
+    name: str
+    description: str
+    preview_style: str
+    title: str
+    subtitle: str
+    body: str
+    cta_text: str
+    hero_image_url: Optional[str] = None
+    title_color: str = Field(default="#0f172a", pattern=r"^#[0-9a-fA-F]{6}$")
+    subtitle_color: str = Field(default="#2563eb", pattern=r"^#[0-9a-fA-F]{6}$")
+    body_color: str = Field(default="#334155", pattern=r"^#[0-9a-fA-F]{6}$")
+    cta_text_color: str = Field(default="#ffffff", pattern=r"^#[0-9a-fA-F]{6}$")
+    cta_bg_color: str = Field(default="#2563eb", pattern=r"^#[0-9a-fA-F]{6}$")
+    background_color: str = Field(default="#f8fafc", pattern=r"^#[0-9a-fA-F]{6}$")
+
+
 class LandingContent(BaseModel):
     title: str = Field(..., min_length=1, max_length=120)
     subtitle: str = Field(..., min_length=1, max_length=240)

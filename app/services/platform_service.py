@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -11,6 +12,7 @@ from app.schemas import (
     DeployResponse,
     LandingPage,
     LandingTemplate,
+    LandingTemplateDetail,
     ScraperConfig,
     TriggerScraperResponse,
     UpdateLandingPageRequest,
@@ -43,7 +45,27 @@ def _to_landing_page_schema(model: LandingPageModel) -> LandingPage:
     )
 
 
-def list_templates(db: Session) -> list[LandingTemplate]:
+def _load_template_payload_from_gcs(template_id: str) -> dict:
+    try:
+        from google.cloud import storage
+    except Exception as error:
+        raise ValueError("google-cloud-storage 라이브러리를 불러오지 못했습니다.") from error
+
+    bucket_name = settings.site_templates_bucket
+    object_path = f"templates/{template_id}.json"
+
+    try:
+        blob = storage.Client().bucket(bucket_name).blob(object_path)
+        if not blob.exists():
+            raise ValueError(f"GCS 템플릿 객체를 찾을 수 없습니다: gs://{bucket_name}/{object_path}")
+        return json.loads(blob.download_as_text(encoding="utf-8"))
+    except ValueError:
+        raise
+    except Exception as error:
+        raise ValueError("GCS 템플릿을 읽는 중 오류가 발생했습니다.") from error
+
+
+def _list_templates_from_db(db: Session) -> list[LandingTemplate]:
     rows = db.execute(select(LandingTemplateModel).order_by(LandingTemplateModel.name.asc())).scalars().all()
     return [
         LandingTemplate(
@@ -54,6 +76,39 @@ def list_templates(db: Session) -> list[LandingTemplate]:
         )
         for row in rows
     ]
+
+
+def list_templates(db: Session) -> list[LandingTemplate]:
+    return _list_templates_from_db(db)
+
+
+def get_template_detail(db: Session, template_id: str) -> LandingTemplateDetail:
+    row = (
+        db.execute(select(LandingTemplateModel).where(LandingTemplateModel.id == template_id))
+        .scalar_one_or_none()
+    )
+    if row is None:
+        raise ValueError("존재하지 않는 템플릿입니다.")
+
+    payload = _load_template_payload_from_gcs(template_id)
+
+    return LandingTemplateDetail(
+        id=row.id,
+        name=row.name,
+        description=row.description,
+        preview_style=row.preview_style,
+        title=payload.get("title") or "",
+        subtitle=payload.get("subtitle") or "",
+        body=payload.get("body") or "",
+        cta_text=payload.get("cta_text") or "",
+        hero_image_url=payload.get("hero_image_url"),
+        title_color=payload.get("title_color") or "#0f172a",
+        subtitle_color=payload.get("subtitle_color") or "#2563eb",
+        body_color=payload.get("body_color") or "#334155",
+        cta_text_color=payload.get("cta_text_color") or "#ffffff",
+        cta_bg_color=payload.get("cta_bg_color") or "#2563eb",
+        background_color=payload.get("background_color") or "#f8fafc",
+    )
 
 
 def create_landing_page(db: Session, request: DeployRequest) -> DeployResponse:
