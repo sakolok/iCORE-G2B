@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.data.database import get_db
 from app.schemas import ScraperConfig, TriggerScraperRequest, TriggerScraperResponse
+from app.services.auth_service import require_auth
 from app.services.platform_service import (
     create_scraper_task,
     get_scraper_config,
@@ -13,12 +14,18 @@ router = APIRouter(prefix="/api/scraper", tags=["scraper"])
 
 
 @router.get("/config", response_model=ScraperConfig)
-def fetch_scraper_config(db: Session = Depends(get_db)) -> ScraperConfig:
+def fetch_scraper_config(
+    _: dict = Depends(require_auth), db: Session = Depends(get_db)
+) -> ScraperConfig:
     return get_scraper_config(db)
 
 
 @router.put("/config")
-def update_scraper_config(config: ScraperConfig, db: Session = Depends(get_db)) -> dict:
+def update_scraper_config(
+    config: ScraperConfig,
+    _: dict = Depends(require_auth),
+    db: Session = Depends(get_db),
+) -> dict:
     saved_config = upsert_scraper_config(db, config)
     return {
         "success": True,
@@ -29,7 +36,9 @@ def update_scraper_config(config: ScraperConfig, db: Session = Depends(get_db)) 
 
 @router.post("/trigger", response_model=TriggerScraperResponse)
 def trigger_scraper(
-    request: TriggerScraperRequest, db: Session = Depends(get_db)
+    request: TriggerScraperRequest,
+    _: dict = Depends(require_auth),
+    db: Session = Depends(get_db),
 ) -> TriggerScraperResponse:
     config = get_scraper_config(db)
     return create_scraper_task(config=config, reason=request.reason)

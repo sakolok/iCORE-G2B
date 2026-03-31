@@ -24,9 +24,15 @@ class LandingPageModel(Base):
     template_id: Mapped[str] = mapped_column(String(80), nullable=False)
     business_topic: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
     business_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    major_categories: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    minor_categories: Mapped[str] = mapped_column(Text, nullable=False, default="")
     slug: Mapped[str] = mapped_column(String(120), nullable=False, unique=True, index=True)
     url: Mapped[str] = mapped_column(String(500), nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
+    retention_days: Mapped[int] = mapped_column(Integer, nullable=False, default=30)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    is_visible: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     custom_domain: Mapped[str | None] = mapped_column(String(240), nullable=True)
     title: Mapped[str] = mapped_column(String(120), nullable=False)
     subtitle: Mapped[str] = mapped_column(String(240), nullable=False)
@@ -61,6 +67,26 @@ class ScraperConfigModel(Base):
     dedup_retention_hours: Mapped[int] = mapped_column(Integer, nullable=False, default=48)
     receiver_emails: Mapped[str] = mapped_column(Text, nullable=False)
     keywords: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
+class UserModel(Base):
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    username: Mapped[str] = mapped_column(String(100), unique=True, nullable=False, index=True)
+    password_salt: Mapped[str] = mapped_column(String(64), nullable=False)
+    password_hash: Mapped[str] = mapped_column(String(128), nullable=False)
+    role: Mapped[str] = mapped_column(String(30), nullable=False, default="admin")
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc)
+    )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

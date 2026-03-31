@@ -36,6 +36,9 @@ class LandingContent(BaseModel):
     cta_text: str = Field(..., min_length=1, max_length=60)
     cta_url: str = Field(..., min_length=1, max_length=240)
     hero_image_url: Optional[str] = Field(default=None, max_length=500)
+    hero_image_file_name: Optional[str] = Field(default=None, max_length=200)
+    hero_image_mime_type: Optional[str] = Field(default=None, max_length=100)
+    hero_image_base64: Optional[str] = None
     primary_color: str = Field(default="#2563eb", pattern=r"^#[0-9a-fA-F]{6}$")
     secondary_color: str = Field(default="#0f172a", pattern=r"^#[0-9a-fA-F]{6}$")
     background_color: str = Field(default="#f8fafc", pattern=r"^#[0-9a-fA-F]{6}$")
@@ -45,8 +48,11 @@ class DeployRequest(BaseModel):
     template_id: str
     business_topic: str = Field(..., min_length=1, max_length=120)
     business_name: str = Field(..., min_length=1, max_length=120)
+    major_categories: list[str] = Field(default_factory=list)
+    minor_categories: list[str] = Field(default_factory=list)
     slug: str = Field(..., pattern=r"^[a-z0-9\-]+$")
     custom_domain: Optional[str] = None
+    retention_days: int = Field(default=30, ge=1, le=3650)
     content: LandingContent
 
 
@@ -64,9 +70,14 @@ class LandingPage(BaseModel):
     template_id: str
     business_topic: str
     business_name: str
+    major_categories: list[str]
+    minor_categories: list[str]
     slug: str
     url: str
     status: Literal["active", "paused", "archived"]
+    retention_days: int
+    expires_at: datetime
+    is_visible: bool
     created_at: datetime
     updated_at: datetime
 
@@ -74,7 +85,21 @@ class LandingPage(BaseModel):
 class UpdateLandingPageRequest(BaseModel):
     business_topic: str = Field(..., min_length=1, max_length=120)
     business_name: str = Field(..., min_length=1, max_length=120)
+    major_categories: list[str] = Field(default_factory=list)
+    minor_categories: list[str] = Field(default_factory=list)
     status: Literal["active", "paused", "archived"]
+
+
+class LoginRequest(BaseModel):
+    username: str = Field(..., min_length=1, max_length=100)
+    password: str = Field(..., min_length=1, max_length=200)
+
+
+class LoginResponse(BaseModel):
+    access_token: str
+    token_type: str = "Bearer"
+    username: str
+    role: str
 
 
 class ScraperConfig(BaseModel):

@@ -21,6 +21,9 @@ class Settings(BaseModel):
         "SCRAPER_PRIVATE_API_BASE", "http://scraper.internal"
     )
     default_receiver_email: str = os.getenv("DEFAULT_RECEIVER_EMAIL", "admin@icore.local")
+    auth_secret_key: str = os.getenv("AUTH_SECRET_KEY", "change-me-in-production")
+    default_admin_username: str = os.getenv("DEFAULT_ADMIN_USERNAME", "admin")
+    default_admin_password: str = os.getenv("DEFAULT_ADMIN_PASSWORD", "icore1234!")
 
 
 settings = Settings()

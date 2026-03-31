@@ -4,7 +4,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.data.models import LandingTemplateModel, ScraperConfigModel
+from app.data.models import LandingTemplateModel, ScraperConfigModel, UserModel
+from app.services.auth_service import hash_password
 
 DEFAULT_TEMPLATES = [
     LandingTemplateModel(
@@ -48,6 +49,22 @@ def seed_defaults(db: Session) -> None:
                 dedup_retention_hours=48,
                 receiver_emails=settings.default_receiver_email,
                 keywords="클라우드,AI,교육",
+            )
+        )
+
+    admin_exists = (
+        db.execute(select(UserModel.id).where(UserModel.username == settings.default_admin_username))
+        .scalar_one_or_none()
+    )
+    if admin_exists is None:
+        salt, password_hash = hash_password(settings.default_admin_password)
+        db.add(
+            UserModel(
+                username=settings.default_admin_username,
+                password_salt=salt,
+                password_hash=password_hash,
+                role="admin",
+                is_active=True,
             )
         )
 
