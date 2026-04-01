@@ -33,3 +33,7 @@ def startup() -> None:
     Base.metadata.create_all(bind=engine)
     with SessionLocal() as db:
         seed_defaults(db)
+
+@app.get("/")
+def read_root():
+    return {"status": "ok", "message": "Icore API is running"}
