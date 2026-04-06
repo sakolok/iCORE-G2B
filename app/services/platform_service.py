@@ -62,70 +62,36 @@ def _load_template_payload_from_gcs(template_id: str) -> dict:
         raise ValueError("google-cloud-storage 라이브러리를 불러오지 못했습니다.") from error
 
     bucket_name = settings.site_templates_bucket
-    object_path = f"templates/{template_id}.json"
+    alias_object_path_by_template = {
+        "clean-campaign": "templates/template1-clean-campaign.json",
+        "dark-product": "templates/template2-dark-product.json",
+        "event-highlight": "templates/template3-event-highlight.json",
+    }
+    candidate_paths = [
+        f"templates/{template_id}.json",
+        alias_object_path_by_template.get(template_id),
+    ]
+    candidate_paths = [path for path in candidate_paths if path]
 
     try:
-        blob = storage.Client().bucket(bucket_name).blob(object_path)
-        if not blob.exists():
-            raise ValueError(f"GCS 템플릿 객체를 찾을 수 없습니다: gs://{bucket_name}/{object_path}")
-        return json.loads(blob.download_as_text(encoding="utf-8"))
+        bucket = storage.Client().bucket(bucket_name)
+        for object_path in candidate_paths:
+            blob = bucket.blob(object_path)
+            if blob.exists():
+                return json.loads(blob.download_as_text(encoding="utf-8"))
+
+        path_message = ", ".join(
+            [f"gs://{bucket_name}/{path}" for path in candidate_paths]
+        )
+        raise ValueError(f"GCS 템플릿 객체를 찾을 수 없습니다: {path_message}")
     except ValueError:
         raise
     except Exception as error:
-                raise ValueError("GCS 템플릿을 읽는 중 오류가 발생했습니다.") from error
-
-
-def _fallback_template_payload(template_id: str) -> dict:
-        # GCS 템플릿이 아직 준비되지 않았을 때 즉시 사용할 기본 템플릿
-        base = {
-                "clean-campaign": {
-                        "title": "울산의 미래를 코딩하다",
-                        "subtitle": "빅테크 AI 인재 양성 프로젝트",
-                        "body": "울산 데이터센터 시대를 이끌 실무형 AI/클라우드 교육 과정에 참여하세요.",
-                        "cta_text": "지금 신청하기",
-                        "hero_image_url": "",
-                        "title_color": "#f8fafc",
-                        "subtitle_color": "#8b5cf6",
-                        "body_color": "#cbd5e1",
-                        "cta_text_color": "#ffffff",
-                        "cta_bg_color": "#6366f1",
-                        "background_color": "#080a2c",
-                },
-                "dark-product": {
-                        "title": "왜 울산 AI 교육인가?",
-                        "subtitle": "현업 중심 커리큘럼과 프로젝트 기반 성장",
-                        "body": "국내 최고 전문가와 함께 실무 능력을 빠르게 끌어올리는 맞춤형 교육 플랫폼입니다.",
-                        "cta_text": "학습 로드맵 보기",
-                        "hero_image_url": "",
-                        "title_color": "#f8fafc",
-                        "subtitle_color": "#a78bfa",
-                        "body_color": "#94a3b8",
-                        "cta_text_color": "#ffffff",
-                        "cta_bg_color": "#7c3aed",
-                        "background_color": "#05051f",
-                },
-                "event-highlight": {
-                        "title": "AI가 설계하는 나만의 학습 로드맵",
-                        "subtitle": "당신의 성장을 가속할 전문 과정",
-                        "body": "당신의 목표를 입력하면 데이터/클라우드/생성형 AI까지 맞춤 학습 경로를 제안합니다.",
-                        "cta_text": "학습 나침반 찾기",
-                        "hero_image_url": "",
-                        "title_color": "#f8fafc",
-                        "subtitle_color": "#a78bfa",
-                        "body_color": "#94a3b8",
-                        "cta_text_color": "#ffffff",
-                        "cta_bg_color": "#8b5cf6",
-                        "background_color": "#070724",
-                },
-        }
-        return base.get(template_id, base["clean-campaign"])
+        raise ValueError("GCS 템플릿을 읽는 중 오류가 발생했습니다.") from error
 
 
 def _load_template_payload(template_id: str) -> dict:
-        try:
-                return _load_template_payload_from_gcs(template_id)
-        except ValueError:
-                return _fallback_template_payload(template_id)
+    return _load_template_payload_from_gcs(template_id)
 
 
 def _guess_ext(mime_type: str | None, file_name: str | None) -> str:
@@ -188,113 +154,205 @@ def _upload_hero_image_if_needed(request: DeployRequest, clean_topic: str) -> st
         return f"https://storage.googleapis.com/{settings.client_web_bucket}/{object_path}"
 
 
-def _render_landing_html(request: DeployRequest, hero_image_url: str | None, expires_at: datetime) -> str:
-        title = escape(request.content.title)
-        subtitle = escape(request.content.subtitle)
-        body = escape(request.content.body).replace("\n", "<br>")
-        cta_text = escape(request.content.cta_text)
-        cta_url = escape(request.content.cta_url)
-        major = ", ".join(request.major_categories) if request.major_categories else "미분류"
-        minor = ", ".join(request.minor_categories) if request.minor_categories else "미분류"
-        expires_kst = expires_at.astimezone(timezone(timedelta(hours=9))).strftime("%Y-%m-%d %H:%M")
-        bg = request.content.background_color
-        primary = request.content.primary_color
-        secondary = request.content.secondary_color
+def _build_landing_context(
+    request: DeployRequest, hero_image_url: str | None, expires_at: datetime
+) -> dict:
+    return {
+        "title": escape(request.content.title),
+        "subtitle": escape(request.content.subtitle),
+        "body": escape(request.content.body).replace("\n", "<br>"),
+        "cta_text": escape(request.content.cta_text),
+        "cta_url": escape(request.content.cta_url),
+        "business_name": escape(request.business_name),
+        "major": escape(", ".join(request.major_categories) if request.major_categories else "미분류"),
+        "minor": escape(", ".join(request.minor_categories) if request.minor_categories else "미분류"),
+        "expires_kst": expires_at.astimezone(timezone(timedelta(hours=9))).strftime(
+            "%Y-%m-%d %H:%M"
+        ),
+        "bg": request.content.background_color,
+        "primary": request.content.primary_color,
+        "secondary": request.content.secondary_color,
+        "hero_html": (
+            f'<img class="hero-image" src="{escape(hero_image_url)}" alt="landing hero" loading="lazy" />'
+            if hero_image_url
+            else ""
+        ),
+    }
 
-        hero_html = ""
-        if hero_image_url:
-                hero_html = (
-                        f'<img class="hero-image" src="{escape(hero_image_url)}" alt="landing hero" loading="lazy" />'
-                )
 
-        return f"""<!doctype html>
+def _render_clean_campaign(ctx: dict) -> str:
+    return f"""<!doctype html>
 <html lang=\"ko\">
 <head>
     <meta charset=\"UTF-8\" />
     <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />
-    <title>{title}</title>
+    <title>{ctx["title"]}</title>
     <style>
-        :root {{
-            --bg: {bg};
-            --primary: {primary};
-            --secondary: {secondary};
-            --text: #f8fafc;
-            --muted: #cbd5e1;
-        }}
+        :root {{ --bg: {ctx["bg"]}; --primary: {ctx["primary"]}; --secondary: {ctx["secondary"]}; }}
+        * {{ box-sizing: border-box; }}
+        body {{ margin: 0; font-family: "Noto Sans KR", sans-serif; background: #f4f7fb; color: #111827; }}
+        .shell {{ max-width: 1140px; margin: 0 auto; padding: 28px 20px 40px; }}
+        .mast {{ background: #fff; border-radius: 24px; padding: 26px; border: 1px solid #e5e7eb; }}
+        .brand {{ font-size: 30px; font-weight: 800; }}
+        .hero {{ margin-top: 24px; display: grid; grid-template-columns: 1.15fr 0.85fr; gap: 24px; align-items: center; }}
+        h1 {{ margin: 0 0 8px; font-size: clamp(32px, 5vw, 56px); line-height: 1.08; }}
+        h2 {{ margin: 0 0 14px; font-size: clamp(22px, 3.2vw, 34px); color: var(--secondary); }}
+        p {{ margin: 0 0 20px; line-height: 1.7; color: #374151; }}
+        .cta {{ display: inline-block; text-decoration: none; background: var(--primary); color: #fff; font-weight: 700; padding: 12px 22px; border-radius: 12px; }}
+        .meta {{ margin-top: 18px; font-size: 13px; color: #6b7280; }}
+        .hero-image {{ width: 100%; border-radius: 16px; border: 1px solid #dbe1ea; box-shadow: 0 20px 50px rgba(2, 6, 23, 0.15); }}
+        @media (max-width: 920px) {{ .hero {{ grid-template-columns: 1fr; }} .brand {{ font-size: 24px; }} }}
+    </style>
+</head>
+<body>
+    <main class=\"shell\">
+        <section class=\"mast\">
+            <div class=\"brand\">{ctx["business_name"]}</div>
+            <div class=\"hero\">
+                <div>
+                    <h1>{ctx["title"]}</h1>
+                    <h2>{ctx["subtitle"]}</h2>
+                    <p>{ctx["body"]}</p>
+                    <a class=\"cta\" href=\"{ctx["cta_url"]}\">{ctx["cta_text"]}</a>
+                    <div class=\"meta\">대분류: {ctx["major"]} | 소분류: {ctx["minor"]} | 접근 만료 예정: {ctx["expires_kst"]} (KST)</div>
+                </div>
+                <div>{ctx["hero_html"]}</div>
+            </div>
+        </section>
+    </main>
+</body>
+</html>
+"""
+
+
+def _render_dark_product(ctx: dict) -> str:
+    return f"""<!doctype html>
+<html lang=\"ko\">
+<head>
+    <meta charset=\"UTF-8\" />
+    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />
+    <title>{ctx["title"]}</title>
+    <style>
+        :root {{ --bg: {ctx["bg"]}; --primary: {ctx["primary"]}; --secondary: {ctx["secondary"]}; }}
         * {{ box-sizing: border-box; }}
         body {{
             margin: 0;
-            font-family: Pretendard, "Noto Sans KR", sans-serif;
-            color: var(--text);
+            font-family: "Noto Sans KR", sans-serif;
+            color: #e5e7eb;
             background:
-                radial-gradient(circle at 10% 20%, rgba(99, 102, 241, 0.3), transparent 30%),
-                radial-gradient(circle at 90% 10%, rgba(139, 92, 246, 0.22), transparent 30%),
-                var(--bg);
-            min-height: 100vh;
+                radial-gradient(circle at 0% 0%, rgba(59,130,246,0.25), transparent 35%),
+                radial-gradient(circle at 100% 0%, rgba(16,185,129,0.2), transparent 30%),
+                #030712;
         }}
-        .shell {{ max-width: 1080px; margin: 0 auto; padding: 22px; }}
-        .nav {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 52px; }}
-        .brand {{ font-size: 34px; font-weight: 800; }}
-        .badge {{
-            background: linear-gradient(90deg, #4f46e5, #8b5cf6);
-            border-radius: 999px;
-            padding: 10px 18px;
-            font-weight: 700;
-            color: #fff;
-            text-decoration: none;
-            box-shadow: 0 0 30px rgba(99, 102, 241, 0.5);
-        }}
-        .hero {{ display: grid; grid-template-columns: 1.1fr 0.9fr; gap: 28px; align-items: center; }}
-        .hero h1 {{ margin: 0 0 10px; font-size: clamp(36px, 6vw, 72px); line-height: 1.08; }}
-        .hero h2 {{ margin: 0 0 16px; color: var(--secondary); font-size: clamp(26px, 4vw, 56px); }}
-        .hero p {{ margin: 0 0 24px; color: var(--muted); font-size: clamp(16px, 2vw, 24px); line-height: 1.7; }}
-        .cta {{
-            display: inline-block;
-            border-radius: 999px;
-            background: var(--primary);
-            color: #fff;
-            text-decoration: none;
-            font-weight: 800;
-            padding: 14px 30px;
-            box-shadow: 0 16px 30px rgba(79, 70, 229, 0.35);
-        }}
-        .hero-image {{ width: 100%; border-radius: 18px; border: 1px solid rgba(255,255,255,.15); }}
-        .meta {{
-            margin-top: 26px;
-            border-radius: 12px;
-            border: 1px solid rgba(255, 255, 255, 0.15);
-            background: rgba(15, 23, 42, 0.35);
-            padding: 14px;
-            color: #cbd5e1;
-            font-size: 14px;
-        }}
-        @media (max-width: 920px) {{
-            .nav {{ margin-bottom: 28px; }}
-            .brand {{ font-size: 24px; }}
-            .hero {{ grid-template-columns: 1fr; }}
-        }}
+        .shell {{ max-width: 1200px; margin: 0 auto; padding: 34px 22px 48px; }}
+        .top {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 26px; }}
+        .brand {{ font-size: 26px; font-weight: 700; letter-spacing: .03em; }}
+        .ghost {{ border: 1px solid #374151; color: #d1d5db; padding: 10px 16px; border-radius: 999px; text-decoration: none; }}
+        .panel {{ border-radius: 24px; padding: 28px; background: linear-gradient(150deg, rgba(17,24,39,0.9), rgba(15,23,42,0.74)); border: 1px solid rgba(255,255,255,0.08); }}
+        .hero {{ display: grid; grid-template-columns: 1fr 1fr; gap: 22px; align-items: stretch; }}
+        h1 {{ margin: 0 0 10px; font-size: clamp(34px, 5vw, 60px); }}
+        h2 {{ margin: 0 0 14px; color: var(--secondary); font-size: clamp(22px, 3.2vw, 36px); }}
+        p {{ margin: 0 0 20px; color: #9ca3af; line-height: 1.8; }}
+        .cta {{ display: inline-block; padding: 14px 28px; background: var(--primary); color: #fff; font-weight: 800; text-decoration: none; border-radius: 999px; }}
+        .stats {{ margin-top: 20px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }}
+        .stat {{ background: rgba(17,24,39,0.9); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 10px; font-size: 13px; color: #cbd5e1; }}
+        .hero-image {{ width: 100%; height: 100%; min-height: 280px; object-fit: cover; border-radius: 16px; border: 1px solid rgba(255,255,255,0.1); }}
+        @media (max-width: 920px) {{ .hero {{ grid-template-columns: 1fr; }} .stats {{ grid-template-columns: 1fr; }} }}
     </style>
 </head>
 <body>
     <div class=\"shell\">
-        <div class=\"nav\">
-            <div class=\"brand\">{escape(request.business_name)}</div>
-            <a class=\"badge\" href=\"{cta_url}\">{cta_text}</a>
+        <div class=\"top\">
+            <div class=\"brand\">{ctx["business_name"]}</div>
+            <a class=\"ghost\" href=\"{ctx["cta_url"]}\">문의하기</a>
         </div>
-        <section class=\"hero\">
-            <div>
-                <h1>{title}</h1>
-                <h2>{subtitle}</h2>
-                <p>{body}</p>
-                <a class=\"cta\" href=\"{cta_url}\">{cta_text}</a>
-                <div class=\"meta\">대분류: {escape(major)} | 소분류: {escape(minor)} | 접근 만료 예정: {expires_kst} (KST)</div>
+        <section class=\"panel\">
+            <div class=\"hero\">
+                <article>
+                    <h1>{ctx["title"]}</h1>
+                    <h2>{ctx["subtitle"]}</h2>
+                    <p>{ctx["body"]}</p>
+                    <a class=\"cta\" href=\"{ctx["cta_url"]}\">{ctx["cta_text"]}</a>
+                    <div class=\"stats\">
+                        <div class=\"stat\">대분류<br>{ctx["major"]}</div>
+                        <div class=\"stat\">소분류<br>{ctx["minor"]}</div>
+                        <div class=\"stat\">만료<br>{ctx["expires_kst"]} KST</div>
+                    </div>
+                </article>
+                <div>{ctx["hero_html"]}</div>
             </div>
-            <div>{hero_html}</div>
         </section>
     </div>
 </body>
 </html>
 """
+
+
+def _render_event_highlight(ctx: dict) -> str:
+    return f"""<!doctype html>
+<html lang=\"ko\">
+<head>
+    <meta charset=\"UTF-8\" />
+    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />
+    <title>{ctx["title"]}</title>
+    <style>
+        :root {{ --bg: {ctx["bg"]}; --primary: {ctx["primary"]}; --secondary: {ctx["secondary"]}; }}
+        * {{ box-sizing: border-box; }}
+        body {{
+            margin: 0;
+            font-family: "Noto Sans KR", sans-serif;
+            color: #111827;
+            background:
+                linear-gradient(135deg, #fff7ed, #f0f9ff 40%, #fefce8 100%);
+            min-height: 100vh;
+        }}
+        .shell {{ max-width: 980px; margin: 0 auto; padding: 24px 18px 36px; }}
+        .poster {{ background: #fff; border: 2px solid #111827; border-radius: 28px; overflow: hidden; box-shadow: 14px 14px 0 #111827; }}
+        .head {{ background: var(--primary); color: #fff; padding: 20px 24px; display: flex; justify-content: space-between; align-items: center; }}
+        .tag {{ background: #111827; color: #fff; border-radius: 999px; padding: 8px 14px; font-weight: 700; font-size: 13px; }}
+        .body {{ padding: 26px 24px 28px; }}
+        h1 {{ margin: 0 0 10px; font-size: clamp(30px, 5vw, 52px); line-height: 1.06; }}
+        h2 {{ margin: 0 0 12px; color: var(--secondary); font-size: clamp(20px, 3.3vw, 32px); }}
+        p {{ margin: 0 0 16px; line-height: 1.8; }}
+        .hero-image {{ width: 100%; border: 2px solid #111827; border-radius: 16px; margin: 6px 0 18px; }}
+        .foot {{ display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }}
+        .cta {{ background: #111827; color: #fff; text-decoration: none; font-weight: 800; padding: 12px 18px; border-radius: 12px; }}
+        .meta {{ color: #374151; font-size: 13px; }}
+    </style>
+</head>
+<body>
+    <main class=\"shell\">
+        <section class=\"poster\">
+            <header class=\"head\">
+                <strong>{ctx["business_name"]}</strong>
+                <span class=\"tag\">EVENT</span>
+            </header>
+            <div class=\"body\">
+                <h1>{ctx["title"]}</h1>
+                <h2>{ctx["subtitle"]}</h2>
+                <p>{ctx["body"]}</p>
+                {ctx["hero_html"]}
+                <div class=\"foot\">
+                    <a class=\"cta\" href=\"{ctx["cta_url"]}\">{ctx["cta_text"]}</a>
+                    <div class=\"meta\">{ctx["major"]} · {ctx["minor"]} · {ctx["expires_kst"]} KST까지</div>
+                </div>
+            </div>
+        </section>
+    </main>
+</body>
+</html>
+"""
+
+
+def _render_landing_html(
+    template_id: str, request: DeployRequest, hero_image_url: str | None, expires_at: datetime
+) -> str:
+    ctx = _build_landing_context(request, hero_image_url, expires_at)
+    if template_id == "dark-product":
+        return _render_dark_product(ctx)
+    if template_id == "event-highlight":
+        return _render_event_highlight(ctx)
+    return _render_clean_campaign(ctx)
 
 
 def _list_templates_from_db(db: Session) -> list[LandingTemplate]:
@@ -365,7 +423,12 @@ def create_landing_page(db: Session, request: DeployRequest) -> DeployResponse:
     public_url = _build_public_url(request.business_topic, request.slug, request.custom_domain)
 
     uploaded_hero_image_url = _upload_hero_image_if_needed(request, clean_topic)
-    html = _render_landing_html(request, uploaded_hero_image_url, expires_at)
+    html = _render_landing_html(
+        request.template_id,
+        request,
+        uploaded_hero_image_url,
+        expires_at,
+    )
     object_path = f"landings/{clean_topic}/{request.slug}/index.html"
 
     try:
