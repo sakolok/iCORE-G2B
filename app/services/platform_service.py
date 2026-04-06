@@ -29,9 +29,9 @@ def _build_public_url(business_topic: str, slug: str, custom_domain: str | None)
     clean_topic = business_topic.strip().replace(" ", "-").lower()
     if settings.landing_cdn_base_url:
         base = settings.landing_cdn_base_url.rstrip("/")
-        return f"{base}/landings/{clean_topic}/{slug}/"
+        return f"{base}/landings/{clean_topic}/{slug}/index.html"
 
-    return f"https://storage.googleapis.com/{settings.client_web_bucket}/landings/{clean_topic}/{slug}/"
+    return f"https://storage.googleapis.com/{settings.client_web_bucket}/landings/{clean_topic}/{slug}/index.html"
 
 
 def _to_landing_page_schema(model: LandingPageModel) -> LandingPage:
