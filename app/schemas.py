@@ -102,6 +102,17 @@ class LoginResponse(BaseModel):
     role: str
 
 
+class SchedulerStatus(BaseModel):
+    configured: bool
+    connected: bool
+    applied: bool
+    paused: bool
+    schedule: str
+    job_name: str
+    target_url: str
+    message: str
+
+
 class ScraperConfig(BaseModel):
     enabled: bool = True
     schedule_mode: Literal["daily", "interval"] = "daily"
@@ -111,6 +122,7 @@ class ScraperConfig(BaseModel):
     dedup_retention_hours: int = Field(default=48, ge=1, le=720)
     receiver_emails: list[EmailStr]
     keywords: list[str]
+    scheduler_status: Optional[SchedulerStatus] = None
 
 
 class TriggerScraperRequest(BaseModel):

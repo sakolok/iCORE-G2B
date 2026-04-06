@@ -9,6 +9,7 @@ from app.services.platform_service import (
     get_scraper_config,
     upsert_scraper_config,
 )
+from app.services.cloud_scheduler_service import sync_scheduler_job
 
 router = APIRouter(prefix="/api/scraper", tags=["scraper"])
 
@@ -27,10 +28,12 @@ def update_scraper_config(
     db: Session = Depends(get_db),
 ) -> dict:
     saved_config = upsert_scraper_config(db, config)
+    scheduler_status = sync_scheduler_job(saved_config)
     return {
         "success": True,
         "message": "Scraper 설정이 저장되었습니다.",
         "config": saved_config.model_dump(mode="json"),
+        "scheduler": scheduler_status.model_dump(mode="json"),
     }
 
 

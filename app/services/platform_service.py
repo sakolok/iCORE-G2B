@@ -20,6 +20,7 @@ from app.schemas import (
     TriggerScraperResponse,
     UpdateLandingPageRequest,
 )
+from app.services.cloud_scheduler_service import get_scheduler_status, run_scheduler_job_now
 
 
 def _build_public_url(business_topic: str, slug: str, custom_domain: str | None) -> str:
@@ -556,7 +557,7 @@ def get_scraper_config(db: Session) -> ScraperConfig:
     emails = [item.strip() for item in row.receiver_emails.split(",") if item.strip()]
     keywords = [item.strip() for item in row.keywords.split(",") if item.strip()]
 
-    return ScraperConfig(
+    config = ScraperConfig(
         enabled=row.enabled,
         schedule_mode=row.schedule_mode,
         notify_time=row.notify_time,
@@ -566,6 +567,8 @@ def get_scraper_config(db: Session) -> ScraperConfig:
         receiver_emails=emails,
         keywords=keywords,
     )
+    config.scheduler_status = get_scheduler_status(config)
+    return config
 
 
 def upsert_scraper_config(db: Session, config: ScraperConfig) -> ScraperConfig:
@@ -585,6 +588,17 @@ def upsert_scraper_config(db: Session, config: ScraperConfig) -> ScraperConfig:
 
 def create_scraper_task(config: ScraperConfig, reason: str | None) -> TriggerScraperResponse:
     reason_text = reason or "manual"
+    scheduler_run = run_scheduler_job_now(config, reason)
+    if scheduler_run is not None:
+        return TriggerScraperResponse(
+            accepted=True,
+            message=(
+                "Cloud Scheduler 수동 실행이 요청되었습니다. "
+                f"job={scheduler_run['job_name']}, reason={reason_text}"
+            ),
+            task_id=scheduler_run["job_name"],
+        )
+
     task_id = str(uuid4())
     message = (
         "Scraper 실행 요청이 등록되었습니다. "

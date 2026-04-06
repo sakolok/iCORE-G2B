@@ -3,6 +3,13 @@ import os
 from pydantic import BaseModel
 
 
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
 class Settings(BaseModel):
     app_name: str = "iCore Integrated Work Platform API"
     environment: str = os.getenv("ENVIRONMENT", "local")
@@ -24,6 +31,15 @@ class Settings(BaseModel):
     auth_secret_key: str = os.getenv("AUTH_SECRET_KEY", "change-me-in-production")
     default_admin_username: str = os.getenv("DEFAULT_ADMIN_USERNAME", "admin")
     default_admin_password: str = os.getenv("DEFAULT_ADMIN_PASSWORD", "icore1234!")
+    cloud_scheduler_enabled: bool = _env_bool("CLOUD_SCHEDULER_ENABLED", False)
+    cloud_scheduler_project_id: str = os.getenv("CLOUD_SCHEDULER_PROJECT_ID", "")
+    cloud_scheduler_location: str = os.getenv("CLOUD_SCHEDULER_LOCATION", "asia-northeast3")
+    cloud_scheduler_job_id: str = os.getenv("CLOUD_SCHEDULER_JOB_ID", "icore-g2b-scraper-job")
+    cloud_scheduler_timezone: str = os.getenv("CLOUD_SCHEDULER_TIMEZONE", "Asia/Seoul")
+    cloud_scheduler_target_url: str = os.getenv("CLOUD_SCHEDULER_TARGET_URL", "")
+    cloud_scheduler_invoker_service_account: str = os.getenv(
+        "CLOUD_SCHEDULER_INVOKER_SERVICE_ACCOUNT", ""
+    )
 
 
 settings = Settings()
