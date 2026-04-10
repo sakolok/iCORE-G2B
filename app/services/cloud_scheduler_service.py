@@ -44,6 +44,8 @@ def _build_body(config: ScraperConfig) -> bytes:
         "interval_minutes": config.interval_minutes,
         "dedup_mode": config.dedup_mode,
         "dedup_retention_hours": config.dedup_retention_hours,
+        "gsheet_id": config.gsheet_id,
+        "gsheet_tab_name": settings.gsheet_tab_name,
         "receiver_emails": config.receiver_emails,
         "keywords": config.keywords,
     }

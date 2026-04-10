@@ -78,3 +78,18 @@ def require_auth(authorization: str | None = Header(default=None)) -> dict:
         return payload
     except ValueError as error:
         raise HTTPException(status_code=401, detail="유효하지 않은 토큰입니다.") from error
+
+
+def verify_scraper_internal_token(
+    x_scraper_internal_token: str | None = Header(default=None),
+) -> None:
+    expected = settings.scraper_internal_token.strip()
+    if not expected:
+        raise HTTPException(
+            status_code=503,
+            detail="SCRAPER_INTERNAL_TOKEN이 설정되지 않았습니다.",
+        )
+    if not x_scraper_internal_token or not hmac.compare_digest(
+        x_scraper_internal_token.strip(), expected
+    ):
+        raise HTTPException(status_code=401, detail="유효하지 않은 내부 토큰입니다.")

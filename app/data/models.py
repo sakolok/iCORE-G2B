@@ -65,6 +65,7 @@ class ScraperConfigModel(Base):
     interval_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=60)
     dedup_mode: Mapped[str] = mapped_column(String(40), nullable=False, default="notice_id")
     dedup_retention_hours: Mapped[int] = mapped_column(Integer, nullable=False, default=48)
+    gsheet_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
     receiver_emails: Mapped[str] = mapped_column(Text, nullable=False)
     keywords: Mapped[str] = mapped_column(Text, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
@@ -73,6 +74,43 @@ class ScraperConfigModel(Base):
         default=lambda: datetime.now(timezone.utc),
         onupdate=lambda: datetime.now(timezone.utc),
     )
+
+
+class ScraperRunModel(Base):
+    __tablename__ = "scraper_runs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    run_id: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    source: Mapped[str] = mapped_column(String(20), nullable=False, default="cloud_run")
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="success")
+    keyword_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    notice_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    deduped_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    email_sent_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    sheet_written_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    executed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+
+
+class ScraperNoticeModel(Base):
+    __tablename__ = "scraper_notices"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    dedup_key: Mapped[str] = mapped_column(String(190), nullable=False, unique=True, index=True)
+    notice_id: Mapped[str] = mapped_column(String(160), nullable=False, default="")
+    title: Mapped[str] = mapped_column(String(500), nullable=False)
+    agency: Mapped[str | None] = mapped_column(String(240), nullable=True)
+    estimated_price: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    deadline_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    notice_url: Mapped[str | None] = mapped_column(String(600), nullable=True)
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_run_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
 class UserModel(Base):

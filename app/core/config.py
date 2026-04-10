@@ -40,6 +40,11 @@ class Settings(BaseModel):
     cloud_scheduler_invoker_service_account: str = os.getenv(
         "CLOUD_SCHEDULER_INVOKER_SERVICE_ACCOUNT", ""
     )
+    scraper_internal_token: str = os.getenv("SCRAPER_INTERNAL_TOKEN", "")
+    apps_script_webhook_url: str = os.getenv("APPS_SCRIPT_WEBHOOK_URL", "")
+    scraper_result_callback_url: str = os.getenv("SCRAPER_RESULT_CALLBACK_URL", "")
+    gsheet_id: str = os.getenv("GSHEET_ID", "")
+    gsheet_tab_name: str = os.getenv("GSHEET_TAB_NAME", "나라장터 공고 수집 목록")
 
 
 settings = Settings()

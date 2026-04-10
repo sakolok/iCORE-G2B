@@ -2,11 +2,24 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.data.database import get_db
-from app.schemas import ScraperConfig, TriggerScraperRequest, TriggerScraperResponse
-from app.services.auth_service import require_auth
+from app.schemas import (
+    ScraperConfig,
+    ScraperDedupFilterRequest,
+    ScraperDedupFilterResponse,
+    ScraperRunReportRequest,
+    ScraperRunReportResponse,
+    ScraperRunSummary,
+    TriggerScraperRequest,
+    TriggerScraperResponse,
+)
+from app.services.auth_service import require_auth, verify_scraper_internal_token
 from app.services.platform_service import (
     create_scraper_task,
+    filter_new_scraper_notices,
     get_scraper_config,
+    list_scraper_runs,
+    record_scraper_run_report,
+    run_scraper_pipeline,
     upsert_scraper_config,
 )
 from app.services.cloud_scheduler_service import sync_scheduler_job
@@ -45,3 +58,40 @@ def trigger_scraper(
 ) -> TriggerScraperResponse:
     config = get_scraper_config(db)
     return create_scraper_task(config=config, reason=request.reason)
+
+
+@router.get("/runs", response_model=list[ScraperRunSummary])
+def fetch_scraper_runs(
+    limit: int = 20,
+    _: dict = Depends(require_auth),
+    db: Session = Depends(get_db),
+) -> list[ScraperRunSummary]:
+    return list_scraper_runs(db, limit=limit)
+
+
+@router.post("/internal/dedup", response_model=ScraperDedupFilterResponse)
+def dedup_notices(
+    payload: ScraperDedupFilterRequest,
+    _: None = Depends(verify_scraper_internal_token),
+    db: Session = Depends(get_db),
+) -> ScraperDedupFilterResponse:
+    return filter_new_scraper_notices(db, payload)
+
+
+@router.post("/runs", response_model=ScraperRunReportResponse)
+def report_scraper_run(
+    payload: ScraperRunReportRequest,
+    _: None = Depends(verify_scraper_internal_token),
+    db: Session = Depends(get_db),
+) -> ScraperRunReportResponse:
+    return record_scraper_run_report(db, payload)
+
+
+@router.post("/execute", response_model=TriggerScraperResponse)
+def execute_scraper(
+    request: TriggerScraperRequest,
+    _: dict = Depends(require_auth),
+    db: Session = Depends(get_db),
+) -> TriggerScraperResponse:
+    config = get_scraper_config(db)
+    return run_scraper_pipeline(db=db, config=config, reason=request.reason)

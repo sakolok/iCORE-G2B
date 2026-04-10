@@ -1,5 +1,7 @@
 import json
 import base64
+import hashlib
+import requests
 from html import escape
 from datetime import datetime, timezone
 from datetime import timedelta
@@ -9,7 +11,13 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.data.models import LandingPageModel, LandingTemplateModel, ScraperConfigModel
+from app.data.models import (
+    LandingPageModel,
+    LandingTemplateModel,
+    ScraperConfigModel,
+    ScraperNoticeModel,
+    ScraperRunModel,
+)
 from app.schemas import (
     DeployRequest,
     DeployResponse,
@@ -17,6 +25,12 @@ from app.schemas import (
     LandingTemplate,
     LandingTemplateDetail,
     ScraperConfig,
+    ScraperDedupFilterRequest,
+    ScraperDedupFilterResponse,
+    ScraperNotice,
+    ScraperRunReportRequest,
+    ScraperRunReportResponse,
+    ScraperRunSummary,
     TriggerScraperResponse,
     UpdateLandingPageRequest,
 )
@@ -564,8 +578,10 @@ def get_scraper_config(db: Session) -> ScraperConfig:
         interval_minutes=row.interval_minutes,
         dedup_mode=row.dedup_mode,
         dedup_retention_hours=row.dedup_retention_hours,
+        gsheet_id=row.gsheet_id,
         receiver_emails=emails,
         keywords=keywords,
+        recent_runs=list_scraper_runs(db, limit=10),
     )
     config.scheduler_status = get_scheduler_status(config)
     return config
@@ -579,7 +595,8 @@ def upsert_scraper_config(db: Session, config: ScraperConfig) -> ScraperConfig:
     row.interval_minutes = config.interval_minutes
     row.dedup_mode = config.dedup_mode
     row.dedup_retention_hours = config.dedup_retention_hours
-    row.receiver_emails = ",".join(config.receiver_emails)
+    row.gsheet_id = config.gsheet_id
+    row.receiver_emails = ",".join(str(email) for email in config.receiver_emails)
     row.keywords = ",".join(config.keywords)
     row.updated_at = datetime.now(timezone.utc)
     db.commit()
@@ -605,3 +622,384 @@ def create_scraper_task(config: ScraperConfig, reason: str | None) -> TriggerScr
         f"mode={config.schedule_mode}, dedup={config.dedup_mode}, receivers={len(config.receiver_emails)}명, reason={reason_text}"
     )
     return TriggerScraperResponse(accepted=True, message=message, task_id=task_id)
+
+
+def _parse_deadline(raw: str) -> datetime | None:
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=timezone.utc)
+        return parsed
+    except Exception:
+        return None
+
+
+def _fetch_g2b_notices(keywords: list[str]) -> list[ScraperNotice]:
+    source_url = settings.scraper_private_api_base.strip()
+    if not source_url:
+        return []
+
+    notices: list[ScraperNotice] = []
+    timeout = 20
+    for keyword in keywords:
+        try:
+            response = requests.get(
+                source_url,
+                params={"keyword": keyword},
+                headers={"Accept": "application/json"},
+                timeout=timeout,
+            )
+            response.raise_for_status()
+            payload = response.json()
+        except Exception:
+            continue
+
+        items: list[dict] = []
+        if isinstance(payload, list):
+            items = [item for item in payload if isinstance(item, dict)]
+        elif isinstance(payload, dict):
+            for key in ("items", "results", "data"):
+                if isinstance(payload.get(key), list):
+                    items = [item for item in payload[key] if isinstance(item, dict)]
+                    break
+
+        for item in items:
+            title = str(item.get("title") or item.get("noticeTitle") or "").strip()
+            if not title:
+                continue
+            notices.append(
+                ScraperNotice(
+                    notice_id=str(item.get("notice_id") or item.get("noticeId") or item.get("bidNtceNo") or "").strip(),
+                    title=title,
+                    agency=str(item.get("agency") or item.get("organization") or item.get("ntceInsttNm") or "").strip(),
+                    estimated_price=str(item.get("estimated_price") or item.get("estPrice") or item.get("presmptPrce") or "").strip(),
+                    deadline_at=_parse_deadline(
+                        str(item.get("deadline_at") or item.get("deadline") or item.get("bidClseDt") or "")
+                    ),
+                    notice_url=str(item.get("notice_url") or item.get("url") or item.get("link") or "").strip(),
+                )
+            )
+    return notices
+
+
+def _build_sheets_service():
+    try:
+        from google.oauth2 import service_account
+        from googleapiclient.discovery import build
+    except Exception:
+        return None
+
+    inline_json = ""
+    if inline_json:
+        account = json.loads(inline_json)
+        creds = service_account.Credentials.from_service_account_info(
+            account,
+            scopes=["https://www.googleapis.com/auth/spreadsheets"],
+        )
+        return build("sheets", "v4", credentials=creds)
+
+    try:
+        return build("sheets", "v4")
+    except Exception:
+        return None
+
+
+def _append_notices_to_sheet(config: ScraperConfig, run_id: str, notices: list[ScraperNotice]) -> int:
+    sheet_id = (config.gsheet_id or "").strip() or settings.gsheet_id.strip()
+    tab_name = settings.gsheet_tab_name.strip() or "나라장터 공고 수집 목록"
+    if not sheet_id or not notices:
+        return 0
+
+    service = _build_sheets_service()
+    if service is None:
+        return 0
+
+    values: list[list[str]] = []
+    now_iso = datetime.now(timezone.utc).isoformat()
+    for notice in notices:
+        values.append(
+            [
+                now_iso,
+                run_id,
+                notice.notice_id,
+                notice.title,
+                notice.agency,
+                notice.estimated_price,
+                notice.deadline_at.isoformat() if notice.deadline_at else "",
+                notice.notice_url,
+            ]
+        )
+
+    try:
+        service.spreadsheets().values().append(
+            spreadsheetId=sheet_id,
+            range=f"{tab_name}!A:H",
+            valueInputOption="RAW",
+            insertDataOption="INSERT_ROWS",
+            body={"values": values},
+        ).execute()
+    except Exception:
+        return 0
+
+    return len(values)
+
+
+def _trigger_apps_script_mail_webhook(config: ScraperConfig, run_id: str, notices: list[ScraperNotice]) -> bool:
+    webhook_url = settings.apps_script_webhook_url.strip()
+    if not webhook_url or not notices:
+        return False
+    try:
+        response = requests.post(
+            webhook_url,
+            timeout=20,
+            json={
+                "run_id": run_id,
+                "receiver_emails": [str(email) for email in config.receiver_emails],
+                "sheet_id": config.gsheet_id or settings.gsheet_id,
+                "sheet_tab_name": settings.gsheet_tab_name,
+                "notice_count": len(notices),
+            },
+        )
+        return 200 <= response.status_code < 300
+    except Exception:
+        return False
+
+
+def run_scraper_pipeline(
+    db: Session,
+    config: ScraperConfig,
+    reason: str | None,
+) -> TriggerScraperResponse:
+    if not config.enabled:
+        return TriggerScraperResponse(
+            accepted=True,
+            message="스크래퍼가 비활성 상태라 실행이 건너뛰어졌습니다.",
+            task_id="disabled",
+        )
+
+    run_id = str(uuid4())
+    notices = _fetch_g2b_notices(config.keywords)
+    notice_count = len(notices)
+    filtered = filter_new_scraper_notices(
+        db,
+        ScraperDedupFilterRequest(
+            run_id=run_id,
+            dedup_mode=config.dedup_mode,
+            dedup_retention_hours=config.dedup_retention_hours,
+            notices=notices,
+        ),
+    )
+    deduped_count = filtered.filtered_count
+    kept_notices = filtered.notices
+    sheet_written_count = _append_notices_to_sheet(config, run_id, kept_notices)
+    mail_triggered = _trigger_apps_script_mail_webhook(config, run_id, kept_notices)
+
+    status = "success"
+    error_message = None
+    if kept_notices and sheet_written_count == 0:
+        status = "partial"
+        error_message = "Google Sheet 기록 실패"
+
+    if kept_notices and not mail_triggered:
+        status = "partial" if status == "success" else status
+        if error_message:
+            error_message += ", Apps Script 메일 트리거 실패"
+        else:
+            error_message = "Apps Script 메일 트리거 실패"
+
+    record_scraper_run_report(
+        db,
+        ScraperRunReportRequest(
+            run_id=run_id,
+            source="api_server",
+            status=status,
+            keyword_count=len(config.keywords),
+            notice_count=notice_count,
+            deduped_count=deduped_count,
+            email_sent_count=1 if mail_triggered else 0,
+            sheet_written_count=sheet_written_count,
+            error_message=error_message,
+            executed_at=datetime.now(timezone.utc),
+            notices=kept_notices,
+        ),
+    )
+
+    return TriggerScraperResponse(
+        accepted=True,
+        message=(
+            f"스크래퍼 실행 완료: status={status}, notices={notice_count}, "
+            f"deduped={deduped_count}, sheet={sheet_written_count}, reason={reason or 'manual'}"
+        ),
+        task_id=run_id,
+    )
+
+
+def _to_run_summary(row: ScraperRunModel) -> ScraperRunSummary:
+    return ScraperRunSummary(
+        run_id=row.run_id,
+        status=row.status,
+        keyword_count=row.keyword_count,
+        notice_count=row.notice_count,
+        deduped_count=row.deduped_count,
+        email_sent_count=row.email_sent_count,
+        sheet_written_count=row.sheet_written_count,
+        error_message=row.error_message,
+        executed_at=row.executed_at,
+    )
+
+
+def list_scraper_runs(db: Session, limit: int = 20) -> list[ScraperRunSummary]:
+    safe_limit = max(1, min(limit, 100))
+    rows = (
+        db.execute(
+            select(ScraperRunModel)
+            .order_by(ScraperRunModel.executed_at.desc())
+            .limit(safe_limit)
+        )
+        .scalars()
+        .all()
+    )
+    return [_to_run_summary(row) for row in rows]
+
+
+def _make_dedup_key(notice: ScraperNotice, dedup_mode: str) -> str:
+    notice_id = (notice.notice_id or "").strip().lower()
+    title = (notice.title or "").strip().lower()
+    if dedup_mode == "notice_id_and_title":
+        raw = f"{notice_id}|{title}"
+    else:
+        raw = notice_id or title
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()
+
+
+def filter_new_scraper_notices(
+    db: Session,
+    payload: ScraperDedupFilterRequest,
+) -> ScraperDedupFilterResponse:
+    now = datetime.now(timezone.utc)
+    horizon = now - timedelta(hours=payload.dedup_retention_hours)
+    kept: list[ScraperNotice] = []
+
+    for notice in payload.notices:
+        dedup_key = _make_dedup_key(notice, payload.dedup_mode)
+        existing = db.execute(
+            select(ScraperNoticeModel).where(ScraperNoticeModel.dedup_key == dedup_key)
+        ).scalar_one_or_none()
+
+        if existing is None:
+            db.add(
+                ScraperNoticeModel(
+                    dedup_key=dedup_key,
+                    notice_id=notice.notice_id,
+                    title=notice.title,
+                    agency=notice.agency,
+                    estimated_price=notice.estimated_price,
+                    deadline_at=notice.deadline_at,
+                    notice_url=notice.notice_url,
+                    first_seen_at=now,
+                    last_seen_at=now,
+                    last_run_id=payload.run_id,
+                )
+            )
+            kept.append(notice)
+            continue
+
+        if existing.last_seen_at < horizon:
+            existing.notice_id = notice.notice_id
+            existing.title = notice.title
+            existing.agency = notice.agency
+            existing.estimated_price = notice.estimated_price
+            existing.deadline_at = notice.deadline_at
+            existing.notice_url = notice.notice_url
+            existing.last_seen_at = now
+            existing.last_run_id = payload.run_id
+            kept.append(notice)
+            continue
+
+        existing.last_seen_at = now
+        existing.last_run_id = payload.run_id
+
+    db.commit()
+    input_count = len(payload.notices)
+    kept_count = len(kept)
+    return ScraperDedupFilterResponse(
+        run_id=payload.run_id,
+        input_count=input_count,
+        kept_count=kept_count,
+        filtered_count=input_count - kept_count,
+        notices=kept,
+    )
+
+
+def record_scraper_run_report(db: Session, payload: ScraperRunReportRequest) -> ScraperRunReportResponse:
+    executed_at = payload.executed_at
+    if executed_at.tzinfo is None:
+        executed_at = executed_at.replace(tzinfo=timezone.utc)
+
+    row = db.execute(
+        select(ScraperRunModel).where(ScraperRunModel.run_id == payload.run_id)
+    ).scalar_one_or_none()
+
+    if row is None:
+        row = ScraperRunModel(
+            run_id=payload.run_id,
+            source=payload.source,
+            status=payload.status,
+            keyword_count=payload.keyword_count,
+            notice_count=payload.notice_count,
+            deduped_count=payload.deduped_count,
+            email_sent_count=payload.email_sent_count,
+            sheet_written_count=payload.sheet_written_count,
+            error_message=payload.error_message,
+            executed_at=executed_at,
+        )
+        db.add(row)
+    else:
+        row.source = payload.source
+        row.status = payload.status
+        row.keyword_count = payload.keyword_count
+        row.notice_count = payload.notice_count
+        row.deduped_count = payload.deduped_count
+        row.email_sent_count = payload.email_sent_count
+        row.sheet_written_count = payload.sheet_written_count
+        row.error_message = payload.error_message
+        row.executed_at = executed_at
+
+    for notice in payload.notices:
+        dedup_key = _make_dedup_key(notice, "notice_id")
+        existing = db.execute(
+            select(ScraperNoticeModel).where(ScraperNoticeModel.dedup_key == dedup_key)
+        ).scalar_one_or_none()
+        if existing is None:
+            db.add(
+                ScraperNoticeModel(
+                    dedup_key=dedup_key,
+                    notice_id=notice.notice_id,
+                    title=notice.title,
+                    agency=notice.agency,
+                    estimated_price=notice.estimated_price,
+                    deadline_at=notice.deadline_at,
+                    notice_url=notice.notice_url,
+                    first_seen_at=executed_at,
+                    last_seen_at=executed_at,
+                    last_run_id=payload.run_id,
+                )
+            )
+        else:
+            existing.notice_id = notice.notice_id
+            existing.title = notice.title
+            existing.agency = notice.agency
+            existing.estimated_price = notice.estimated_price
+            existing.deadline_at = notice.deadline_at
+            existing.notice_url = notice.notice_url
+            existing.last_seen_at = executed_at
+            existing.last_run_id = payload.run_id
+
+    db.commit()
+    return ScraperRunReportResponse(
+        success=True,
+        message="스크래퍼 실행 결과가 저장되었습니다.",
+        run_id=payload.run_id,
+    )

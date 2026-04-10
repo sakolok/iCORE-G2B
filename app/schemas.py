@@ -113,6 +113,27 @@ class SchedulerStatus(BaseModel):
     message: str
 
 
+class ScraperNotice(BaseModel):
+    notice_id: str = ""
+    title: str = Field(..., min_length=1, max_length=500)
+    agency: str = ""
+    estimated_price: str = ""
+    deadline_at: Optional[datetime] = None
+    notice_url: str = ""
+
+
+class ScraperRunSummary(BaseModel):
+    run_id: str
+    status: Literal["success", "partial", "failed"]
+    keyword_count: int
+    notice_count: int
+    deduped_count: int
+    email_sent_count: int
+    sheet_written_count: int
+    error_message: Optional[str] = None
+    executed_at: datetime
+
+
 class ScraperConfig(BaseModel):
     enabled: bool = True
     schedule_mode: Literal["daily", "interval"] = "daily"
@@ -120,9 +141,46 @@ class ScraperConfig(BaseModel):
     interval_minutes: int = Field(default=60, ge=5, le=1440)
     dedup_mode: Literal["notice_id", "notice_id_and_title"] = "notice_id"
     dedup_retention_hours: int = Field(default=48, ge=1, le=720)
+    gsheet_id: Optional[str] = Field(default=None, max_length=120)
     receiver_emails: list[EmailStr]
-    keywords: list[str]
+    keywords: list[str] = Field(min_length=1)
     scheduler_status: Optional[SchedulerStatus] = None
+    recent_runs: list[ScraperRunSummary] = Field(default_factory=list)
+
+
+class ScraperDedupFilterRequest(BaseModel):
+    run_id: str = Field(..., min_length=1, max_length=64)
+    dedup_mode: Literal["notice_id", "notice_id_and_title"] = "notice_id"
+    dedup_retention_hours: int = Field(default=48, ge=1, le=720)
+    notices: list[ScraperNotice] = Field(default_factory=list)
+
+
+class ScraperDedupFilterResponse(BaseModel):
+    run_id: str
+    input_count: int
+    kept_count: int
+    filtered_count: int
+    notices: list[ScraperNotice]
+
+
+class ScraperRunReportRequest(BaseModel):
+    run_id: str = Field(..., min_length=1, max_length=64)
+    source: str = Field(default="cloud_run", min_length=1, max_length=20)
+    status: Literal["success", "partial", "failed"] = "success"
+    keyword_count: int = Field(default=0, ge=0)
+    notice_count: int = Field(default=0, ge=0)
+    deduped_count: int = Field(default=0, ge=0)
+    email_sent_count: int = Field(default=0, ge=0)
+    sheet_written_count: int = Field(default=0, ge=0)
+    error_message: Optional[str] = Field(default=None, max_length=4000)
+    executed_at: datetime = Field(default_factory=datetime.utcnow)
+    notices: list[ScraperNotice] = Field(default_factory=list)
+
+
+class ScraperRunReportResponse(BaseModel):
+    success: bool
+    message: str
+    run_id: str
 
 
 class TriggerScraperRequest(BaseModel):

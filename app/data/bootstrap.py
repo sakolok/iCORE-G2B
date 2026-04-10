@@ -47,6 +47,7 @@ def seed_defaults(db: Session) -> None:
                 interval_minutes=60,
                 dedup_mode="notice_id",
                 dedup_retention_hours=48,
+                gsheet_id=None,
                 receiver_emails=settings.default_receiver_email,
                 keywords="클라우드,AI,교육",
             )
