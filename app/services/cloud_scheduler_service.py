@@ -1,6 +1,5 @@
 import json
 from datetime import time
-from urllib.parse import urlsplit, urlunsplit
 
 from app.core.config import settings
 from app.schemas import ScraperConfig, SchedulerStatus
@@ -19,24 +18,6 @@ def _configured() -> bool:
         settings.cloud_scheduler_target_url,
     ]
     return settings.cloud_scheduler_enabled and all(item.strip() for item in required)
-
-
-def _scheduler_target_url() -> str:
-    raw_url = settings.cloud_scheduler_target_url.strip()
-    if not raw_url:
-        return raw_url
-
-    parsed = urlsplit(raw_url)
-    path = parsed.path or ""
-    if path in {"", "/"}:
-        path = "/run"
-    return urlunsplit((parsed.scheme, parsed.netloc, path, parsed.query, parsed.fragment))
-
-
-def _scheduler_audience() -> str:
-    target_url = _scheduler_target_url()
-    parsed = urlsplit(target_url)
-    return urlunsplit((parsed.scheme, parsed.netloc, "", "", ""))
 
 
 def _build_schedule(notify_time: time) -> str:
@@ -78,7 +59,7 @@ def _build_body(config: ScraperConfig, notify_time: time) -> bytes:
 def _build_http_target(config: ScraperConfig, notify_time: time):
     headers = {"Content-Type": "application/json"}
     target = scheduler_v1.HttpTarget(
-        uri=_scheduler_target_url(),
+        uri=settings.cloud_scheduler_target_url,
         http_method=scheduler_v1.HttpMethod.POST,
         headers=headers,
         body=_build_body(config, notify_time),
@@ -87,7 +68,7 @@ def _build_http_target(config: ScraperConfig, notify_time: time):
     if settings.cloud_scheduler_invoker_service_account:
         target.oidc_token = scheduler_v1.OidcToken(
             service_account_email=settings.cloud_scheduler_invoker_service_account,
-            audience=_scheduler_audience(),
+            audience=settings.cloud_scheduler_target_url,
         )
 
     return target
@@ -104,7 +85,7 @@ def get_scheduler_status(config: ScraperConfig) -> SchedulerStatus:
             paused=not config.enabled,
             schedule=schedule,
             job_name="",
-            target_url=_scheduler_target_url(),
+            target_url=settings.cloud_scheduler_target_url,
             message="Cloud Scheduler 연동이 비활성화되어 있습니다.",
         )
 
@@ -116,7 +97,7 @@ def get_scheduler_status(config: ScraperConfig) -> SchedulerStatus:
             paused=not config.enabled,
             schedule=schedule,
             job_name=f"{settings.cloud_scheduler_job_id}-*",
-            target_url=_scheduler_target_url(),
+            target_url=settings.cloud_scheduler_target_url,
             message="google-cloud-scheduler 패키지가 없어 상태를 확인할 수 없습니다.",
         )
 
@@ -134,7 +115,7 @@ def get_scheduler_status(config: ScraperConfig) -> SchedulerStatus:
             paused=paused,
             schedule=schedule,
             job_name=f"{settings.cloud_scheduler_job_id}-*",
-            target_url=_scheduler_target_url(),
+            target_url=settings.cloud_scheduler_target_url,
             message=f"Cloud Scheduler 잡 {len(jobs)}개가 연결되어 있습니다.",
         )
     except Exception as exc:
@@ -145,7 +126,7 @@ def get_scheduler_status(config: ScraperConfig) -> SchedulerStatus:
             paused=not config.enabled,
             schedule=schedule,
             job_name=f"{settings.cloud_scheduler_job_id}-*",
-            target_url=_scheduler_target_url(),
+            target_url=settings.cloud_scheduler_target_url,
             message=f"Cloud Scheduler 상태 조회 실패: {exc}",
         )
 

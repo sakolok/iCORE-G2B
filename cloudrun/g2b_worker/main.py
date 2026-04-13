@@ -1,5 +1,6 @@
 import json
 import os
+import logging
 from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
@@ -17,6 +18,7 @@ except Exception:  # pragma: no cover
 
 
 app = FastAPI(title="iCore G2B Scraper Worker", version="0.1.0")
+logger = logging.getLogger("icore.g2b_worker")
 
 
 class NoticeRow(BaseModel):
@@ -191,7 +193,10 @@ def _build_sheets_service():
         )
         return build("sheets", "v4", credentials=creds)
 
-    return build("sheets", "v4")
+    try:
+        return build("sheets", "v4")
+    except Exception:
+        return None
 
 
 def _append_to_sheet(notices: list[NoticeRow], run_id: str, payload: ScraperJobPayload) -> int:
@@ -221,14 +226,18 @@ def _append_to_sheet(notices: list[NoticeRow], run_id: str, payload: ScraperJobP
         )
 
     body = {"values": rows}
-    service.spreadsheets().values().append(
-        spreadsheetId=sheet_id,
-        range=f"{tab_name}!A:H",
-        valueInputOption="RAW",
-        insertDataOption="INSERT_ROWS",
-        body=body,
-    ).execute()
-    return len(rows)
+    try:
+        service.spreadsheets().values().append(
+            spreadsheetId=sheet_id,
+            range=f"{tab_name}!A:H",
+            valueInputOption="RAW",
+            insertDataOption="INSERT_ROWS",
+            body=body,
+        ).execute()
+        return len(rows)
+    except Exception:
+        logger.exception("Failed to append notices to Google Sheet")
+        return 0
 
 
 def _report_run_result(
@@ -288,17 +297,34 @@ def run_scraper(job: ScraperJobPayload) -> dict[str, Any]:
         job.keywords = _normalize_string_list(job.keywords)
         job.receiver_emails = _normalize_string_list(job.receiver_emails)
 
-        notices = _fetch_g2b_notices(job.keywords)
+        try:
+            notices = _fetch_g2b_notices(job.keywords)
+        except Exception as error:
+            raise RuntimeError(f"fetch failed: {error}") from error
+
         notice_count = len(notices)
-        deduped_notices = _dedup_with_backend(run_id, job, notices)
+        try:
+            deduped_notices = _dedup_with_backend(run_id, job, notices)
+        except Exception as error:
+            raise RuntimeError(f"dedup failed: {error}") from error
+
         deduped_count = max(0, notice_count - len(deduped_notices))
-        mail_triggered = _trigger_apps_script_mail_webhook(
-            run_id=run_id,
-            payload=job,
-            notices=deduped_notices,
-        )
+        try:
+            mail_triggered = _trigger_apps_script_mail_webhook(
+                run_id=run_id,
+                payload=job,
+                notices=deduped_notices,
+            )
+        except Exception:
+            logger.exception("Apps Script webhook trigger failed")
+            mail_triggered = False
+
         email_sent_count = 1 if mail_triggered else 0
-        sheet_written_count = _append_to_sheet(deduped_notices, run_id, job)
+        try:
+            sheet_written_count = _append_to_sheet(deduped_notices, run_id, job)
+        except Exception:
+            logger.exception("Sheet write failed")
+            sheet_written_count = 0
 
         status = "success"
         error_message = None
@@ -327,6 +353,7 @@ def run_scraper(job: ScraperJobPayload) -> dict[str, Any]:
             "sheet_written_count": sheet_written_count,
         }
     except Exception as exc:
+        logger.exception("Worker run failed")
         try:
             _report_run_result(
                 run_id=run_id,
