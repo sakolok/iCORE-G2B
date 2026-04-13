@@ -7,7 +7,7 @@ from datetime import datetime, time, timezone
 from datetime import timedelta
 from uuid import uuid4
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -634,11 +634,21 @@ def upsert_scraper_config(db: Session, config: ScraperConfig) -> ScraperConfig:
         row.notify_times = serialized_notify_times
         db.flush()
     except Exception:
-        # Legacy DB compatibility: TIME 타입이면 첫 번째 시각만 저장
         db.rollback()
         row = db.execute(select(ScraperConfigModel).limit(1)).scalar_one()
         row.enabled = config.enabled
-        row.notify_times = _parse_notify_times(serialized_notify_times)[0]
+        try:
+            # Legacy DB compatibility: notify_times가 TIME 타입이면 TEXT로 승격 후 재시도
+            db.execute(text("ALTER TABLE scraper_configs MODIFY COLUMN notify_times TEXT NOT NULL"))
+            db.flush()
+            row.notify_times = serialized_notify_times
+            db.flush()
+        except Exception:
+            # ALTER 권한이 없거나 실패하면 최소한 첫 번째 시각이라도 저장
+            db.rollback()
+            row = db.execute(select(ScraperConfigModel).limit(1)).scalar_one()
+            row.enabled = config.enabled
+            row.notify_times = _parse_notify_times(serialized_notify_times)[0]
     row.gsheet_id = config.gsheet_id
     row.receiver_emails = ",".join(str(email) for email in config.receiver_emails)
     row.keywords = ",".join(config.keywords)
