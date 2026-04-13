@@ -565,10 +565,24 @@ def delete_landing_page(db: Session, landing_page_id: str) -> None:
     db.commit()
 
 
-def _parse_notify_times(raw: str) -> list[time]:
+def _parse_notify_times(raw: object) -> list[time]:
+    if isinstance(raw, time):
+        return [raw]
+
+    if isinstance(raw, timedelta):
+        total_seconds = int(raw.total_seconds()) % (24 * 60 * 60)
+        hour = total_seconds // 3600
+        minute = (total_seconds % 3600) // 60
+        second = total_seconds % 60
+        return [time(hour=hour, minute=minute, second=second)]
+
+    if isinstance(raw, list):
+        chunks = [str(item).strip() for item in raw]
+    else:
+        chunks = [item.strip() for item in str(raw or "").split(",")]
+
     parsed: list[time] = []
-    for item in (raw or "").split(","):
-        candidate = item.strip()
+    for candidate in chunks:
         if not candidate:
             continue
         try:
@@ -615,7 +629,16 @@ def get_scraper_config(db: Session) -> ScraperConfig:
 def upsert_scraper_config(db: Session, config: ScraperConfig) -> ScraperConfig:
     row = db.execute(select(ScraperConfigModel).limit(1)).scalar_one()
     row.enabled = config.enabled
-    row.notify_times = _serialize_notify_times(config.notify_times)
+    serialized_notify_times = _serialize_notify_times(config.notify_times)
+    try:
+        row.notify_times = serialized_notify_times
+        db.flush()
+    except Exception:
+        # Legacy DB compatibility: TIME 타입이면 첫 번째 시각만 저장
+        db.rollback()
+        row = db.execute(select(ScraperConfigModel).limit(1)).scalar_one()
+        row.enabled = config.enabled
+        row.notify_times = _parse_notify_times(serialized_notify_times)[0]
     row.gsheet_id = config.gsheet_id
     row.receiver_emails = ",".join(str(email) for email in config.receiver_emails)
     row.keywords = ",".join(config.keywords)
