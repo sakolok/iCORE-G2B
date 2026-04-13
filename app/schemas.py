@@ -118,6 +118,7 @@ class ScraperNotice(BaseModel):
     title: str = Field(..., min_length=1, max_length=500)
     agency: str = ""
     estimated_price: str = ""
+    published_at: Optional[datetime] = None
     deadline_at: Optional[datetime] = None
     notice_url: str = ""
 
@@ -136,11 +137,7 @@ class ScraperRunSummary(BaseModel):
 
 class ScraperConfig(BaseModel):
     enabled: bool = True
-    schedule_mode: Literal["daily", "interval"] = "daily"
-    notify_time: time = time(hour=9, minute=0)
-    interval_minutes: int = Field(default=60, ge=5, le=1440)
-    dedup_mode: Literal["notice_id", "notice_id_and_title"] = "notice_id"
-    dedup_retention_hours: int = Field(default=48, ge=1, le=720)
+    notify_times: list[time] = Field(default_factory=lambda: [time(hour=9, minute=0)], min_length=1)
     gsheet_id: Optional[str] = Field(default=None, max_length=120)
     receiver_emails: list[EmailStr]
     keywords: list[str] = Field(min_length=1)
@@ -150,8 +147,7 @@ class ScraperConfig(BaseModel):
 
 class ScraperDedupFilterRequest(BaseModel):
     run_id: str = Field(..., min_length=1, max_length=64)
-    dedup_mode: Literal["notice_id", "notice_id_and_title"] = "notice_id"
-    dedup_retention_hours: int = Field(default=48, ge=1, le=720)
+    since_notified_at: Optional[datetime] = None
     notices: list[ScraperNotice] = Field(default_factory=list)
 
 

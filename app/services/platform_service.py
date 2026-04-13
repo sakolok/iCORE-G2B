@@ -3,7 +3,7 @@ import base64
 import hashlib
 import requests
 from html import escape
-from datetime import datetime, timezone
+from datetime import datetime, time, timezone
 from datetime import timedelta
 from uuid import uuid4
 
@@ -565,6 +565,35 @@ def delete_landing_page(db: Session, landing_page_id: str) -> None:
     db.commit()
 
 
+def _parse_notify_times(raw: str) -> list[time]:
+    parsed: list[time] = []
+    for item in (raw or "").split(","):
+        candidate = item.strip()
+        if not candidate:
+            continue
+        try:
+            parsed.append(time.fromisoformat(candidate))
+        except ValueError:
+            continue
+
+    if not parsed:
+        parsed = [time(hour=9, minute=0)]
+
+    unique: dict[str, time] = {}
+    for item in parsed:
+        unique[item.isoformat()] = item
+    return [unique[key] for key in sorted(unique.keys())]
+
+
+def _serialize_notify_times(values: list[time]) -> str:
+    unique: dict[str, time] = {}
+    for item in values:
+        unique[item.isoformat()] = item
+    if not unique:
+        unique["09:00:00"] = time(hour=9, minute=0)
+    return ",".join(sorted(unique.keys()))
+
+
 def get_scraper_config(db: Session) -> ScraperConfig:
     row = db.execute(select(ScraperConfigModel).limit(1)).scalar_one()
 
@@ -573,11 +602,7 @@ def get_scraper_config(db: Session) -> ScraperConfig:
 
     config = ScraperConfig(
         enabled=row.enabled,
-        schedule_mode=row.schedule_mode,
-        notify_time=row.notify_time,
-        interval_minutes=row.interval_minutes,
-        dedup_mode=row.dedup_mode,
-        dedup_retention_hours=row.dedup_retention_hours,
+        notify_times=_parse_notify_times(row.notify_times),
         gsheet_id=row.gsheet_id,
         receiver_emails=emails,
         keywords=keywords,
@@ -590,11 +615,7 @@ def get_scraper_config(db: Session) -> ScraperConfig:
 def upsert_scraper_config(db: Session, config: ScraperConfig) -> ScraperConfig:
     row = db.execute(select(ScraperConfigModel).limit(1)).scalar_one()
     row.enabled = config.enabled
-    row.schedule_mode = config.schedule_mode
-    row.notify_time = config.notify_time
-    row.interval_minutes = config.interval_minutes
-    row.dedup_mode = config.dedup_mode
-    row.dedup_retention_hours = config.dedup_retention_hours
+    row.notify_times = _serialize_notify_times(config.notify_times)
     row.gsheet_id = config.gsheet_id
     row.receiver_emails = ",".join(str(email) for email in config.receiver_emails)
     row.keywords = ",".join(config.keywords)
@@ -619,7 +640,7 @@ def create_scraper_task(config: ScraperConfig, reason: str | None) -> TriggerScr
     task_id = str(uuid4())
     message = (
         "Scraper 실행 요청이 등록되었습니다. "
-        f"mode={config.schedule_mode}, dedup={config.dedup_mode}, receivers={len(config.receiver_emails)}명, reason={reason_text}"
+        f"notify_times={len(config.notify_times)}개, receivers={len(config.receiver_emails)}명, reason={reason_text}"
     )
     return TriggerScraperResponse(accepted=True, message=message, task_id=task_id)
 
@@ -675,6 +696,15 @@ def _fetch_g2b_notices(keywords: list[str]) -> list[ScraperNotice]:
                     title=title,
                     agency=str(item.get("agency") or item.get("organization") or item.get("ntceInsttNm") or "").strip(),
                     estimated_price=str(item.get("estimated_price") or item.get("estPrice") or item.get("presmptPrce") or "").strip(),
+                    published_at=_parse_deadline(
+                        str(
+                            item.get("published_at")
+                            or item.get("created_at")
+                            or item.get("rgstDt")
+                            or item.get("bidNtceDt")
+                            or ""
+                        )
+                    ),
                     deadline_at=_parse_deadline(
                         str(item.get("deadline_at") or item.get("deadline") or item.get("bidClseDt") or "")
                     ),
@@ -786,8 +816,6 @@ def run_scraper_pipeline(
         db,
         ScraperDedupFilterRequest(
             run_id=run_id,
-            dedup_mode=config.dedup_mode,
-            dedup_retention_hours=config.dedup_retention_hours,
             notices=notices,
         ),
     )
@@ -864,14 +892,21 @@ def list_scraper_runs(db: Session, limit: int = 20) -> list[ScraperRunSummary]:
     return [_to_run_summary(row) for row in rows]
 
 
-def _make_dedup_key(notice: ScraperNotice, dedup_mode: str) -> str:
+def _make_dedup_key(notice: ScraperNotice) -> str:
     notice_id = (notice.notice_id or "").strip().lower()
     title = (notice.title or "").strip().lower()
-    if dedup_mode == "notice_id_and_title":
-        raw = f"{notice_id}|{title}"
-    else:
-        raw = notice_id or title
+    raw = notice_id or title
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()
+
+
+def _last_notified_at(db: Session) -> datetime | None:
+    row = db.execute(
+        select(ScraperRunModel)
+        .where(ScraperRunModel.status.in_(["success", "partial"]))
+        .order_by(ScraperRunModel.executed_at.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    return row.executed_at if row is not None else None
 
 
 def filter_new_scraper_notices(
@@ -879,11 +914,14 @@ def filter_new_scraper_notices(
     payload: ScraperDedupFilterRequest,
 ) -> ScraperDedupFilterResponse:
     now = datetime.now(timezone.utc)
-    horizon = now - timedelta(hours=payload.dedup_retention_hours)
+    since_notified_at = payload.since_notified_at or _last_notified_at(db)
     kept: list[ScraperNotice] = []
 
     for notice in payload.notices:
-        dedup_key = _make_dedup_key(notice, payload.dedup_mode)
+        if since_notified_at is not None and notice.published_at is not None and notice.published_at <= since_notified_at:
+            continue
+
+        dedup_key = _make_dedup_key(notice)
         existing = db.execute(
             select(ScraperNoticeModel).where(ScraperNoticeModel.dedup_key == dedup_key)
         ).scalar_one_or_none()
@@ -896,6 +934,7 @@ def filter_new_scraper_notices(
                     title=notice.title,
                     agency=notice.agency,
                     estimated_price=notice.estimated_price,
+                    published_at=notice.published_at,
                     deadline_at=notice.deadline_at,
                     notice_url=notice.notice_url,
                     first_seen_at=now,
@@ -903,18 +942,6 @@ def filter_new_scraper_notices(
                     last_run_id=payload.run_id,
                 )
             )
-            kept.append(notice)
-            continue
-
-        if existing.last_seen_at < horizon:
-            existing.notice_id = notice.notice_id
-            existing.title = notice.title
-            existing.agency = notice.agency
-            existing.estimated_price = notice.estimated_price
-            existing.deadline_at = notice.deadline_at
-            existing.notice_url = notice.notice_url
-            existing.last_seen_at = now
-            existing.last_run_id = payload.run_id
             kept.append(notice)
             continue
 
@@ -968,7 +995,7 @@ def record_scraper_run_report(db: Session, payload: ScraperRunReportRequest) -> 
         row.executed_at = executed_at
 
     for notice in payload.notices:
-        dedup_key = _make_dedup_key(notice, "notice_id")
+        dedup_key = _make_dedup_key(notice)
         existing = db.execute(
             select(ScraperNoticeModel).where(ScraperNoticeModel.dedup_key == dedup_key)
         ).scalar_one_or_none()
@@ -980,6 +1007,7 @@ def record_scraper_run_report(db: Session, payload: ScraperRunReportRequest) -> 
                     title=notice.title,
                     agency=notice.agency,
                     estimated_price=notice.estimated_price,
+                    published_at=notice.published_at,
                     deadline_at=notice.deadline_at,
                     notice_url=notice.notice_url,
                     first_seen_at=executed_at,
@@ -992,6 +1020,7 @@ def record_scraper_run_report(db: Session, payload: ScraperRunReportRequest) -> 
             existing.title = notice.title
             existing.agency = notice.agency
             existing.estimated_price = notice.estimated_price
+            existing.published_at = notice.published_at
             existing.deadline_at = notice.deadline_at
             existing.notice_url = notice.notice_url
             existing.last_seen_at = executed_at

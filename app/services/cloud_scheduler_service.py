@@ -20,30 +20,34 @@ def _configured() -> bool:
     return settings.cloud_scheduler_enabled and all(item.strip() for item in required)
 
 
-def _build_schedule(config: ScraperConfig) -> str:
-    if config.schedule_mode == "interval":
-        return f"every {config.interval_minutes} minutes"
-
-    notify_time: time = config.notify_time
+def _build_schedule(notify_time: time) -> str:
     return f"{notify_time.minute} {notify_time.hour} * * *"
 
 
-def _job_name() -> str:
+def _normalize_notify_times(config: ScraperConfig) -> list[time]:
+    unique: dict[str, time] = {}
+    for item in config.notify_times:
+        key = item.strftime("%H:%M:%S")
+        unique[key] = item
+    if not unique:
+        unique["09:00:00"] = time(hour=9, minute=0)
+    return [unique[key] for key in sorted(unique.keys())]
+
+
+def _job_name(index: int) -> str:
+    job_id = f"{settings.cloud_scheduler_job_id}-{index}"
     return (
         f"projects/{settings.cloud_scheduler_project_id}"
         f"/locations/{settings.cloud_scheduler_location}"
-        f"/jobs/{settings.cloud_scheduler_job_id}"
+        f"/jobs/{job_id}"
     )
 
 
-def _build_body(config: ScraperConfig) -> bytes:
+def _build_body(config: ScraperConfig, notify_time: time) -> bytes:
     payload = {
         "enabled": config.enabled,
-        "schedule_mode": config.schedule_mode,
-        "notify_time": config.notify_time.isoformat(),
-        "interval_minutes": config.interval_minutes,
-        "dedup_mode": config.dedup_mode,
-        "dedup_retention_hours": config.dedup_retention_hours,
+        "notify_time": notify_time.isoformat(),
+        "notify_times": [item.isoformat() for item in _normalize_notify_times(config)],
         "gsheet_id": config.gsheet_id,
         "gsheet_tab_name": settings.gsheet_tab_name,
         "receiver_emails": config.receiver_emails,
@@ -52,13 +56,13 @@ def _build_body(config: ScraperConfig) -> bytes:
     return json.dumps(payload, ensure_ascii=False).encode("utf-8")
 
 
-def _build_http_target(config: ScraperConfig):
+def _build_http_target(config: ScraperConfig, notify_time: time):
     headers = {"Content-Type": "application/json"}
     target = scheduler_v1.HttpTarget(
         uri=settings.cloud_scheduler_target_url,
         http_method=scheduler_v1.HttpMethod.POST,
         headers=headers,
-        body=_build_body(config),
+        body=_build_body(config, notify_time),
     )
 
     if settings.cloud_scheduler_invoker_service_account:
@@ -71,7 +75,8 @@ def _build_http_target(config: ScraperConfig):
 
 
 def get_scheduler_status(config: ScraperConfig) -> SchedulerStatus:
-    schedule = _build_schedule(config)
+    notify_times = _normalize_notify_times(config)
+    schedule = ", ".join(item.strftime("%H:%M:%S") for item in notify_times)
     if not _configured():
         return SchedulerStatus(
             configured=False,
@@ -91,28 +96,27 @@ def get_scheduler_status(config: ScraperConfig) -> SchedulerStatus:
             applied=False,
             paused=not config.enabled,
             schedule=schedule,
-            job_name=_job_name(),
+            job_name=f"{settings.cloud_scheduler_job_id}-*",
             target_url=settings.cloud_scheduler_target_url,
             message="google-cloud-scheduler 패키지가 없어 상태를 확인할 수 없습니다.",
         )
 
     client = scheduler_v1.CloudSchedulerClient()
     try:
-        job = client.get_job(name=_job_name())
-        paused = (
-            job.state == scheduler_v1.Job.State.PAUSED
-            if job.state is not None
-            else not config.enabled
+        jobs = [client.get_job(name=_job_name(index)) for index in range(1, len(notify_times) + 1)]
+        paused = all(
+            job.state == scheduler_v1.Job.State.PAUSED if job.state is not None else not config.enabled
+            for job in jobs
         )
         return SchedulerStatus(
             configured=True,
             connected=True,
             applied=True,
             paused=paused,
-            schedule=job.schedule or schedule,
-            job_name=job.name,
-            target_url=job.http_target.uri if job.http_target else settings.cloud_scheduler_target_url,
-            message="Cloud Scheduler 잡이 연결되어 있습니다.",
+            schedule=schedule,
+            job_name=f"{settings.cloud_scheduler_job_id}-*",
+            target_url=settings.cloud_scheduler_target_url,
+            message=f"Cloud Scheduler 잡 {len(jobs)}개가 연결되어 있습니다.",
         )
     except Exception as exc:
         return SchedulerStatus(
@@ -121,14 +125,13 @@ def get_scheduler_status(config: ScraperConfig) -> SchedulerStatus:
             applied=False,
             paused=not config.enabled,
             schedule=schedule,
-            job_name=_job_name(),
+            job_name=f"{settings.cloud_scheduler_job_id}-*",
             target_url=settings.cloud_scheduler_target_url,
             message=f"Cloud Scheduler 상태 조회 실패: {exc}",
         )
 
 
 def sync_scheduler_job(config: ScraperConfig) -> SchedulerStatus:
-    schedule = _build_schedule(config)
     if not _configured():
         return get_scheduler_status(config)
 
@@ -140,32 +143,48 @@ def sync_scheduler_job(config: ScraperConfig) -> SchedulerStatus:
         f"projects/{settings.cloud_scheduler_project_id}"
         f"/locations/{settings.cloud_scheduler_location}"
     )
-    name = _job_name()
+    notify_times = _normalize_notify_times(config)
+    active_job_names: set[str] = set()
+
+    for index, notify_time in enumerate(notify_times, start=1):
+        name = _job_name(index)
+        active_job_names.add(name)
+        schedule = _build_schedule(notify_time)
+
+        try:
+            client.get_job(name=name)
+            job = scheduler_v1.Job(
+                name=name,
+                schedule=schedule,
+                time_zone=settings.cloud_scheduler_timezone,
+                http_target=_build_http_target(config, notify_time),
+            )
+            update_mask = {"paths": ["schedule", "time_zone", "http_target"]}
+            client.update_job(job=job, update_mask=update_mask)
+        except Exception:
+            job = scheduler_v1.Job(
+                name=name,
+                schedule=schedule,
+                time_zone=settings.cloud_scheduler_timezone,
+                http_target=_build_http_target(config, notify_time),
+            )
+            client.create_job(parent=parent, job=job)
+
+        try:
+            if config.enabled:
+                client.resume_job(name=name)
+            else:
+                client.pause_job(name=name)
+        except Exception:
+            pass
 
     try:
-        client.get_job(name=name)
-        job = scheduler_v1.Job(
-            name=name,
-            schedule=schedule,
-            time_zone=settings.cloud_scheduler_timezone,
-            http_target=_build_http_target(config),
-        )
-        update_mask = {"paths": ["schedule", "time_zone", "http_target"]}
-        client.update_job(job=job, update_mask=update_mask)
-    except Exception:
-        job = scheduler_v1.Job(
-            name=name,
-            schedule=schedule,
-            time_zone=settings.cloud_scheduler_timezone,
-            http_target=_build_http_target(config),
-        )
-        client.create_job(parent=parent, job=job)
-
-    try:
-        if config.enabled:
-            client.resume_job(name=name)
-        else:
-            client.pause_job(name=name)
+        for job in client.list_jobs(parent=parent):
+            if (
+                job.name.startswith(f"{parent}/jobs/{settings.cloud_scheduler_job_id}-")
+                and job.name not in active_job_names
+            ):
+                client.delete_job(name=job.name)
     except Exception:
         pass
 
@@ -180,7 +199,7 @@ def run_scheduler_job_now(config: ScraperConfig, reason: str | None):
         return None
 
     client = scheduler_v1.CloudSchedulerClient()
-    name = _job_name()
+    name = _job_name(1)
     try:
         sync_scheduler_job(config)
         client.run_job(name=name)

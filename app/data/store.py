@@ -28,11 +28,7 @@ class InMemoryStore:
 
         self.scraper_config = ScraperConfig(
             enabled=True,
-            schedule_mode="daily",
-            notify_time=time(hour=9, minute=0),
-            interval_minutes=60,
-            dedup_mode="notice_id",
-            dedup_retention_hours=48,
+            notify_times=[time(hour=9, minute=0)],
             receiver_emails=["admin@icore.local"],
             keywords=["클라우드", "AI", "교육"],
         )

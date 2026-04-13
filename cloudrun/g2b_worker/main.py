@@ -24,17 +24,14 @@ class NoticeRow(BaseModel):
     title: str = Field(..., min_length=1, max_length=500)
     agency: str = ""
     estimated_price: str = ""
+    published_at: datetime | None = None
     deadline_at: datetime | None = None
     notice_url: str = ""
 
 
 class ScraperJobPayload(BaseModel):
     enabled: bool = True
-    schedule_mode: str = "daily"
-    notify_time: str = "09:00:00"
-    interval_minutes: int = 60
-    dedup_mode: str = "notice_id"
-    dedup_retention_hours: int = 48
+    notify_times: list[str] = Field(default_factory=lambda: ["09:00:00"])
     gsheet_id: str | None = None
     gsheet_tab_name: str = "나라장터 공고 수집 목록"
     receiver_emails: list[str] = Field(default_factory=list)
@@ -90,12 +87,16 @@ def _extract_from_item(item: dict[str, Any]) -> NoticeRow | None:
     estimated_price = str(item.get("estimated_price") or item.get("estPrice") or item.get("presmptPrce") or "").strip()
     notice_url = str(item.get("notice_url") or item.get("url") or item.get("link") or "").strip()
     deadline_at = _parse_deadline(item.get("deadline_at") or item.get("deadline") or item.get("bidClseDt"))
+    published_at = _parse_deadline(
+        item.get("published_at") or item.get("created_at") or item.get("rgstDt") or item.get("bidNtceDt")
+    )
 
     return NoticeRow(
         notice_id=notice_id,
         title=title,
         agency=agency,
         estimated_price=estimated_price,
+        published_at=published_at,
         deadline_at=deadline_at,
         notice_url=notice_url,
     )
@@ -142,8 +143,6 @@ def _dedup_with_backend(run_id: str, payload: ScraperJobPayload, notices: list[N
     dedup_url = f"{base_url}/api/scraper/internal/dedup"
     body = {
         "run_id": run_id,
-        "dedup_mode": payload.dedup_mode,
-        "dedup_retention_hours": payload.dedup_retention_hours,
         "notices": [notice.model_dump(mode="json") for notice in notices],
     }
     response = requests.post(dedup_url, headers=_backend_headers(), json=body, timeout=20)

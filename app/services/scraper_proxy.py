@@ -5,11 +5,7 @@ from app.schemas import ScraperConfig, TriggerScraperResponse
 def build_scraper_config_payload(config: ScraperConfig) -> dict:
     return {
         "enabled": config.enabled,
-        "schedule_mode": config.schedule_mode,
-        "notify_time": config.notify_time.isoformat(),
-        "interval_minutes": config.interval_minutes,
-        "dedup_mode": config.dedup_mode,
-        "dedup_retention_hours": config.dedup_retention_hours,
+        "notify_times": [item.isoformat() for item in config.notify_times],
         "receiver_emails": config.receiver_emails,
         "keywords": config.keywords,
         "target_api": settings.scraper_private_api_base,

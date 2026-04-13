@@ -1,6 +1,6 @@
-from datetime import datetime, time, timezone
+from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, Integer, String, Text, Time
+from sqlalchemy import Boolean, DateTime, Integer, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -60,11 +60,7 @@ class ScraperConfigModel(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-    schedule_mode: Mapped[str] = mapped_column(String(20), nullable=False, default="daily")
-    notify_time: Mapped[time] = mapped_column(Time, nullable=False, default=time(hour=9, minute=0))
-    interval_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=60)
-    dedup_mode: Mapped[str] = mapped_column(String(40), nullable=False, default="notice_id")
-    dedup_retention_hours: Mapped[int] = mapped_column(Integer, nullable=False, default=48)
+    notify_times: Mapped[str] = mapped_column(Text, nullable=False, default="09:00:00")
     gsheet_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
     receiver_emails: Mapped[str] = mapped_column(Text, nullable=False)
     keywords: Mapped[str] = mapped_column(Text, nullable=False)
@@ -106,6 +102,7 @@ class ScraperNoticeModel(Base):
     title: Mapped[str] = mapped_column(String(500), nullable=False)
     agency: Mapped[str | None] = mapped_column(String(240), nullable=True)
     estimated_price: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     deadline_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     notice_url: Mapped[str | None] = mapped_column(String(600), nullable=True)
     first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
