@@ -113,12 +113,12 @@ jobs:
             --memory=512Mi \
             --cpu=1 \
             --timeout=300 \
-            --set-env-vars=BACKEND_INTERNAL_BASE_URL=${{ secrets.BACKEND_INTERNAL_BASE_URL }} \
-            --set-env-vars=SCRAPER_INTERNAL_TOKEN=${{ secrets.SCRAPER_INTERNAL_TOKEN }} \
-            --set-env-vars=G2B_SOURCE_URL=${{ secrets.SCRAPER_PRIVATE_API_BASE }} \
-            --set-env-vars=GSHEET_ID=${{ secrets.GSHEET_ID }} \
-            --set-env-vars=GSHEET_TAB_NAME=나라장터 공고 수집 목록 \
-            --set-env-vars=APPS_SCRIPT_WEBHOOK_URL=${{ secrets.APPS_SCRIPT_WEBHOOK_URL }}
+            --set-env-vars="BACKEND_INTERNAL_BASE_URL=${{ secrets.BACKEND_INTERNAL_BASE_URL }}" \
+            --set-env-vars="SCRAPER_INTERNAL_TOKEN=${{ secrets.SCRAPER_INTERNAL_TOKEN }}" \
+            --set-env-vars="G2B_SOURCE_URL=${{ secrets.SCRAPER_PRIVATE_API_BASE }}" \
+            --set-env-vars="GSHEET_ID=${{ secrets.GSHEET_ID }}" \
+            --set-env-vars="GSHEET_TAB_NAME=나라장터 공고 수집 목록" \
+            --set-env-vars="APPS_SCRIPT_WEBHOOK_URL=${{ secrets.APPS_SCRIPT_WEBHOOK_URL }}"
 
   deploy-vm:
     needs: test-and-build
