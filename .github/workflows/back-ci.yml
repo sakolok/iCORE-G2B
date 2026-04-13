@@ -109,6 +109,7 @@ jobs:
             --platform=managed \
             --allow-unauthenticated \
             --image=$IMAGE_PATH:${{ github.sha }} \
+            --service-account=cloud-run-call@${{ env.PROJECT_ID }}.iam.gserviceaccount.com \
             --port=8080 \
             --memory=512Mi \
             --cpu=1 \
