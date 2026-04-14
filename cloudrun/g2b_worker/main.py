@@ -17,6 +17,10 @@ except Exception:  # pragma: no cover
     build = None
 
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
 app = FastAPI(title="iCore G2B Scraper Worker", version="0.1.0")
 logger = logging.getLogger("icore.g2b_worker")
 
@@ -107,6 +111,10 @@ def _extract_from_item(item: dict[str, Any]) -> NoticeRow | None:
 def _fetch_g2b_notices(keywords: list[str]) -> list[NoticeRow]:
     source_url = os.getenv("G2B_SOURCE_URL", "").strip()
     if not source_url:
+        logger.warning("G2B_SOURCE_URL is not set – skipping fetch")
+        return []
+    if not keywords:
+        logger.warning("No keywords – skipping fetch")
         return []
 
     notices: list[NoticeRow] = []
@@ -121,6 +129,7 @@ def _fetch_g2b_notices(keywords: list[str]) -> list[NoticeRow]:
             response.raise_for_status()
             payload = response.json()
         except Exception:
+            logger.exception("G2B fetch failed for keyword=%r", keyword)
             continue
 
         items: list[dict[str, Any]] = []
@@ -182,6 +191,7 @@ def _trigger_apps_script_mail_webhook(
 
 def _build_sheets_service():
     if build is None:
+        logger.warning("google-api-python-client not available")
         return None
 
     inline_json = os.getenv("GSHEET_SERVICE_ACCOUNT_JSON", "").strip()
@@ -193,9 +203,11 @@ def _build_sheets_service():
         )
         return build("sheets", "v4", credentials=creds)
 
+    logger.info("GSHEET_SERVICE_ACCOUNT_JSON not set – using ADC (Cloud Run SA)")
     try:
         return build("sheets", "v4")
     except Exception:
+        logger.exception("Failed to build Sheets service via ADC")
         return None
 
 
@@ -209,6 +221,7 @@ def _append_to_sheet(notices: list[NoticeRow], run_id: str, payload: ScraperJobP
     if service is None:
         return 0
 
+    logger.info("Appending %d notices to sheet_id=%s tab=%s", len(notices), sheet_id, tab_name)
     rows: list[list[str]] = []
     now_iso = datetime.now(timezone.utc).isoformat()
     for row in notices:
@@ -296,6 +309,7 @@ def run_scraper(job: ScraperJobPayload) -> dict[str, Any]:
     try:
         job.keywords = _normalize_string_list(job.keywords)
         job.receiver_emails = _normalize_string_list(job.receiver_emails)
+        logger.info("Run %s: keywords=%s gsheet_id=%s", run_id, job.keywords, job.gsheet_id)
 
         try:
             notices = _fetch_g2b_notices(job.keywords)
@@ -303,6 +317,7 @@ def run_scraper(job: ScraperJobPayload) -> dict[str, Any]:
             raise RuntimeError(f"fetch failed: {error}") from error
 
         notice_count = len(notices)
+        logger.info("Run %s: fetched %d notices", run_id, notice_count)
         try:
             deduped_notices = _dedup_with_backend(run_id, job, notices)
         except Exception as error:
