@@ -436,6 +436,43 @@ def _append_to_sheet(notices: list[NoticeRow], run_id: str, payload: ScraperJobP
     values_to_write.append(["", "", "", "", "", ""])
     values_to_write.append([str(run_no), collected_at, "", "", "", ""])
 
+    def _format_krw_commas(raw: str) -> str:
+        """
+        Normalize an amount-like string into comma-separated KRW number.
+        - If input looks like a single integer amount (possibly with commas / suffix), format with commas.
+        - If it contains multiple numbers or non-trivial text (ranges), keep as-is.
+        """
+        text = (raw or "").strip()
+        if not text:
+            return ""
+        # If it looks like a range or composite (e.g. "1,000~2,000"), keep original.
+        if "~" in text or "-" in text:
+            return text
+
+        digits_only = re.sub(r"[^\d]", "", text)
+        if not digits_only:
+            return text
+
+        # If original has multiple separate numbers (e.g. "10억 2천"), be conservative.
+        number_tokens = re.findall(r"\d+", text.replace(",", ""))
+        if len(number_tokens) != 1:
+            return text
+
+        try:
+            value = int(digits_only)
+        except Exception:
+            return text
+        return f"{value:,}"
+
+    def _normalize_link_cell(raw: str) -> str:
+        text = (raw or "").strip()
+        if not text:
+            return ""
+        # 이미 시트 수식 형태로 내려오면 그대로 사용
+        if "HYPERLINK(" in text.upper():
+            return text if text.startswith("=") else f"={text}"
+        return f'=HYPERLINK("{text}","보기")'
+
     def _deadline_display(dt: datetime | None) -> str:
         if dt is None:
             return ""
@@ -444,28 +481,132 @@ def _append_to_sheet(notices: list[NoticeRow], run_id: str, payload: ScraperJobP
         return dt.astimezone(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d %H:%M")
 
     for n in notices:
-        url = (n.notice_url or "").strip()
-        link_cell = f'=HYPERLINK("{url}","보기")' if url else ""
+        link_cell = _normalize_link_cell(n.notice_url or "")
         values_to_write.append(
             [
                 (n.matched_keyword or "").strip(),
                 (n.title or "").strip(),
                 (n.agency or "").strip(),
-                (n.estimated_price or "").strip(),
+                _format_krw_commas(n.estimated_price or ""),
                 _deadline_display(n.deadline_at),
                 link_cell,
             ]
         )
 
     body = {"values": values_to_write}
+    def _a1_to_col_index(col: str) -> int:
+        col = (col or "").strip().upper()
+        idx = 0
+        for ch in col:
+            if "A" <= ch <= "Z":
+                idx = idx * 26 + (ord(ch) - ord("A") + 1)
+        return max(0, idx - 1)
+
+    def _parse_a1_range(a1: str) -> tuple[str, int, int, int, int] | None:
+        # e.g. "Tab!A10:F20" -> (tab, 9, 0, 20, 6) [0-based start row/col, end row/col exclusive]
+        if not a1 or "!" not in a1 or ":" not in a1:
+            return None
+        tab, rng = a1.split("!", 1)
+        start_ref, end_ref = rng.split(":", 1)
+
+        def _split_ref(ref: str) -> tuple[str, int] | None:
+            m = re.match(r"^([A-Za-z]+)(\d+)$", (ref or "").strip())
+            if not m:
+                return None
+            return m.group(1), int(m.group(2))
+
+        start = _split_ref(start_ref)
+        end = _split_ref(end_ref)
+        if start is None or end is None:
+            return None
+        start_col = _a1_to_col_index(start[0])
+        start_row = max(0, start[1] - 1)
+        end_col = _a1_to_col_index(end[0]) + 1
+        end_row = max(start_row + 1, end[1])
+        return tab, start_row, start_col, end_row, end_col
+
+    def _get_sheet_numeric_id() -> int | None:
+        try:
+            meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute()
+            for s in meta.get("sheets", []) or []:
+                props = (s or {}).get("properties", {}) or {}
+                if str(props.get("title") or "").strip() == tab_name:
+                    return props.get("sheetId")
+        except Exception:
+            logger.exception("Failed to resolve sheet numeric id for formatting")
+        return None
+
+    def _apply_append_formatting(updated_range: str, notice_row_count: int) -> None:
+        parsed = _parse_a1_range(updated_range)
+        if parsed is None:
+            return
+        _, start_row, _, end_row, _ = parsed
+        sheet_numeric_id = _get_sheet_numeric_id()
+        if sheet_numeric_id is None:
+            return
+
+        # 우리가 추가한 행 수 = 빈줄 1 + 런헤더 1 + 공고 n
+        appended_rows = 2 + max(0, notice_row_count)
+        # updatedRange가 더 크게 잡힐 수 있어(기존 데이터와 합쳐진 범위 등) 우리가 쓴 만큼만 포맷 적용
+        target_start = start_row
+        target_end = min(end_row, start_row + appended_rows)
+
+        white = {"red": 1.0, "green": 1.0, "blue": 1.0}
+        gray = {"red": 0.9, "green": 0.9, "blue": 0.9}
+
+        run_row = target_start + 1
+
+        requests_payload = [
+            # 1) 추가된 범위는 기본 흰색 배경으로 리셋 (서식 복제 방지)
+            {
+                "repeatCell": {
+                    "range": {
+                        "sheetId": sheet_numeric_id,
+                        "startRowIndex": target_start,
+                        "endRowIndex": target_end,
+                        "startColumnIndex": 0,
+                        "endColumnIndex": 6,
+                    },
+                    "cell": {"userEnteredFormat": {"backgroundColor": white}},
+                    "fields": "userEnteredFormat.backgroundColor",
+                }
+            },
+            # 2) 런 번호(A) + 수집시각(B) 셀만 회색
+            {
+                "repeatCell": {
+                    "range": {
+                        "sheetId": sheet_numeric_id,
+                        "startRowIndex": run_row,
+                        "endRowIndex": run_row + 1,
+                        "startColumnIndex": 0,
+                        "endColumnIndex": 2,
+                    },
+                    "cell": {"userEnteredFormat": {"backgroundColor": gray}},
+                    "fields": "userEnteredFormat.backgroundColor",
+                }
+            },
+        ]
+
+        try:
+            service.spreadsheets().batchUpdate(
+                spreadsheetId=sheet_id,
+                body={"requests": requests_payload},
+            ).execute()
+        except Exception:
+            logger.exception("Failed to apply sheet formatting updates")
+
     try:
-        service.spreadsheets().values().append(
+        append_result = service.spreadsheets().values().append(
             spreadsheetId=sheet_id,
             range=f"{tab_name}!A:F",
-            valueInputOption="RAW",
+            # HYPERLINK 같은 수식을 정상 동작시키려면 USER_ENTERED 가 필요
+            valueInputOption="USER_ENTERED",
             insertDataOption="INSERT_ROWS",
             body=body,
         ).execute()
+        updated_range = ((append_result or {}).get("updates") or {}).get("updatedRange") or ""
+        if updated_range:
+            _apply_append_formatting(updated_range, len(notices))
         # 공고 행 수만 반환
         return len(notices)
     except Exception:
@@ -539,7 +680,18 @@ def run_scraper(job: ScraperJobPayload) -> dict[str, Any]:
         notice_count = len(notices)
         logger.info("Run %s: fetched %d notices", run_id, notice_count)
         try:
+            keyword_map: dict[tuple[str, str], str] = {}
+            for notice in notices:
+                key = ((notice.notice_id or "").strip(), (notice.title or "").strip())
+                if key != ("", "") and key not in keyword_map:
+                    keyword_map[key] = (notice.matched_keyword or "").strip()
             deduped_notices = _dedup_with_backend(run_id, job, notices)
+            # 백엔드 dedup 스키마에는 matched_keyword가 없어서 떨어질 수 있으므로 복원
+            for notice in deduped_notices:
+                key = ((notice.notice_id or "").strip(), (notice.title or "").strip())
+                restored = keyword_map.get(key, "")
+                if restored:
+                    notice.matched_keyword = restored
         except Exception as error:
             raise RuntimeError(f"dedup failed: {error}") from error
 
