@@ -121,7 +121,8 @@ def _fetch_g2b_notices(keywords: list[str]) -> list[NoticeRow]:
     timeout = int(os.getenv("G2B_HTTP_TIMEOUT_SECONDS", "20"))
 
     for keyword in keywords:
-        params = {"keyword": keyword}
+        params = {"bidNtceNm": keyword, "numOfRows": "100", "pageNo": "1"}
+
         headers = {"Accept": "application/json"}
 
         try:
