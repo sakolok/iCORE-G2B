@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import parse_qsl, urlparse
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 import requests
 from fastapi import FastAPI, HTTPException
@@ -30,6 +31,7 @@ logger = logging.getLogger("icore.g2b_worker")
 
 
 class NoticeRow(BaseModel):
+    matched_keyword: str = ""
     notice_id: str = ""
     title: str = Field(..., min_length=1, max_length=500)
     agency: str = ""
@@ -321,6 +323,7 @@ def _fetch_g2b_notices(keywords: list[str]) -> list[NoticeRow]:
         for item in items:
             parsed = _extract_from_item(item)
             if parsed is not None:
+                parsed.matched_keyword = keyword
                 notices.append(parsed)
 
     return notices
@@ -391,7 +394,7 @@ def _build_sheets_service():
 def _append_to_sheet(notices: list[NoticeRow], run_id: str, payload: ScraperJobPayload) -> int:
     sheet_id = (payload.gsheet_id or "").strip() or os.getenv("GSHEET_ID", "").strip()
     tab_name = (payload.gsheet_tab_name or "").strip() or os.getenv("GSHEET_TAB_NAME", "나라장터 공고 수집 목록").strip()
-    if not sheet_id or not notices:
+    if not sheet_id:
         return 0
 
     service = _build_sheets_service()
@@ -399,32 +402,72 @@ def _append_to_sheet(notices: list[NoticeRow], run_id: str, payload: ScraperJobP
         return 0
 
     logger.info("Appending %d notices to sheet_id=%s tab=%s", len(notices), sheet_id, tab_name)
-    rows: list[list[str]] = []
-    now_iso = datetime.now(timezone.utc).isoformat()
-    for row in notices:
-        rows.append(
+
+    # n번째 수집 계산: A열에서 숫자인 값만 모아 max+1 (공고 행 A열은 키워드 문자열)
+    run_no = 1
+    try:
+        col_a = (
+            service.spreadsheets()
+            .values()
+            .get(spreadsheetId=sheet_id, range=f"{tab_name}!A:A")
+            .execute()
+            .get("values", [])
+        )
+        max_seen = 0
+        for row in col_a:
+            if not row:
+                continue
+            raw = str(row[0]).strip()
+            if raw.isdigit():
+                max_seen = max(max_seen, int(raw))
+        run_no = max_seen + 1
+    except Exception:
+        logger.exception("Failed to compute run number from sheet. Defaulting to 1.")
+        run_no = 1
+
+    now_kst = datetime.now(timezone.utc).astimezone(ZoneInfo("Asia/Seoul"))
+    collected_at = now_kst.strftime("%Y-%m-%d %H:%M:%S")
+
+    # 형식:
+    # (빈줄)
+    # [n번째 수집, 수집시각, ...]
+    # [키워드, 공고명, 기관, 추정가격, 마감일시, 링크]
+    values_to_write: list[list[str]] = []
+    values_to_write.append(["", "", "", "", "", ""])
+    values_to_write.append([str(run_no), collected_at, "", "", "", ""])
+
+    def _deadline_display(dt: datetime | None) -> str:
+        if dt is None:
+            return ""
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d %H:%M")
+
+    for n in notices:
+        url = (n.notice_url or "").strip()
+        link_cell = f'=HYPERLINK("{url}","보기")' if url else ""
+        values_to_write.append(
             [
-                now_iso,
-                run_id,
-                row.notice_id,
-                row.title,
-                row.agency,
-                row.estimated_price,
-                row.deadline_at.isoformat() if row.deadline_at else "",
-                row.notice_url,
+                (n.matched_keyword or "").strip(),
+                (n.title or "").strip(),
+                (n.agency or "").strip(),
+                (n.estimated_price or "").strip(),
+                _deadline_display(n.deadline_at),
+                link_cell,
             ]
         )
 
-    body = {"values": rows}
+    body = {"values": values_to_write}
     try:
         service.spreadsheets().values().append(
             spreadsheetId=sheet_id,
-            range=f"{tab_name}!A:H",
+            range=f"{tab_name}!A:F",
             valueInputOption="RAW",
             insertDataOption="INSERT_ROWS",
             body=body,
         ).execute()
-        return len(rows)
+        # 공고 행 수만 반환
+        return len(notices)
     except Exception:
         logger.exception("Failed to append notices to Google Sheet")
         return 0
