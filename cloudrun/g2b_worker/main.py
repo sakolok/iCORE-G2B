@@ -1,7 +1,7 @@
 import json
 import os
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import uuid4
 
@@ -108,6 +108,23 @@ def _extract_from_item(item: dict[str, Any]) -> NoticeRow | None:
     )
 
 
+def _fetch_last_run_at() -> datetime | None:
+    try:
+        base_url = _backend_base_url()
+        response = requests.get(
+            f"{base_url}/api/scraper/internal/last-run",
+            headers=_backend_headers(),
+            timeout=10,
+        )
+        response.raise_for_status()
+        raw = response.json().get("last_run_at")
+        if raw:
+            return datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    except Exception:
+        logger.exception("Failed to fetch last run time from backend")
+    return None
+
+
 def _fetch_g2b_notices(keywords: list[str]) -> list[NoticeRow]:
     source_url = os.getenv("G2B_SOURCE_URL", "").strip()
     if not source_url:
@@ -120,8 +137,32 @@ def _fetch_g2b_notices(keywords: list[str]) -> list[NoticeRow]:
     notices: list[NoticeRow] = []
     timeout = int(os.getenv("G2B_HTTP_TIMEOUT_SECONDS", "20"))
 
+    # 나라장터 API는 inqryDiv + inqryBgnDt/inqryEndDt 가 필수
+    # 최근 실행 이력 이후 공고만 조회하고, 이력이 없으면 1일 전부터 조회
+    now = datetime.now(timezone.utc)
+    last_run_at = _fetch_last_run_at()
+    if last_run_at is None:
+        query_start = now - timedelta(days=1)
+        logger.info("No scraper run history found. Falling back to 1 day window.")
+    else:
+        query_start = last_run_at if last_run_at.tzinfo else last_run_at.replace(tzinfo=timezone.utc)
+        if query_start > now:
+            logger.warning("Last run time is in the future. Falling back to 1 day window.")
+            query_start = now - timedelta(days=1)
+
+    inqry_bgn = query_start.strftime("%Y%m%d%H%M")
+    inqry_end = now.strftime("%Y%m%d%H%M")
+    logger.info("G2B query window: %s ~ %s", inqry_bgn, inqry_end)
+
     for keyword in keywords:
-        params = {"bidNtceNm": keyword, "numOfRows": "100", "pageNo": "1"}
+        params = {
+            "inqryDiv": "1",
+            "inqryBgnDt": inqry_bgn,
+            "inqryEndDt": inqry_end,
+            "bidNtceNm": keyword,
+            "numOfRows": "100",
+            "pageNo": "1",
+        }
 
         headers = {"Accept": "application/json"}
 

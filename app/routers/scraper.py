@@ -16,6 +16,7 @@ from app.services.auth_service import require_auth, verify_scraper_internal_toke
 from app.services.platform_service import (
     create_scraper_task,
     filter_new_scraper_notices,
+    get_last_scraper_run_time,
     get_scraper_config,
     list_scraper_runs,
     record_scraper_run_report,
@@ -67,6 +68,15 @@ def fetch_scraper_runs(
     db: Session = Depends(get_db),
 ) -> list[ScraperRunSummary]:
     return list_scraper_runs(db, limit=limit)
+
+
+@router.get("/internal/last-run")
+def fetch_last_run_time(
+    _: None = Depends(verify_scraper_internal_token),
+    db: Session = Depends(get_db),
+) -> dict:
+    last_run_at = get_last_scraper_run_time(db)
+    return {"last_run_at": last_run_at.isoformat() if last_run_at else None}
 
 
 @router.post("/internal/dedup", response_model=ScraperDedupFilterResponse)

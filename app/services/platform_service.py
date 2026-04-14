@@ -932,6 +932,10 @@ def _make_dedup_key(notice: ScraperNotice) -> str:
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()
 
 
+def get_last_scraper_run_time(db: Session) -> datetime | None:
+    return _last_notified_at(db)
+
+
 def _last_notified_at(db: Session) -> datetime | None:
     row = db.execute(
         select(ScraperRunModel)
