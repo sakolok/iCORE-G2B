@@ -932,6 +932,19 @@ def _make_dedup_key(notice: ScraperNotice) -> str:
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()
 
 
+def _notice_fields_for_db(notice: ScraperNotice) -> dict[str, str | None]:
+    """DB 컬럼 길이에 맞춤. Pydantic 스키마에 max_length가 없는 필드가 길면 commit 시 DB 오류가 난다."""
+    return {
+        "notice_id": (notice.notice_id or "")[:160],
+        "title": (notice.title or "")[:500],
+        "agency": ((notice.agency or "")[:240] or None),
+        "estimated_price": ((notice.estimated_price or "")[:120] or None),
+        "notice_url": ((notice.notice_url or "")[:600] or None),
+        "published_at": notice.published_at,
+        "deadline_at": notice.deadline_at,
+    }
+
+
 def get_last_scraper_run_time(db: Session) -> datetime | None:
     return _last_notified_at(db)
 
@@ -964,21 +977,25 @@ def filter_new_scraper_notices(
         ).scalar_one_or_none()
 
         if existing is None:
+            fields = _notice_fields_for_db(notice)
             db.add(
                 ScraperNoticeModel(
                     dedup_key=dedup_key,
-                    notice_id=notice.notice_id,
-                    title=notice.title,
-                    agency=notice.agency,
-                    estimated_price=notice.estimated_price,
-                    published_at=notice.published_at,
-                    deadline_at=notice.deadline_at,
-                    notice_url=notice.notice_url,
+                    notice_id=fields["notice_id"],
+                    title=fields["title"],
+                    agency=fields["agency"],
+                    estimated_price=fields["estimated_price"],
+                    published_at=fields["published_at"],
+                    deadline_at=fields["deadline_at"],
+                    notice_url=fields["notice_url"],
                     first_seen_at=now,
                     last_seen_at=now,
                     last_run_id=payload.run_id,
                 )
             )
+            # 같은 요청 payload 안에 동일 dedup_key가 두 번 오면, flush 전에는 DB/SELECT에 안 보여
+            # 두 번째 행이 또 INSERT 되며 UNIQUE(dedup_key) 위반 → 500. 반드시 flush.
+            db.flush()
             kept.append(notice)
             continue
 
@@ -1037,29 +1054,32 @@ def record_scraper_run_report(db: Session, payload: ScraperRunReportRequest) -> 
             select(ScraperNoticeModel).where(ScraperNoticeModel.dedup_key == dedup_key)
         ).scalar_one_or_none()
         if existing is None:
+            fields = _notice_fields_for_db(notice)
             db.add(
                 ScraperNoticeModel(
                     dedup_key=dedup_key,
-                    notice_id=notice.notice_id,
-                    title=notice.title,
-                    agency=notice.agency,
-                    estimated_price=notice.estimated_price,
-                    published_at=notice.published_at,
-                    deadline_at=notice.deadline_at,
-                    notice_url=notice.notice_url,
+                    notice_id=fields["notice_id"],
+                    title=fields["title"],
+                    agency=fields["agency"],
+                    estimated_price=fields["estimated_price"],
+                    published_at=fields["published_at"],
+                    deadline_at=fields["deadline_at"],
+                    notice_url=fields["notice_url"],
                     first_seen_at=executed_at,
                     last_seen_at=executed_at,
                     last_run_id=payload.run_id,
                 )
             )
+            db.flush()
         else:
-            existing.notice_id = notice.notice_id
-            existing.title = notice.title
-            existing.agency = notice.agency
-            existing.estimated_price = notice.estimated_price
-            existing.published_at = notice.published_at
-            existing.deadline_at = notice.deadline_at
-            existing.notice_url = notice.notice_url
+            fields = _notice_fields_for_db(notice)
+            existing.notice_id = fields["notice_id"]
+            existing.title = fields["title"]
+            existing.agency = fields["agency"]
+            existing.estimated_price = fields["estimated_price"]
+            existing.published_at = fields["published_at"]
+            existing.deadline_at = fields["deadline_at"]
+            existing.notice_url = fields["notice_url"]
             existing.last_seen_at = executed_at
             existing.last_run_id = payload.run_id
 
