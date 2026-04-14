@@ -1,13 +1,17 @@
 import json
 import os
 import logging
+import re
+import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from urllib.parse import parse_qsl, urlparse
 from uuid import uuid4
 
 import requests
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
+from requests.exceptions import JSONDecodeError as RequestsJSONDecodeError
 
 try:
     from google.oauth2 import service_account
@@ -74,8 +78,17 @@ def _parse_deadline(raw: Any) -> datetime | None:
         return None
     if isinstance(raw, datetime):
         return raw if raw.tzinfo else raw.replace(tzinfo=timezone.utc)
+    text = str(raw).strip()
+    if text.isdigit():
+        try:
+            if len(text) == 12:
+                return datetime.strptime(text, "%Y%m%d%H%M").replace(tzinfo=timezone.utc)
+            if len(text) == 8:
+                return datetime.strptime(text, "%Y%m%d").replace(tzinfo=timezone.utc)
+        except Exception:
+            return None
     try:
-        parsed = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
         if parsed.tzinfo is None:
             return parsed.replace(tzinfo=timezone.utc)
         return parsed
@@ -84,14 +97,14 @@ def _parse_deadline(raw: Any) -> datetime | None:
 
 
 def _extract_from_item(item: dict[str, Any]) -> NoticeRow | None:
-    title = str(item.get("title") or item.get("noticeTitle") or "").strip()
+    title = str(item.get("title") or item.get("noticeTitle") or item.get("bidNtceNm") or "").strip()
     if not title:
         return None
 
     notice_id = str(item.get("notice_id") or item.get("noticeId") or item.get("bidNtceNo") or "").strip()
-    agency = str(item.get("agency") or item.get("organization") or item.get("ntceInsttNm") or "").strip()
+    agency = str(item.get("agency") or item.get("organization") or item.get("dminsttNm") or item.get("ntceInsttNm") or "").strip()
     estimated_price = str(item.get("estimated_price") or item.get("estPrice") or item.get("presmptPrce") or "").strip()
-    notice_url = str(item.get("notice_url") or item.get("url") or item.get("link") or "").strip()
+    notice_url = str(item.get("notice_url") or item.get("url") or item.get("link") or item.get("bidNtceDtlUrl") or "").strip()
     deadline_at = _parse_deadline(item.get("deadline_at") or item.get("deadline") or item.get("bidClseDt"))
     published_at = _parse_deadline(
         item.get("published_at") or item.get("created_at") or item.get("rgstDt") or item.get("bidNtceDt")
@@ -134,6 +147,10 @@ def _fetch_g2b_notices(keywords: list[str]) -> list[NoticeRow]:
         logger.warning("No keywords – skipping fetch")
         return []
 
+    parsed_url = urlparse(source_url)
+    existing_query_keys = {key for key, _ in parse_qsl(parsed_url.query, keep_blank_values=True)}
+    existing_query_keys_lc = {key.lower() for key in existing_query_keys}
+
     notices: list[NoticeRow] = []
     timeout = int(os.getenv("G2B_HTTP_TIMEOUT_SECONDS", "20"))
 
@@ -154,6 +171,71 @@ def _fetch_g2b_notices(keywords: list[str]) -> list[NoticeRow]:
     inqry_end = now.strftime("%Y%m%d%H%M")
     logger.info("G2B query window: %s ~ %s", inqry_bgn, inqry_end)
 
+    def _normalize_items(payload: Any) -> list[dict[str, Any]]:
+        if isinstance(payload, list):
+            return [row for row in payload if isinstance(row, dict)]
+        if not isinstance(payload, dict):
+            return []
+
+        response = payload.get("response")
+        if isinstance(response, dict):
+            body = response.get("body")
+            if isinstance(body, dict):
+                items = body.get("items")
+                if isinstance(items, dict):
+                    item = items.get("item")
+                    if isinstance(item, list):
+                        return [row for row in item if isinstance(row, dict)]
+                    if isinstance(item, dict):
+                        return [item]
+                if isinstance(items, list):
+                    return [row for row in items if isinstance(row, dict)]
+
+        for key in ("items", "results", "data"):
+            value = payload.get(key)
+            if isinstance(value, list):
+                return [row for row in value if isinstance(row, dict)]
+        return []
+
+    def _parse_xml_response(raw_body: str) -> dict[str, Any] | None:
+        try:
+            root = ET.fromstring(raw_body)
+        except ET.ParseError:
+            return None
+
+        body = root.find(".//body")
+        if body is None:
+            return None
+
+        total_count_text = ""
+        total_count_node = body.find("totalCount")
+        if total_count_node is not None and total_count_node.text:
+            total_count_text = total_count_node.text.strip()
+
+        item_nodes = body.findall(".//items/item")
+        parsed_items: list[dict[str, str]] = []
+        for item_node in item_nodes:
+            row: dict[str, str] = {}
+            for child in list(item_node):
+                row[child.tag] = (child.text or "").strip()
+            if row:
+                parsed_items.append(row)
+
+        return {
+            "response": {
+                "body": {
+                    "totalCount": total_count_text,
+                    "items": {"item": parsed_items},
+                }
+            }
+        }
+
+    def _extract_xml_tag(text: str, tag_name: str) -> str:
+        matched = re.search(rf"<{tag_name}>(.*?)</{tag_name}>", text, flags=re.IGNORECASE | re.DOTALL)
+        if not matched:
+            return ""
+        return matched.group(1).strip()
+
     for keyword in keywords:
         params = {
             "inqryDiv": "1",
@@ -163,25 +245,78 @@ def _fetch_g2b_notices(keywords: list[str]) -> list[NoticeRow]:
             "numOfRows": "100",
             "pageNo": "1",
         }
+        if "type" not in existing_query_keys_lc and "_type" not in existing_query_keys_lc:
+            params["type"] = "json"
+        if "servicekey" not in existing_query_keys_lc:
+            logger.warning("G2B_SOURCE_URL does not include service key query parameter.")
+            continue
 
         headers = {"Accept": "application/json"}
 
         try:
             response = requests.get(source_url, params=params, headers=headers, timeout=timeout)
             response.raise_for_status()
-            payload = response.json()
+            raw_body = (response.text or "").strip()
+            content_type = (response.headers.get("Content-Type") or "").lower()
+
+            if not raw_body:
+                logger.warning(
+                    "G2B returned empty body. keyword=%r status=%s content_type=%s",
+                    keyword,
+                    response.status_code,
+                    content_type,
+                )
+                continue
+
+            try:
+                payload = response.json()
+            except RequestsJSONDecodeError:
+                preview = raw_body[:400].replace("\n", " ").replace("\r", " ")
+                if "xml" in content_type or raw_body.startswith("<"):
+                    result_code = _extract_xml_tag(raw_body, "returnReasonCode")
+                    result_message = _extract_xml_tag(raw_body, "returnAuthMsg")
+                    xml_payload = _parse_xml_response(raw_body)
+                    if xml_payload is None:
+                        logger.error(
+                            "G2B returned XML/non-JSON response. keyword=%r status=%s code=%r message=%r body_preview=%r",
+                            keyword,
+                            response.status_code,
+                            result_code,
+                            result_message,
+                            preview,
+                        )
+                        continue
+                    logger.info(
+                        "G2B XML response parsed successfully. keyword=%r status=%s code=%r message=%r",
+                        keyword,
+                        response.status_code,
+                        result_code,
+                        result_message,
+                    )
+                    payload = xml_payload
+                else:
+                    logger.error(
+                        "G2B returned non-JSON response. keyword=%r status=%s content_type=%s body_preview=%r",
+                        keyword,
+                        response.status_code,
+                        content_type,
+                        preview,
+                    )
+                    continue
         except Exception:
             logger.exception("G2B fetch failed for keyword=%r", keyword)
             continue
 
-        items: list[dict[str, Any]] = []
-        if isinstance(payload, list):
-            items = [row for row in payload if isinstance(row, dict)]
-        elif isinstance(payload, dict):
-            for key in ("items", "results", "data"):
-                if isinstance(payload.get(key), list):
-                    items = [row for row in payload[key] if isinstance(row, dict)]
-                    break
+        body = payload.get("response", {}).get("body", {}) if isinstance(payload, dict) else {}
+        total_count_raw = body.get("totalCount")
+        try:
+            total_count = int(str(total_count_raw).strip()) if total_count_raw is not None else None
+        except Exception:
+            total_count = None
+        if total_count == 0:
+            continue
+
+        items = _normalize_items(payload)
 
         for item in items:
             parsed = _extract_from_item(item)
