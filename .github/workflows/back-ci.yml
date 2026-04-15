@@ -102,8 +102,16 @@ jobs:
       - name: Deploy scraper to Cloud Run
         run: |
           IMAGE_PATH=${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.SCRAPER_IMAGE_NAME }}
-          GSHEET_SA_JSON_COMPACT="$(echo '${{ secrets.GSHEET_SERVICE_ACCOUNT_JSON }}' | tr -d '\r\n')"
-          GMAIL_SA_JSON_COMPACT="$(echo '${{ secrets.GMAIL_SERVICE_ACCOUNT_JSON }}' | tr -d '\r\n')"
+          cat > scraper-env.yaml <<'EOF'
+          BACKEND_INTERNAL_BASE_URL: "${{ secrets.BACKEND_INTERNAL_BASE_URL }}"
+          SCRAPER_INTERNAL_TOKEN: "${{ secrets.SCRAPER_INTERNAL_TOKEN }}"
+          G2B_SOURCE_URL: "${{ secrets.G2B_SOURCE_URL }}"
+          GSHEET_ID: "${{ secrets.GSHEET_ID }}"
+          GSHEET_SERVICE_ACCOUNT_JSON: '${{ secrets.GSHEET_SERVICE_ACCOUNT_JSON }}'
+          GSHEET_TAB_NAME: "나라장터 공고 수집 목록"
+          GMAIL_DELEGATED_USER: "${{ secrets.GMAIL_DELEGATED_USER }}"
+          GMAIL_SERVICE_ACCOUNT_JSON: '${{ secrets.GMAIL_SERVICE_ACCOUNT_JSON }}'
+          EOF
 
           gcloud run deploy ${{ env.CLOUD_RUN_SCRAPER_SERVICE }} \
             --project=${{ env.PROJECT_ID }} \
@@ -116,14 +124,7 @@ jobs:
             --memory=512Mi \
             --cpu=1 \
             --timeout=300 \
-            --set-env-vars="BACKEND_INTERNAL_BASE_URL=${{ secrets.BACKEND_INTERNAL_BASE_URL }}" \
-            --set-env-vars="SCRAPER_INTERNAL_TOKEN=${{ secrets.SCRAPER_INTERNAL_TOKEN }}" \
-            --set-env-vars="G2B_SOURCE_URL=${{ secrets.G2B_SOURCE_URL }}" \
-            --set-env-vars="GSHEET_ID=${{ secrets.GSHEET_ID }}" \
-            --set-env-vars="GSHEET_SERVICE_ACCOUNT_JSON=${GSHEET_SA_JSON_COMPACT}" \
-            --set-env-vars="GSHEET_TAB_NAME=나라장터 공고 수집 목록" \
-            --set-env-vars="GMAIL_DELEGATED_USER=${{ secrets.GMAIL_DELEGATED_USER }}" \
-            --set-env-vars="GMAIL_SERVICE_ACCOUNT_JSON=${GMAIL_SA_JSON_COMPACT}"
+            --env-vars-file=scraper-env.yaml
 
   deploy-vm:
     needs: test-and-build
