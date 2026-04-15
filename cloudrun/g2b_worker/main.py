@@ -409,7 +409,17 @@ def _gmail_service_account_info() -> dict[str, Any] | None:
     if not raw:
         return None
     try:
-        return json.loads(raw)
+        info = json.loads(raw)
+        # Some secret stores may accidentally contain markdownified domain text.
+        # Keep universe_domain strictly as a bare hostname.
+        universe = str(info.get("universe_domain") or "").strip()
+        if universe:
+            if universe.startswith("[") and "](" in universe and universe.endswith(")"):
+                universe = universe[1 : universe.index("](")]
+            universe = universe.replace("http://", "").replace("https://", "").strip().strip("/")
+            if universe:
+                info["universe_domain"] = universe
+        return info
     except Exception:
         logger.exception("Invalid JSON in GMAIL_SERVICE_ACCOUNT_JSON / GSHEET_SERVICE_ACCOUNT_JSON")
         return None
