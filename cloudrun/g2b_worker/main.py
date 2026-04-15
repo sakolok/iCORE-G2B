@@ -310,6 +310,7 @@ def _fetch_g2b_rows(
     row_extractor: Any,
     source_label: str,
     fallback_operation_paths: list[str] | None = None,
+    query_date_format: str = "%Y%m%d%H%M",
 ) -> list[NoticeRow]:
     source_url = os.getenv(source_url_env, "").strip()
     if not source_url:
@@ -335,7 +336,18 @@ def _fetch_g2b_rows(
                 candidate_urls.append(candidate)
 
     timeout = int(os.getenv("G2B_HTTP_TIMEOUT_SECONDS", "20"))
-    inqry_bgn, inqry_end = _build_query_window()
+    inqry_bgn_raw, inqry_end_raw = _build_query_window()
+    try:
+        inqry_bgn = datetime.strptime(inqry_bgn_raw, "%Y%m%d%H%M").strftime(query_date_format)
+        inqry_end = datetime.strptime(inqry_end_raw, "%Y%m%d%H%M").strftime(query_date_format)
+    except Exception:
+        logger.exception(
+            "Failed to format query window with format=%s for %s. using raw values.",
+            query_date_format,
+            source_label,
+        )
+        inqry_bgn = inqry_bgn_raw
+        inqry_end = inqry_end_raw
     logger.info("%s query window: %s ~ %s", source_label, inqry_bgn, inqry_end)
 
     service_key = os.getenv(service_key_env, "").strip()
@@ -497,7 +509,7 @@ def _fetch_g2b_prestandards(keywords: list[str]) -> list[NoticeRow]:
     return _fetch_g2b_rows(
         source_url_env="G2B_PRESTANDARD_SOURCE_URL",
         service_key_env="G2B_PRESTANDARD_SERVICE_KEY",
-        keyword_param_name="thngNm",
+        keyword_param_name="prcureSlsNm",
         keywords=keywords,
         row_extractor=_extract_from_prestandard_item,
         source_label="G2B prestandard",
@@ -506,6 +518,7 @@ def _fetch_g2b_prestandards(keywords: list[str]) -> list[NoticeRow]:
             "/getInsttAcctoThngListInfoThng",
             "/getPublicPrcureThngInfoPPSsrch",
         ],
+        query_date_format="%Y%m%d",
     )
 
 
