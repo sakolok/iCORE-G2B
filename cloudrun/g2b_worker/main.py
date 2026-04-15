@@ -301,6 +301,29 @@ def _extract_xml_tag(text: str, tag_name: str) -> str:
     return matched.group(1).strip()
 
 
+def _extract_result_error(payload: Any, raw_body: str) -> tuple[str, str]:
+    code = ""
+    message = ""
+    if isinstance(payload, dict):
+        # 공공데이터포털 표준
+        header = ((payload.get("response") or {}).get("header") or {}) if isinstance(payload.get("response"), dict) else {}
+        if isinstance(header, dict):
+            code = str(header.get("resultCode") or "").strip()
+            message = str(header.get("resultMsg") or "").strip()
+        # nkoneps 포맷
+        if not code and "nkoneps.com.response.ResponseError" in payload:
+            err = payload.get("nkoneps.com.response.ResponseError")
+            if isinstance(err, dict):
+                h = err.get("header") or {}
+                if isinstance(h, dict):
+                    code = str(h.get("resultCode") or "").strip()
+                    message = str(h.get("resultMsg") or "").strip()
+    if not code and raw_body:
+        code = _extract_xml_tag(raw_body, "resultCode")
+        message = _extract_xml_tag(raw_body, "resultMsg")
+    return code, message
+
+
 def _fetch_g2b_rows(
     *,
     source_url_env: str,
@@ -454,6 +477,17 @@ def _fetch_g2b_rows(
                         preview,
                     )
                     continue
+            result_code, result_message = _extract_result_error(payload, raw_body)
+            if result_code and result_code != "00":
+                logger.warning(
+                    "%s API returned resultCode=%s resultMsg=%r keyword=%r",
+                    source_label,
+                    result_code,
+                    result_message,
+                    keyword,
+                )
+                if result_code == "06":
+                    continue
         except Exception:
             logger.exception("%s fetch failed for keyword=%r", source_label, keyword)
             continue
@@ -518,7 +552,7 @@ def _fetch_g2b_prestandards(keywords: list[str]) -> list[NoticeRow]:
             "/getInsttAcctoThngListInfoThng",
             "/getPublicPrcureThngInfoPPSsrch",
         ],
-        query_date_format="%Y%m%d",
+        query_date_format="%Y%m%d%H%M",
     )
 
 
