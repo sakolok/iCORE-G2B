@@ -833,7 +833,55 @@ def _append_to_sheet(notices: list[NoticeRow], run_id: str, payload: ScraperJobP
                     "fields": "userEnteredFormat.backgroundColor",
                 }
             },
+            # 3) 수집시각(B열) 표시 포맷 고정 (시리얼 숫자 노출 방지)
+            {
+                "repeatCell": {
+                    "range": {
+                        "sheetId": sheet_numeric_id,
+                        "startRowIndex": run_row,
+                        "endRowIndex": run_row + 1,
+                        "startColumnIndex": 1,
+                        "endColumnIndex": 2,
+                    },
+                    "cell": {
+                        "userEnteredFormat": {
+                            "numberFormat": {
+                                "type": "DATE_TIME",
+                                "pattern": "yyyy-mm-dd hh:mm:ss",
+                            }
+                        }
+                    },
+                    "fields": "userEnteredFormat.numberFormat",
+                }
+            },
         ]
+
+        # 4) 공고 행의 마감일시(E열) 표시 포맷 고정 (시리얼 숫자 노출 방지)
+        notice_start = run_row + 1
+        notice_end = min(target_end, notice_start + max(0, notice_row_count))
+        if notice_end > notice_start:
+            requests_payload.append(
+                {
+                    "repeatCell": {
+                        "range": {
+                            "sheetId": sheet_numeric_id,
+                            "startRowIndex": notice_start,
+                            "endRowIndex": notice_end,
+                            "startColumnIndex": 4,
+                            "endColumnIndex": 5,
+                        },
+                        "cell": {
+                            "userEnteredFormat": {
+                                "numberFormat": {
+                                    "type": "DATE_TIME",
+                                    "pattern": "yyyy-mm-dd hh:mm",
+                                }
+                            }
+                        },
+                        "fields": "userEnteredFormat.numberFormat",
+                    }
+                }
+            )
 
         try:
             service.spreadsheets().batchUpdate(
