@@ -965,10 +965,17 @@ def filter_new_scraper_notices(
 ) -> ScraperDedupFilterResponse:
     now = datetime.now(timezone.utc)
     since_notified_at = payload.since_notified_at or _last_notified_at(db)
+    # offset-naive → KST(UTC+9)로 통일하여 비교 오류 방지
+    kst = timezone(timedelta(hours=9))
+    if since_notified_at is not None and since_notified_at.tzinfo is None:
+        since_notified_at = since_notified_at.replace(tzinfo=kst)
     kept: list[ScraperNotice] = []
 
     for notice in payload.notices:
-        if since_notified_at is not None and notice.published_at is not None and notice.published_at <= since_notified_at:
+        published = notice.published_at
+        if published is not None and published.tzinfo is None:
+            published = published.replace(tzinfo=kst)
+        if since_notified_at is not None and published is not None and published <= since_notified_at:
             continue
 
         dedup_key = _make_dedup_key(notice)
