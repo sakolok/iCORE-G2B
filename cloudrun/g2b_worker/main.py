@@ -1,3 +1,5 @@
+import base64
+import html
 import json
 import os
 import logging
@@ -5,6 +7,7 @@ import re
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from email.message import EmailMessage
 from urllib.parse import parse_qsl, urlparse
 from uuid import uuid4
 from zoneinfo import ZoneInfo
@@ -369,6 +372,198 @@ def _trigger_apps_script_mail_webhook(
         return False
 
 
+GMAIL_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send"
+
+
+def _gmail_service_account_info() -> dict[str, Any] | None:
+    """
+    Domain-wide delegation needs service-account JSON (same pattern as Sheets).
+    - GMAIL_SERVICE_ACCOUNT_JSON: preferred when set
+    - Else GSHEET_SERVICE_ACCOUNT_JSON if the same SA is used
+    """
+    raw = os.getenv("GMAIL_SERVICE_ACCOUNT_JSON", "").strip()
+    if not raw:
+        raw = os.getenv("GSHEET_SERVICE_ACCOUNT_JSON", "").strip()
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except Exception:
+        logger.exception("Invalid JSON in GMAIL_SERVICE_ACCOUNT_JSON / GSHEET_SERVICE_ACCOUNT_JSON")
+        return None
+
+
+def _gmail_delegated_user() -> str:
+    """Workspace user to impersonate (send-as mailbox), e.g. notice-bot@domain."""
+    return os.getenv("GMAIL_DELEGATED_USER", "").strip()
+
+
+def _build_gmail_service():
+    if build is None or service_account is None:
+        logger.warning("google-api-python-client / google-auth not available for Gmail")
+        return None
+    info = _gmail_service_account_info()
+    delegated = _gmail_delegated_user()
+    if not info or not delegated:
+        return None
+    try:
+        credentials = service_account.Credentials.from_service_account_info(
+            info,
+            scopes=[GMAIL_SEND_SCOPE],
+            subject=delegated,
+        )
+        return build("gmail", "v1", credentials=credentials)
+    except Exception:
+        logger.exception("Failed to build Gmail API service")
+        return None
+
+
+def _format_notice_amount_for_email(raw: str) -> str:
+    """Format currency-like strings the same way as sheet append."""
+    text = (raw or "").strip()
+    if not text:
+        return ""
+    if "~" in text or "-" in text:
+        return text
+    digits_only = re.sub(r"[^\d]", "", text)
+    if not digits_only:
+        return text
+    number_tokens = re.findall(r"\d+", text.replace(",", ""))
+    if len(number_tokens) != 1:
+        return text
+    try:
+        value = int(digits_only)
+    except Exception:
+        return text
+    return f"{value:,}"
+
+
+def _deadline_kst_display(dt: datetime | None) -> str:
+    if dt is None:
+        return ""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d %H:%M")
+
+
+def _notices_to_html_table(notices: list[NoticeRow]) -> str:
+    rows_html: list[str] = []
+    for n in notices:
+        link = (n.notice_url or "").strip()
+        link_cell = (
+            f'<a href="{html.escape(link, quote=True)}">보기</a>' if link else ""
+        )
+        rows_html.append(
+            "<tr>"
+            f"<td>{html.escape((n.matched_keyword or '').strip())}</td>"
+            f"<td>{html.escape((n.title or '').strip())}</td>"
+            f"<td>{html.escape((n.agency or '').strip())}</td>"
+            f"<td style=\"text-align:right\">{html.escape(_format_notice_amount_for_email(n.estimated_price or ''))}</td>"
+            f"<td>{html.escape(_deadline_kst_display(n.deadline_at))}</td>"
+            f"<td>{link_cell}</td>"
+            "</tr>"
+        )
+    return (
+        "<table border=\"1\" cellpadding=\"6\" cellspacing=\"0\" "
+        "style=\"border-collapse:collapse;font-family:sans-serif;font-size:14px\">"
+        "<thead><tr>"
+        "<th>키워드</th><th>공고명</th><th>기관</th><th>추정가격</th><th>마감</th><th>링크</th>"
+        "</tr></thead><tbody>"
+        + "".join(rows_html)
+        + "</tbody></table>"
+    )
+
+
+def _send_gmail_notice_digest(
+    *,
+    run_id: str,
+    payload: ScraperJobPayload,
+    notices: list[NoticeRow],
+) -> bool:
+    """
+    Send via Gmail API using domain-wide delegation.
+    Recipients are Bcc so addresses stay private.
+    """
+    if not notices or not payload.receiver_emails:
+        return False
+    service = _build_gmail_service()
+    if service is None:
+        return False
+
+    send_as = _gmail_delegated_user()
+    keywords_preview = ", ".join(payload.keywords[:8])
+    if len(payload.keywords) > 8:
+        keywords_preview += " …"
+    now_kst = datetime.now(timezone.utc).astimezone(ZoneInfo("Asia/Seoul"))
+    subject = (
+        f"[나라장터] 신규 공고 {len(notices)}건 "
+        f"({now_kst:%Y-%m-%d %H:%M} KST, run {run_id[:8]})"
+    )
+    if keywords_preview:
+        subject += f" | 키워드: {keywords_preview}"
+
+    inner_table = _notices_to_html_table(notices)
+    html_body = f"""<!DOCTYPE html>
+<html>
+  <body style="font-family:sans-serif">
+    <p>수집 시각(KST): {html.escape(now_kst.strftime("%Y-%m-%d %H:%M:%S"))}</p>
+    <p>run_id: <code>{html.escape(run_id)}</code></p>
+    <p>신규 공고 <strong>{len(notices)}</strong>건입니다.</p>
+    {inner_table}
+  </body>
+</html>"""
+
+    plain_lines = [
+        f"수집 시각(KST): {now_kst:%Y-%m-%d %H:%M:%S}",
+        f"run_id: {run_id}",
+        f"신규 공고 {len(notices)}건",
+        "",
+    ]
+    for n in notices:
+        plain_lines.append(
+            " | ".join(
+                [
+                    (n.matched_keyword or "").strip(),
+                    (n.title or "").strip(),
+                    (n.agency or "").strip(),
+                    _format_notice_amount_for_email(n.estimated_price or ""),
+                    _deadline_kst_display(n.deadline_at),
+                    (n.notice_url or "").strip(),
+                ]
+            )
+        )
+    plain_body = "\n".join(plain_lines)
+
+    msg = EmailMessage()
+    msg["From"] = send_as
+    msg["To"] = send_as
+    msg["Bcc"] = ", ".join(payload.receiver_emails)
+    msg["Subject"] = subject
+    msg.set_content(plain_body)
+    msg.add_alternative(html_body, subtype="html")
+
+    try:
+        encoded = base64.urlsafe_b64encode(msg.as_bytes()).decode()
+        service.users().messages().send(userId="me", body={"raw": encoded}).execute()
+        logger.info("Gmail send ok run_id=%s recipients=%d", run_id, len(payload.receiver_emails))
+        return True
+    except Exception:
+        logger.exception("Gmail API send failed run_id=%s", run_id)
+        return False
+
+
+def _notify_recipients(
+    *,
+    run_id: str,
+    payload: ScraperJobPayload,
+    notices: list[NoticeRow],
+) -> bool:
+    """Prefer Gmail when SA JSON + delegated user env are set; else Apps Script webhook."""
+    if _gmail_service_account_info() and _gmail_delegated_user():
+        return _send_gmail_notice_digest(run_id=run_id, payload=payload, notices=notices)
+    return _trigger_apps_script_mail_webhook(run_id=run_id, payload=payload, notices=notices)
+
+
 def _build_sheets_service():
     if build is None:
         logger.warning("google-api-python-client not available")
@@ -697,21 +892,22 @@ def run_scraper(job: ScraperJobPayload) -> dict[str, Any]:
 
         deduped_count = max(0, notice_count - len(deduped_notices))
         try:
-            mail_triggered = _trigger_apps_script_mail_webhook(
+            sheet_written_count = _append_to_sheet(deduped_notices, run_id, job)
+        except Exception:
+            logger.exception("Sheet write failed")
+            sheet_written_count = 0
+
+        try:
+            mail_triggered = _notify_recipients(
                 run_id=run_id,
                 payload=job,
                 notices=deduped_notices,
             )
         except Exception:
-            logger.exception("Apps Script webhook trigger failed")
+            logger.exception("Notification (Gmail / Apps Script) failed")
             mail_triggered = False
 
         email_sent_count = 1 if mail_triggered else 0
-        try:
-            sheet_written_count = _append_to_sheet(deduped_notices, run_id, job)
-        except Exception:
-            logger.exception("Sheet write failed")
-            sheet_written_count = 0
 
         status = "success"
         error_message = None
