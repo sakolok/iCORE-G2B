@@ -480,26 +480,37 @@ def _deadline_kst_display(dt: datetime | None) -> str:
 
 def _notices_to_html_table(notices: list[NoticeRow]) -> str:
     rows_html: list[str] = []
-    for n in notices:
+    for idx, n in enumerate(notices):
         link = (n.notice_url or "").strip()
         link_cell = (
-            f'<a href="{html.escape(link, quote=True)}">보기</a>' if link else ""
+            (
+                f'<a href="{html.escape(link, quote=True)}" '
+                'style="color:#2563eb;text-decoration:none;font-weight:600">보기</a>'
+            )
+            if link
+            else ""
         )
+        row_bg = "#ffffff" if idx % 2 == 0 else "#f8fafc"
         rows_html.append(
-            "<tr>"
-            f"<td>{html.escape((n.matched_keyword or '').strip())}</td>"
-            f"<td>{html.escape((n.title or '').strip())}</td>"
-            f"<td>{html.escape((n.agency or '').strip())}</td>"
-            f"<td style=\"text-align:right\">{html.escape(_format_notice_amount_for_email(n.estimated_price or ''))}</td>"
-            f"<td>{html.escape(_deadline_kst_display(n.deadline_at))}</td>"
-            f"<td>{link_cell}</td>"
+            f'<tr style="background:{row_bg}">'
+            f'<td style="padding:10px 8px;border:1px solid #e5e7eb;white-space:nowrap">{html.escape((n.matched_keyword or "").strip())}</td>'
+            f'<td style="padding:10px 8px;border:1px solid #e5e7eb">{html.escape((n.title or "").strip())}</td>'
+            f'<td style="padding:10px 8px;border:1px solid #e5e7eb">{html.escape((n.agency or "").strip())}</td>'
+            f'<td style="padding:10px 8px;border:1px solid #e5e7eb;text-align:right;white-space:nowrap">{html.escape(_format_notice_amount_for_email(n.estimated_price or ""))}</td>'
+            f'<td style="padding:10px 8px;border:1px solid #e5e7eb;white-space:nowrap">{html.escape(_deadline_kst_display(n.deadline_at))}</td>'
+            f'<td style="padding:10px 8px;border:1px solid #e5e7eb;text-align:center;white-space:nowrap">{link_cell}</td>'
             "</tr>"
         )
     return (
-        "<table border=\"1\" cellpadding=\"6\" cellspacing=\"0\" "
-        "style=\"border-collapse:collapse;font-family:sans-serif;font-size:14px\">"
+        '<table role="presentation" cellpadding="0" cellspacing="0" '
+        'style="width:100%;border-collapse:collapse;font-family:Arial,sans-serif;font-size:14px;color:#111827;line-height:1.45">'
         "<thead><tr>"
-        "<th>키워드</th><th>공고명</th><th>기관</th><th>추정가격</th><th>마감</th><th>링크</th>"
+        '<th style="padding:10px 8px;border:1px solid #d1d5db;background:#f3f4f6;text-align:left;white-space:nowrap">키워드</th>'
+        '<th style="padding:10px 8px;border:1px solid #d1d5db;background:#f3f4f6;text-align:left">공고명</th>'
+        '<th style="padding:10px 8px;border:1px solid #d1d5db;background:#f3f4f6;text-align:left">기관</th>'
+        '<th style="padding:10px 8px;border:1px solid #d1d5db;background:#f3f4f6;text-align:right;white-space:nowrap">추정가격</th>'
+        '<th style="padding:10px 8px;border:1px solid #d1d5db;background:#f3f4f6;text-align:left;white-space:nowrap">마감일시</th>'
+        '<th style="padding:10px 8px;border:1px solid #d1d5db;background:#f3f4f6;text-align:center;white-space:nowrap">링크</th>'
         "</tr></thead><tbody>"
         + "".join(rows_html)
         + "</tbody></table>"
@@ -527,21 +538,27 @@ def _send_gmail_notice_digest(
     if len(payload.keywords) > 8:
         keywords_preview += " …"
     now_kst = datetime.now(timezone.utc).astimezone(ZoneInfo("Asia/Seoul"))
-    subject = (
-        f"[나라장터] 신규 공고 {len(notices)}건 "
-        f"({now_kst:%Y-%m-%d %H:%M} KST, run {run_id[:8]})"
-    )
+    subject = f"[나라장터] 신규 공고 알림 ({len(notices)}건)"
     if keywords_preview:
         subject += f" | 키워드: {keywords_preview}"
 
     inner_table = _notices_to_html_table(notices)
     html_body = f"""<!DOCTYPE html>
 <html>
-  <body style="font-family:sans-serif">
-    <p>수집 시각(KST): {html.escape(now_kst.strftime("%Y-%m-%d %H:%M:%S"))}</p>
-    <p>run_id: <code>{html.escape(run_id)}</code></p>
-    <p>신규 공고 <strong>{len(notices)}</strong>건입니다.</p>
+  <body style="margin:0;padding:16px;background:#f3f4f6;font-family:Arial,sans-serif;color:#111827">
+    <div style="max-width:1120px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden">
+      <div style="padding:16px 18px;border-bottom:1px solid #e5e7eb;background:#fafafa">
+        <div style="font-size:22px;font-weight:700;margin-bottom:8px">신규 공고 알림 (최근 1일)</div>
+        <div style="font-size:14px;color:#4b5563">키워드: {html.escape(keywords_preview or '-')}</div>
+      </div>
+      <div style="padding:14px 18px 2px 18px;font-size:14px;color:#374151">
+        <div style="margin-bottom:6px">수집 시각 (KST): {html.escape(now_kst.strftime("%Y-%m-%d %H:%M:%S"))}</div>
+        <div style="margin-bottom:12px">신규 공고 <strong>{len(notices)}</strong>건</div>
+      </div>
+      <div style="padding:0 18px 18px 18px">
     {inner_table}
+      </div>
+    </div>
   </body>
 </html>"""
 
