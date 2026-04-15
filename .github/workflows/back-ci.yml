@@ -106,9 +106,13 @@ jobs:
           BACKEND_INTERNAL_BASE_URL: "${{ secrets.BACKEND_INTERNAL_BASE_URL }}"
           SCRAPER_INTERNAL_TOKEN: "${{ secrets.SCRAPER_INTERNAL_TOKEN }}"
           G2B_SOURCE_URL: "${{ secrets.G2B_SOURCE_URL }}"
+          G2B_SERVICE_KEY: "${{ secrets.G2B_SERVICE_KEY }}"
+          G2B_PRESTANDARD_SOURCE_URL: "${{ secrets.G2B_PRESTANDARD_SOURCE_URL }}"
+          G2B_PRESTANDARD_SERVICE_KEY: "${{ secrets.G2B_PRESTANDARD_SERVICE_KEY }}"
           GSHEET_ID: "${{ secrets.GSHEET_ID }}"
           GSHEET_SERVICE_ACCOUNT_JSON: '${{ secrets.GSHEET_SERVICE_ACCOUNT_JSON }}'
           GSHEET_TAB_NAME: "나라장터 공고 수집 목록"
+          GSHEET_PRESTANDARD_TAB_NAME: "나라장터 사전 규격 수집 목록"
           GMAIL_DELEGATED_USER: "${{ secrets.GMAIL_DELEGATED_USER }}"
           GMAIL_SERVICE_ACCOUNT_JSON: '${{ secrets.GMAIL_SERVICE_ACCOUNT_JSON }}'
           EOF

@@ -32,6 +32,9 @@ logging.basicConfig(
 app = FastAPI(title="iCore G2B Scraper Worker", version="0.1.0")
 logger = logging.getLogger("icore.g2b_worker")
 
+DEFAULT_NOTICE_TAB_NAME = "나라장터 공고 수집 목록"
+DEFAULT_PRESTANDARD_TAB_NAME = "나라장터 사전 규격 수집 목록"
+
 
 class NoticeRow(BaseModel):
     matched_keyword: str = ""
@@ -49,7 +52,7 @@ class ScraperJobPayload(BaseModel):
     notify_times: list[str] = Field(default_factory=lambda: ["09:00:00"])
     gsheet_id: str | None = None
     gsheet_ids: list[str] = Field(default_factory=list)
-    gsheet_tab_name: str = "나라장터 공고 수집 목록"
+    gsheet_tab_name: str = DEFAULT_NOTICE_TAB_NAME
     receiver_emails: list[str] = Field(default_factory=list)
     keywords: list[str] = Field(default_factory=list)
 
@@ -147,6 +150,286 @@ def _extract_from_item(item: dict[str, Any]) -> NoticeRow | None:
     )
 
 
+def _extract_from_prestandard_item(item: dict[str, Any]) -> NoticeRow | None:
+    title = str(
+        item.get("title")
+        or item.get("noticeTitle")
+        or item.get("bfSpecRgstNoNm")
+        or item.get("prsvPrdctNm")
+        or item.get("thngNm")
+        or ""
+    ).strip()
+    if not title:
+        return None
+
+    notice_id = str(
+        item.get("notice_id")
+        or item.get("noticeId")
+        or item.get("bfSpecRgstNo")
+        or item.get("bsnsDivNm")
+        or ""
+    ).strip()
+    agency = str(
+        item.get("agency")
+        or item.get("organization")
+        or item.get("dminsttNm")
+        or item.get("ntceInsttNm")
+        or item.get("rgstInsttNm")
+        or ""
+    ).strip()
+    estimated_price = str(
+        item.get("estimated_price")
+        or item.get("estPrice")
+        or item.get("presmptPrce")
+        or item.get("asignBdgtAmt")
+        or ""
+    ).strip()
+    notice_url = str(
+        item.get("notice_url")
+        or item.get("url")
+        or item.get("link")
+        or item.get("bfSpecDtlUrl")
+        or ""
+    ).strip()
+    deadline_at = _parse_deadline(
+        item.get("deadline_at")
+        or item.get("deadline")
+        or item.get("opninRgstClseDt")
+        or item.get("specDocRcvClseDt")
+    )
+    published_at = _parse_deadline(
+        item.get("published_at")
+        or item.get("created_at")
+        or item.get("rgstDt")
+        or item.get("bfSpecRgstDt")
+    )
+
+    return NoticeRow(
+        notice_id=notice_id,
+        title=title,
+        agency=agency,
+        estimated_price=estimated_price,
+        published_at=published_at,
+        deadline_at=deadline_at,
+        notice_url=notice_url,
+    )
+
+
+def _build_query_window() -> tuple[str, str]:
+    # 최근 실행 이력 이후 공고/사전규격만 조회하고, 이력이 없으면 1일 전부터 조회
+    now = datetime.now(timezone.utc)
+    last_run_at = _fetch_last_run_at()
+    if last_run_at is None:
+        query_start = now - timedelta(days=1)
+        logger.info("No scraper run history found. Falling back to 1 day window.")
+    else:
+        query_start = last_run_at if last_run_at.tzinfo else last_run_at.replace(tzinfo=timezone.utc)
+        if query_start > now:
+            logger.warning("Last run time is in the future. Falling back to 1 day window.")
+            query_start = now - timedelta(days=1)
+
+    inqry_bgn = query_start.strftime("%Y%m%d%H%M")
+    inqry_end = now.strftime("%Y%m%d%H%M")
+    return inqry_bgn, inqry_end
+
+
+def _normalize_items(payload: Any) -> list[dict[str, Any]]:
+    if isinstance(payload, list):
+        return [row for row in payload if isinstance(row, dict)]
+    if not isinstance(payload, dict):
+        return []
+
+    response = payload.get("response")
+    if isinstance(response, dict):
+        body = response.get("body")
+        if isinstance(body, dict):
+            items = body.get("items")
+            if isinstance(items, dict):
+                item = items.get("item")
+                if isinstance(item, list):
+                    return [row for row in item if isinstance(row, dict)]
+                if isinstance(item, dict):
+                    return [item]
+            if isinstance(items, list):
+                return [row for row in items if isinstance(row, dict)]
+
+    for key in ("items", "results", "data"):
+        value = payload.get(key)
+        if isinstance(value, list):
+            return [row for row in value if isinstance(row, dict)]
+    return []
+
+
+def _parse_xml_response(raw_body: str) -> dict[str, Any] | None:
+    try:
+        root = ET.fromstring(raw_body)
+    except ET.ParseError:
+        return None
+
+    body = root.find(".//body")
+    if body is None:
+        return None
+
+    total_count_text = ""
+    total_count_node = body.find("totalCount")
+    if total_count_node is not None and total_count_node.text:
+        total_count_text = total_count_node.text.strip()
+
+    item_nodes = body.findall(".//items/item")
+    parsed_items: list[dict[str, str]] = []
+    for item_node in item_nodes:
+        row: dict[str, str] = {}
+        for child in list(item_node):
+            row[child.tag] = (child.text or "").strip()
+        if row:
+            parsed_items.append(row)
+
+    return {
+        "response": {
+            "body": {
+                "totalCount": total_count_text,
+                "items": {"item": parsed_items},
+            }
+        }
+    }
+
+
+def _extract_xml_tag(text: str, tag_name: str) -> str:
+    matched = re.search(rf"<{tag_name}>(.*?)</{tag_name}>", text, flags=re.IGNORECASE | re.DOTALL)
+    if not matched:
+        return ""
+    return matched.group(1).strip()
+
+
+def _fetch_g2b_rows(
+    *,
+    source_url_env: str,
+    service_key_env: str,
+    keyword_param_name: str,
+    keywords: list[str],
+    row_extractor: Any,
+    source_label: str,
+) -> list[NoticeRow]:
+    source_url = os.getenv(source_url_env, "").strip()
+    if not source_url:
+        logger.warning("%s is not set – skipping %s fetch", source_url_env, source_label)
+        return []
+    if not keywords:
+        logger.warning("No keywords – skipping %s fetch", source_label)
+        return []
+
+    parsed_url = urlparse(source_url)
+    existing_query_keys = {key for key, _ in parse_qsl(parsed_url.query, keep_blank_values=True)}
+    existing_query_keys_lc = {key.lower() for key in existing_query_keys}
+
+    timeout = int(os.getenv("G2B_HTTP_TIMEOUT_SECONDS", "20"))
+    inqry_bgn, inqry_end = _build_query_window()
+    logger.info("%s query window: %s ~ %s", source_label, inqry_bgn, inqry_end)
+
+    service_key = os.getenv(service_key_env, "").strip()
+    notices: list[NoticeRow] = []
+
+    for keyword in keywords:
+        params = {
+            "inqryDiv": "1",
+            "inqryBgnDt": inqry_bgn,
+            "inqryEndDt": inqry_end,
+            keyword_param_name: keyword,
+            "numOfRows": "100",
+            "pageNo": "1",
+        }
+        if "type" not in existing_query_keys_lc and "_type" not in existing_query_keys_lc:
+            params["type"] = "json"
+        if "servicekey" not in existing_query_keys_lc and service_key:
+            params["serviceKey"] = service_key
+        if "servicekey" not in existing_query_keys_lc and not service_key:
+            logger.warning(
+                "%s has no service key in query and %s is empty. keyword=%r",
+                source_url_env,
+                service_key_env,
+                keyword,
+            )
+            continue
+
+        headers = {"Accept": "application/json"}
+
+        try:
+            response = requests.get(source_url, params=params, headers=headers, timeout=timeout)
+            response.raise_for_status()
+            raw_body = (response.text or "").strip()
+            content_type = (response.headers.get("Content-Type") or "").lower()
+
+            if not raw_body:
+                logger.warning(
+                    "%s returned empty body. keyword=%r status=%s content_type=%s",
+                    source_label,
+                    keyword,
+                    response.status_code,
+                    content_type,
+                )
+                continue
+
+            try:
+                payload = response.json()
+            except RequestsJSONDecodeError:
+                preview = raw_body[:400].replace("\n", " ").replace("\r", " ")
+                if "xml" in content_type or raw_body.startswith("<"):
+                    result_code = _extract_xml_tag(raw_body, "returnReasonCode")
+                    result_message = _extract_xml_tag(raw_body, "returnAuthMsg")
+                    xml_payload = _parse_xml_response(raw_body)
+                    if xml_payload is None:
+                        logger.error(
+                            "%s returned XML/non-JSON response. keyword=%r status=%s code=%r message=%r body_preview=%r",
+                            source_label,
+                            keyword,
+                            response.status_code,
+                            result_code,
+                            result_message,
+                            preview,
+                        )
+                        continue
+                    logger.info(
+                        "%s XML response parsed successfully. keyword=%r status=%s code=%r message=%r",
+                        source_label,
+                        keyword,
+                        response.status_code,
+                        result_code,
+                        result_message,
+                    )
+                    payload = xml_payload
+                else:
+                    logger.error(
+                        "%s returned non-JSON response. keyword=%r status=%s content_type=%s body_preview=%r",
+                        source_label,
+                        keyword,
+                        response.status_code,
+                        content_type,
+                        preview,
+                    )
+                    continue
+        except Exception:
+            logger.exception("%s fetch failed for keyword=%r", source_label, keyword)
+            continue
+
+        body = payload.get("response", {}).get("body", {}) if isinstance(payload, dict) else {}
+        total_count_raw = body.get("totalCount")
+        try:
+            total_count = int(str(total_count_raw).strip()) if total_count_raw is not None else None
+        except Exception:
+            total_count = None
+        if total_count == 0:
+            continue
+
+        items = _normalize_items(payload)
+        for item in items:
+            parsed = row_extractor(item)
+            if parsed is not None:
+                parsed.matched_keyword = keyword
+                notices.append(parsed)
+
+    return notices
+
+
 def _fetch_last_run_at() -> datetime | None:
     try:
         base_url = _backend_base_url()
@@ -165,192 +448,25 @@ def _fetch_last_run_at() -> datetime | None:
 
 
 def _fetch_g2b_notices(keywords: list[str]) -> list[NoticeRow]:
-    source_url = os.getenv("G2B_SOURCE_URL", "").strip()
-    if not source_url:
-        logger.warning("G2B_SOURCE_URL is not set – skipping fetch")
-        return []
-    if not keywords:
-        logger.warning("No keywords – skipping fetch")
-        return []
+    return _fetch_g2b_rows(
+        source_url_env="G2B_SOURCE_URL",
+        service_key_env="G2B_SERVICE_KEY",
+        keyword_param_name="bidNtceNm",
+        keywords=keywords,
+        row_extractor=_extract_from_item,
+        source_label="G2B notice",
+    )
 
-    parsed_url = urlparse(source_url)
-    existing_query_keys = {key for key, _ in parse_qsl(parsed_url.query, keep_blank_values=True)}
-    existing_query_keys_lc = {key.lower() for key in existing_query_keys}
 
-    notices: list[NoticeRow] = []
-    timeout = int(os.getenv("G2B_HTTP_TIMEOUT_SECONDS", "20"))
-
-    # 나라장터 API는 inqryDiv + inqryBgnDt/inqryEndDt 가 필수
-    # 최근 실행 이력 이후 공고만 조회하고, 이력이 없으면 1일 전부터 조회
-    now = datetime.now(timezone.utc)
-    last_run_at = _fetch_last_run_at()
-    if last_run_at is None:
-        query_start = now - timedelta(days=1)
-        logger.info("No scraper run history found. Falling back to 1 day window.")
-    else:
-        query_start = last_run_at if last_run_at.tzinfo else last_run_at.replace(tzinfo=timezone.utc)
-        if query_start > now:
-            logger.warning("Last run time is in the future. Falling back to 1 day window.")
-            query_start = now - timedelta(days=1)
-
-    inqry_bgn = query_start.strftime("%Y%m%d%H%M")
-    inqry_end = now.strftime("%Y%m%d%H%M")
-    logger.info("G2B query window: %s ~ %s", inqry_bgn, inqry_end)
-
-    def _normalize_items(payload: Any) -> list[dict[str, Any]]:
-        if isinstance(payload, list):
-            return [row for row in payload if isinstance(row, dict)]
-        if not isinstance(payload, dict):
-            return []
-
-        response = payload.get("response")
-        if isinstance(response, dict):
-            body = response.get("body")
-            if isinstance(body, dict):
-                items = body.get("items")
-                if isinstance(items, dict):
-                    item = items.get("item")
-                    if isinstance(item, list):
-                        return [row for row in item if isinstance(row, dict)]
-                    if isinstance(item, dict):
-                        return [item]
-                if isinstance(items, list):
-                    return [row for row in items if isinstance(row, dict)]
-
-        for key in ("items", "results", "data"):
-            value = payload.get(key)
-            if isinstance(value, list):
-                return [row for row in value if isinstance(row, dict)]
-        return []
-
-    def _parse_xml_response(raw_body: str) -> dict[str, Any] | None:
-        try:
-            root = ET.fromstring(raw_body)
-        except ET.ParseError:
-            return None
-
-        body = root.find(".//body")
-        if body is None:
-            return None
-
-        total_count_text = ""
-        total_count_node = body.find("totalCount")
-        if total_count_node is not None and total_count_node.text:
-            total_count_text = total_count_node.text.strip()
-
-        item_nodes = body.findall(".//items/item")
-        parsed_items: list[dict[str, str]] = []
-        for item_node in item_nodes:
-            row: dict[str, str] = {}
-            for child in list(item_node):
-                row[child.tag] = (child.text or "").strip()
-            if row:
-                parsed_items.append(row)
-
-        return {
-            "response": {
-                "body": {
-                    "totalCount": total_count_text,
-                    "items": {"item": parsed_items},
-                }
-            }
-        }
-
-    def _extract_xml_tag(text: str, tag_name: str) -> str:
-        matched = re.search(rf"<{tag_name}>(.*?)</{tag_name}>", text, flags=re.IGNORECASE | re.DOTALL)
-        if not matched:
-            return ""
-        return matched.group(1).strip()
-
-    for keyword in keywords:
-        params = {
-            "inqryDiv": "1",
-            "inqryBgnDt": inqry_bgn,
-            "inqryEndDt": inqry_end,
-            "bidNtceNm": keyword,
-            "numOfRows": "100",
-            "pageNo": "1",
-        }
-        if "type" not in existing_query_keys_lc and "_type" not in existing_query_keys_lc:
-            params["type"] = "json"
-        if "servicekey" not in existing_query_keys_lc:
-            logger.warning("G2B_SOURCE_URL does not include service key query parameter.")
-            continue
-
-        headers = {"Accept": "application/json"}
-
-        try:
-            response = requests.get(source_url, params=params, headers=headers, timeout=timeout)
-            response.raise_for_status()
-            raw_body = (response.text or "").strip()
-            content_type = (response.headers.get("Content-Type") or "").lower()
-
-            if not raw_body:
-                logger.warning(
-                    "G2B returned empty body. keyword=%r status=%s content_type=%s",
-                    keyword,
-                    response.status_code,
-                    content_type,
-                )
-                continue
-
-            try:
-                payload = response.json()
-            except RequestsJSONDecodeError:
-                preview = raw_body[:400].replace("\n", " ").replace("\r", " ")
-                if "xml" in content_type or raw_body.startswith("<"):
-                    result_code = _extract_xml_tag(raw_body, "returnReasonCode")
-                    result_message = _extract_xml_tag(raw_body, "returnAuthMsg")
-                    xml_payload = _parse_xml_response(raw_body)
-                    if xml_payload is None:
-                        logger.error(
-                            "G2B returned XML/non-JSON response. keyword=%r status=%s code=%r message=%r body_preview=%r",
-                            keyword,
-                            response.status_code,
-                            result_code,
-                            result_message,
-                            preview,
-                        )
-                        continue
-                    logger.info(
-                        "G2B XML response parsed successfully. keyword=%r status=%s code=%r message=%r",
-                        keyword,
-                        response.status_code,
-                        result_code,
-                        result_message,
-                    )
-                    payload = xml_payload
-                else:
-                    logger.error(
-                        "G2B returned non-JSON response. keyword=%r status=%s content_type=%s body_preview=%r",
-                        keyword,
-                        response.status_code,
-                        content_type,
-                        preview,
-                    )
-                    continue
-        except Exception:
-            logger.exception("G2B fetch failed for keyword=%r", keyword)
-            continue
-
-        body = payload.get("response", {}).get("body", {}) if isinstance(payload, dict) else {}
-        total_count_raw = body.get("totalCount")
-        try:
-            total_count = int(str(total_count_raw).strip()) if total_count_raw is not None else None
-        except Exception:
-            total_count = None
-        if total_count == 0:
-            continue
-
-        items = _normalize_items(payload)
-
-        for item in items:
-            parsed = _extract_from_item(item)
-            if parsed is not None:
-                parsed.matched_keyword = keyword
-                notices.append(parsed)
-
-    return notices
+def _fetch_g2b_prestandards(keywords: list[str]) -> list[NoticeRow]:
+    return _fetch_g2b_rows(
+        source_url_env="G2B_PRESTANDARD_SOURCE_URL",
+        service_key_env="G2B_PRESTANDARD_SERVICE_KEY",
+        keyword_param_name="thngNm",
+        keywords=keywords,
+        row_extractor=_extract_from_prestandard_item,
+        source_label="G2B prestandard",
+    )
 
 
 def _dedup_with_backend(run_id: str, payload: ScraperJobPayload, notices: list[NoticeRow]) -> list[NoticeRow]:
@@ -522,12 +638,13 @@ def _send_gmail_notice_digest(
     run_id: str,
     payload: ScraperJobPayload,
     notices: list[NoticeRow],
+    prestandards: list[NoticeRow],
 ) -> bool:
     """
     Send via Gmail API using domain-wide delegation.
     Recipients are Bcc so addresses stay private.
     """
-    if not notices or not payload.receiver_emails:
+    if (not notices and not prestandards) or not payload.receiver_emails:
         return False
     service = _build_gmail_service()
     if service is None:
@@ -538,19 +655,37 @@ def _send_gmail_notice_digest(
     if len(payload.keywords) > 8:
         keywords_preview += " …"
     now_kst = datetime.now(timezone.utc).astimezone(ZoneInfo("Asia/Seoul"))
-    subject = f"[나라장터] 신규 공고 알림 ({len(notices)}건)"
+    subject = f"[나라장터] 신규 공고/사전규격 알림 (공고 {len(notices)}건, 사전규격 {len(prestandards)}건)"
     if keywords_preview:
         subject += f" | 키워드: {keywords_preview}"
 
-    inner_table = _notices_to_html_table(notices)
+    notice_table = _notices_to_html_table(notices) if notices else ""
+    prestandard_table = _notices_to_html_table(prestandards) if prestandards else ""
+    notice_section = (
+        f"""
+    <div style="font-size:13px;color:#374151;margin-bottom:10px">신규 공고 <strong>{len(notices)}</strong>건</div>
+    {notice_table}
+"""
+        if notices
+        else ""
+    )
+    prestandard_section = (
+        f"""
+    <div style="font-size:16px;font-weight:700;margin:14px 0 6px">신규 사전규격</div>
+    <div style="font-size:13px;color:#374151;margin-bottom:10px">신규 사전규격 <strong>{len(prestandards)}</strong>건</div>
+    {prestandard_table}
+"""
+        if prestandards
+        else ""
+    )
     html_body = f"""<!DOCTYPE html>
 <html>
   <body style="margin:0;padding:0;font-family:Arial,sans-serif;color:#111827">
-    <div style="font-size:20px;font-weight:700;margin-bottom:6px">신규 공고 알림 (최근 1일)</div>
+    <div style="font-size:20px;font-weight:700;margin-bottom:6px">신규 공고/사전규격 알림 (최근 1일)</div>
     <div style="font-size:13px;color:#4b5563;margin-bottom:8px">키워드: {html.escape(keywords_preview or '-')}</div>
     <div style="font-size:13px;color:#374151;margin-bottom:4px">수집 시각 (KST): {html.escape(now_kst.strftime("%Y-%m-%d %H:%M:%S"))}</div>
-    <div style="font-size:13px;color:#374151;margin-bottom:10px">신규 공고 <strong>{len(notices)}</strong>건</div>
-    {inner_table}
+    {notice_section}
+    {prestandard_section}
   </body>
 </html>"""
 
@@ -558,9 +693,26 @@ def _send_gmail_notice_digest(
         f"수집 시각(KST): {now_kst:%Y-%m-%d %H:%M:%S}",
         f"run_id: {run_id}",
         f"신규 공고 {len(notices)}건",
+        f"신규 사전규격 {len(prestandards)}건",
         "",
     ]
     for n in notices:
+        plain_lines.append(
+            " | ".join(
+                [
+                    (n.matched_keyword or "").strip(),
+                    (n.title or "").strip(),
+                    (n.agency or "").strip(),
+                    _format_notice_amount_for_email(n.estimated_price or ""),
+                    _deadline_kst_display(n.deadline_at),
+                    (n.notice_url or "").strip(),
+                ]
+            )
+        )
+    if prestandards:
+        plain_lines.append("")
+        plain_lines.append("[신규 사전규격]")
+    for n in prestandards:
         plain_lines.append(
             " | ".join(
                 [
@@ -598,9 +750,10 @@ def _notify_recipients(
     run_id: str,
     payload: ScraperJobPayload,
     notices: list[NoticeRow],
+    prestandards: list[NoticeRow],
 ) -> bool:
     """Gmail only. Missing config or send failure must raise an error."""
-    if not notices:
+    if not notices and not prestandards:
         return False
 
     delegated_user = _gmail_delegated_user()
@@ -610,7 +763,12 @@ def _notify_recipients(
     if _gmail_service_account_info() is None:
         raise RuntimeError("GMAIL_SERVICE_ACCOUNT_JSON (or GSHEET_SERVICE_ACCOUNT_JSON) is required")
 
-    sent = _send_gmail_notice_digest(run_id=run_id, payload=payload, notices=notices)
+    sent = _send_gmail_notice_digest(
+        run_id=run_id,
+        payload=payload,
+        notices=notices,
+        prestandards=prestandards,
+    )
     if not sent:
         raise RuntimeError("Gmail API send failed")
     return True
@@ -638,10 +796,20 @@ def _build_sheets_service():
         return None
 
 
-def _append_to_sheet(notices: list[NoticeRow], run_id: str, payload: ScraperJobPayload) -> int:
+def _append_to_sheet(
+    notices: list[NoticeRow],
+    run_id: str,
+    payload: ScraperJobPayload,
+    *,
+    tab_name_override: str | None = None,
+) -> int:
     sheet_ids = _resolve_sheet_ids(payload)
     sheet_id = (sheet_ids[0] if sheet_ids else "") or os.getenv("GSHEET_ID", "").strip()
-    tab_name = (payload.gsheet_tab_name or "").strip() or os.getenv("GSHEET_TAB_NAME", "나라장터 공고 수집 목록").strip()
+    tab_name = (
+        (tab_name_override or "").strip()
+        or (payload.gsheet_tab_name or "").strip()
+        or os.getenv("GSHEET_TAB_NAME", DEFAULT_NOTICE_TAB_NAME).strip()
+    )
     if not sheet_id:
         return 0
 
@@ -977,20 +1145,28 @@ def run_scraper(job: ScraperJobPayload) -> dict[str, Any]:
 
         try:
             notices = _fetch_g2b_notices(job.keywords)
+            prestandards = _fetch_g2b_prestandards(job.keywords)
         except Exception as error:
             raise RuntimeError(f"fetch failed: {error}") from error
 
         notice_count = len(notices)
-        logger.info("Run %s: fetched %d notices", run_id, notice_count)
+        prestandard_count = len(prestandards)
+        logger.info(
+            "Run %s: fetched notices=%d prestandards=%d",
+            run_id,
+            notice_count,
+            prestandard_count,
+        )
         try:
             keyword_map: dict[tuple[str, str], str] = {}
-            for notice in notices:
+            all_fetched = notices + prestandards
+            for notice in all_fetched:
                 key = ((notice.notice_id or "").strip(), (notice.title or "").strip())
                 if key != ("", "") and key not in keyword_map:
                     keyword_map[key] = (notice.matched_keyword or "").strip()
-            deduped_notices = _dedup_with_backend(run_id, job, notices)
+            deduped_all = _dedup_with_backend(run_id, job, all_fetched)
             # 백엔드 dedup 스키마에는 matched_keyword가 없어서 떨어질 수 있으므로 복원
-            for notice in deduped_notices:
+            for notice in deduped_all:
                 key = ((notice.notice_id or "").strip(), (notice.title or "").strip())
                 restored = keyword_map.get(key, "")
                 if restored:
@@ -998,9 +1174,31 @@ def run_scraper(job: ScraperJobPayload) -> dict[str, Any]:
         except Exception as error:
             raise RuntimeError(f"dedup failed: {error}") from error
 
-        deduped_count = max(0, notice_count - len(deduped_notices))
+        deduped_notices: list[NoticeRow] = []
+        deduped_prestandards: list[NoticeRow] = []
+        notice_keys = {
+            ((item.notice_id or "").strip(), (item.title or "").strip())
+            for item in notices
+        }
+        for item in deduped_all:
+            key = ((item.notice_id or "").strip(), (item.title or "").strip())
+            if key in notice_keys:
+                deduped_notices.append(item)
+            else:
+                deduped_prestandards.append(item)
+
+        fetched_total = notice_count + prestandard_count
+        kept_total = len(deduped_notices) + len(deduped_prestandards)
+        deduped_count = max(0, fetched_total - kept_total)
         try:
-            sheet_written_count = _append_to_sheet(deduped_notices, run_id, job)
+            notice_sheet_written_count = _append_to_sheet(deduped_notices, run_id, job)
+            prestandard_sheet_written_count = _append_to_sheet(
+                deduped_prestandards,
+                run_id,
+                job,
+                tab_name_override=os.getenv("GSHEET_PRESTANDARD_TAB_NAME", DEFAULT_PRESTANDARD_TAB_NAME).strip(),
+            )
+            sheet_written_count = notice_sheet_written_count + prestandard_sheet_written_count
         except Exception:
             logger.exception("Sheet write failed")
             sheet_written_count = 0
@@ -1009,13 +1207,14 @@ def run_scraper(job: ScraperJobPayload) -> dict[str, Any]:
             run_id=run_id,
             payload=job,
             notices=deduped_notices,
+            prestandards=deduped_prestandards,
         )
 
         email_sent_count = 1 if mail_triggered else 0
 
         status = "success"
         error_message = None
-        if deduped_notices and (email_sent_count == 0 or sheet_written_count == 0):
+        if (deduped_notices or deduped_prestandards) and (email_sent_count == 0 or sheet_written_count == 0):
             status = "partial"
             error_message = "At least one downstream sink was not written."
 
@@ -1023,18 +1222,18 @@ def run_scraper(job: ScraperJobPayload) -> dict[str, Any]:
             run_id=run_id,
             status=status,
             payload=job,
-            notice_count=notice_count,
+            notice_count=fetched_total,
             deduped_count=deduped_count,
             email_sent_count=email_sent_count,
             sheet_written_count=sheet_written_count,
             error_message=error_message,
-            notices=deduped_notices,
+            notices=deduped_notices + deduped_prestandards,
         )
 
         return {
             "run_id": run_id,
             "status": status,
-            "notice_count": notice_count,
+            "notice_count": fetched_total,
             "deduped_count": deduped_count,
             "email_sent_count": email_sent_count,
             "sheet_written_count": sheet_written_count,
