@@ -48,6 +48,7 @@ class ScraperJobPayload(BaseModel):
     enabled: bool = True
     notify_times: list[str] = Field(default_factory=lambda: ["09:00:00"])
     gsheet_id: str | None = None
+    gsheet_ids: list[str] = Field(default_factory=list)
     gsheet_tab_name: str = "나라장터 공고 수집 목록"
     receiver_emails: list[str] = Field(default_factory=list)
     keywords: list[str] = Field(default_factory=list)
@@ -59,6 +60,26 @@ def _normalize_string_list(raw: Any) -> list[str]:
     if isinstance(raw, str):
         return [item.strip() for item in raw.split(",") if item.strip()]
     return []
+
+
+def _resolve_sheet_ids(payload: ScraperJobPayload) -> list[str]:
+    """
+    Backward/forward compatible sheet id resolver.
+    - Legacy worker payload: gsheet_id
+    - Current backend payload: gsheet_ids
+    """
+    ids: list[str] = []
+    if payload.gsheet_id and payload.gsheet_id.strip():
+        ids.append(payload.gsheet_id.strip())
+    ids.extend(item.strip() for item in payload.gsheet_ids if str(item).strip())
+    # keep order, remove duplicates
+    seen: set[str] = set()
+    unique_ids: list[str] = []
+    for sheet_id in ids:
+        if sheet_id not in seen:
+            unique_ids.append(sheet_id)
+            seen.add(sheet_id)
+    return unique_ids
 
 
 def _backend_headers() -> dict[str, str]:
@@ -363,6 +384,7 @@ def _trigger_apps_script_mail_webhook(
                 "run_id": run_id,
                 "receiver_emails": payload.receiver_emails,
                 "sheet_id": payload.gsheet_id or os.getenv("GSHEET_ID", ""),
+                "sheet_ids": _resolve_sheet_ids(payload) or [os.getenv("GSHEET_ID", "").strip()],
                 "sheet_tab_name": payload.gsheet_tab_name,
                 "notice_count": len(notices),
             },
@@ -587,7 +609,8 @@ def _build_sheets_service():
 
 
 def _append_to_sheet(notices: list[NoticeRow], run_id: str, payload: ScraperJobPayload) -> int:
-    sheet_id = (payload.gsheet_id or "").strip() or os.getenv("GSHEET_ID", "").strip()
+    sheet_ids = _resolve_sheet_ids(payload)
+    sheet_id = (sheet_ids[0] if sheet_ids else "") or os.getenv("GSHEET_ID", "").strip()
     tab_name = (payload.gsheet_tab_name or "").strip() or os.getenv("GSHEET_TAB_NAME", "나라장터 공고 수집 목록").strip()
     if not sheet_id:
         return 0
@@ -865,7 +888,14 @@ def run_scraper(job: ScraperJobPayload) -> dict[str, Any]:
     try:
         job.keywords = _normalize_string_list(job.keywords)
         job.receiver_emails = _normalize_string_list(job.receiver_emails)
-        logger.info("Run %s: keywords=%s gsheet_id=%s", run_id, job.keywords, job.gsheet_id)
+        job.gsheet_ids = _normalize_string_list(job.gsheet_ids)
+        logger.info(
+            "Run %s: keywords=%s gsheet_id=%s gsheet_ids=%s",
+            run_id,
+            job.keywords,
+            job.gsheet_id,
+            job.gsheet_ids,
+        )
 
         try:
             notices = _fetch_g2b_notices(job.keywords)
