@@ -309,6 +309,7 @@ def _fetch_g2b_rows(
     keywords: list[str],
     row_extractor: Any,
     source_label: str,
+    fallback_operation_paths: list[str] | None = None,
 ) -> list[NoticeRow]:
     source_url = os.getenv(source_url_env, "").strip()
     if not source_url:
@@ -321,6 +322,17 @@ def _fetch_g2b_rows(
     parsed_url = urlparse(source_url)
     existing_query_keys = {key for key, _ in parse_qsl(parsed_url.query, keep_blank_values=True)}
     existing_query_keys_lc = {key.lower() for key in existing_query_keys}
+    source_base_path = (parsed_url.path or "").rstrip("/")
+
+    candidate_urls = [source_url]
+    fallback_paths = [item.strip() for item in (fallback_operation_paths or []) if item and item.strip()]
+    # 서비스 루트만 들어온 경우(예: .../HrcspSsstndrdInfoService)에는 세부 오퍼레이션 경로를 자동 보완
+    if fallback_paths and source_base_path.lower().endswith("service"):
+        for op_path in fallback_paths:
+            normalized = op_path if op_path.startswith("/") else f"/{op_path}"
+            candidate = f"{source_url.rstrip('/')}{normalized}"
+            if candidate not in candidate_urls:
+                candidate_urls.append(candidate)
 
     timeout = int(os.getenv("G2B_HTTP_TIMEOUT_SECONDS", "20"))
     inqry_bgn, inqry_end = _build_query_window()
@@ -354,8 +366,31 @@ def _fetch_g2b_rows(
         headers = {"Accept": "application/json"}
 
         try:
-            response = requests.get(source_url, params=params, headers=headers, timeout=timeout)
-            response.raise_for_status()
+            response = None
+            last_http_error: Exception | None = None
+            for idx, candidate_url in enumerate(candidate_urls):
+                try:
+                    response = requests.get(candidate_url, params=params, headers=headers, timeout=timeout)
+                    response.raise_for_status()
+                    if idx > 0:
+                        logger.info(
+                            "%s recovered by fallback operation path. keyword=%r url=%s",
+                            source_label,
+                            keyword,
+                            candidate_url,
+                        )
+                    break
+                except requests.HTTPError as http_error:
+                    last_http_error = http_error
+                    # 404면 다른 오퍼레이션 URL로 재시도, 그 외는 즉시 실패
+                    if response is not None and response.status_code == 404 and idx < len(candidate_urls) - 1:
+                        continue
+                    raise
+            if response is None:
+                if last_http_error is not None:
+                    raise last_http_error
+                raise RuntimeError(f"{source_label} failed with empty HTTP response")
+
             raw_body = (response.text or "").strip()
             content_type = (response.headers.get("Content-Type") or "").lower()
 
@@ -466,6 +501,11 @@ def _fetch_g2b_prestandards(keywords: list[str]) -> list[NoticeRow]:
         keywords=keywords,
         row_extractor=_extract_from_prestandard_item,
         source_label="G2B prestandard",
+        fallback_operation_paths=[
+            "/getPublicPrcureThngInfoThng",
+            "/getInsttAcctoThngListInfoThng",
+            "/getPublicPrcureThngInfoPPSsrch",
+        ],
     )
 
 
