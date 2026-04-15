@@ -613,11 +613,12 @@ def get_scraper_config(db: Session) -> ScraperConfig:
 
     emails = [item.strip() for item in row.receiver_emails.split(",") if item.strip()]
     keywords = [item.strip() for item in row.keywords.split(",") if item.strip()]
+    gsheet_ids = [item.strip() for item in (row.gsheet_ids or "").split(",") if item.strip()]
 
     config = ScraperConfig(
         enabled=row.enabled,
         notify_times=_parse_notify_times(row.notify_times),
-        gsheet_id=row.gsheet_id,
+        gsheet_ids=gsheet_ids,
         receiver_emails=emails,
         keywords=keywords,
         recent_runs=list_scraper_runs(db, limit=10),
@@ -649,7 +650,7 @@ def upsert_scraper_config(db: Session, config: ScraperConfig) -> ScraperConfig:
             row = db.execute(select(ScraperConfigModel).limit(1)).scalar_one()
             row.enabled = config.enabled
             row.notify_times = _parse_notify_times(serialized_notify_times)[0]
-    row.gsheet_id = config.gsheet_id
+    row.gsheet_ids = ",".join(item.strip() for item in config.gsheet_ids if item.strip())
     row.receiver_emails = ",".join(str(email) for email in config.receiver_emails)
     row.keywords = ",".join(config.keywords)
     row.updated_at = datetime.now(timezone.utc)
@@ -770,9 +771,12 @@ def _build_sheets_service():
 
 
 def _append_notices_to_sheet(config: ScraperConfig, run_id: str, notices: list[ScraperNotice]) -> int:
-    sheet_id = (config.gsheet_id or "").strip() or settings.gsheet_id.strip()
+    sheet_ids = [item.strip() for item in config.gsheet_ids if item.strip()]
+    fallback = settings.gsheet_id.strip()
+    if not sheet_ids and fallback:
+        sheet_ids = [fallback]
     tab_name = settings.gsheet_tab_name.strip() or "나라장터 공고 수집 목록"
-    if not sheet_id or not notices:
+    if not sheet_ids or not notices:
         return 0
 
     service = _build_sheets_service()
@@ -795,18 +799,21 @@ def _append_notices_to_sheet(config: ScraperConfig, run_id: str, notices: list[S
             ]
         )
 
-    try:
-        service.spreadsheets().values().append(
-            spreadsheetId=sheet_id,
-            range=f"{tab_name}!A:H",
-            valueInputOption="RAW",
-            insertDataOption="INSERT_ROWS",
-            body={"values": values},
-        ).execute()
-    except Exception:
-        return 0
+    success_count = 0
+    for sheet_id in sheet_ids:
+        try:
+            service.spreadsheets().values().append(
+                spreadsheetId=sheet_id,
+                range=f"{tab_name}!A:H",
+                valueInputOption="RAW",
+                insertDataOption="INSERT_ROWS",
+                body={"values": values},
+            ).execute()
+            success_count += len(values)
+        except Exception:
+            continue
 
-    return len(values)
+    return success_count
 
 
 def _trigger_apps_script_mail_webhook(config: ScraperConfig, run_id: str, notices: list[ScraperNotice]) -> bool:
@@ -820,7 +827,7 @@ def _trigger_apps_script_mail_webhook(config: ScraperConfig, run_id: str, notice
             json={
                 "run_id": run_id,
                 "receiver_emails": [str(email) for email in config.receiver_emails],
-                "sheet_id": config.gsheet_id or settings.gsheet_id,
+                "sheet_ids": config.gsheet_ids or [settings.gsheet_id],
                 "sheet_tab_name": settings.gsheet_tab_name,
                 "notice_count": len(notices),
             },

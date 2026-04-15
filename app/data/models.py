@@ -61,7 +61,7 @@ class ScraperConfigModel(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     notify_times: Mapped[str] = mapped_column(Text, nullable=False, default="09:00:00")
-    gsheet_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    gsheet_ids: Mapped[str] = mapped_column(Text, nullable=False, default="")
     receiver_emails: Mapped[str] = mapped_column(Text, nullable=False)
     keywords: Mapped[str] = mapped_column(Text, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(

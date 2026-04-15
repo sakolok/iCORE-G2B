@@ -48,7 +48,7 @@ def _build_body(config: ScraperConfig, notify_time: time) -> bytes:
         "enabled": config.enabled,
         "notify_time": notify_time.isoformat(),
         "notify_times": [item.isoformat() for item in _normalize_notify_times(config)],
-        "gsheet_id": config.gsheet_id,
+        "gsheet_ids": config.gsheet_ids,
         "gsheet_tab_name": settings.gsheet_tab_name,
         "receiver_emails": config.receiver_emails,
         "keywords": config.keywords,

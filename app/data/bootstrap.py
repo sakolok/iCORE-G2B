@@ -41,7 +41,7 @@ def seed_defaults(db: Session) -> None:
             ScraperConfigModel(
                 enabled=True,
                 notify_times="09:00:00",
-                gsheet_id=None,
+                gsheet_ids="",
                 receiver_emails=settings.default_receiver_email,
                 keywords="클라우드,AI,교육",
             )

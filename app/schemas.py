@@ -138,7 +138,7 @@ class ScraperRunSummary(BaseModel):
 class ScraperConfig(BaseModel):
     enabled: bool = True
     notify_times: list[time] = Field(default_factory=lambda: [time(hour=9, minute=0)], min_length=1)
-    gsheet_id: Optional[str] = Field(default=None, max_length=120)
+    gsheet_ids: list[str] = Field(default_factory=list)
     receiver_emails: list[EmailStr]
     keywords: list[str] = Field(min_length=1)
     scheduler_status: Optional[SchedulerStatus] = None
