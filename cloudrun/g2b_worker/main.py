@@ -580,10 +580,21 @@ def _notify_recipients(
     payload: ScraperJobPayload,
     notices: list[NoticeRow],
 ) -> bool:
-    """Prefer Gmail when SA JSON + delegated user env are set; else Apps Script webhook."""
-    if _gmail_service_account_info() and _gmail_delegated_user():
-        return _send_gmail_notice_digest(run_id=run_id, payload=payload, notices=notices)
-    return _trigger_apps_script_mail_webhook(run_id=run_id, payload=payload, notices=notices)
+    """Gmail only. Missing config or send failure must raise an error."""
+    if not notices:
+        return False
+
+    delegated_user = _gmail_delegated_user()
+    if not delegated_user:
+        raise RuntimeError("GMAIL_DELEGATED_USER is required for Gmail sending")
+
+    if _gmail_service_account_info() is None:
+        raise RuntimeError("GMAIL_SERVICE_ACCOUNT_JSON (or GSHEET_SERVICE_ACCOUNT_JSON) is required")
+
+    sent = _send_gmail_notice_digest(run_id=run_id, payload=payload, notices=notices)
+    if not sent:
+        raise RuntimeError("Gmail API send failed")
+    return True
 
 
 def _build_sheets_service():
@@ -927,15 +938,11 @@ def run_scraper(job: ScraperJobPayload) -> dict[str, Any]:
             logger.exception("Sheet write failed")
             sheet_written_count = 0
 
-        try:
-            mail_triggered = _notify_recipients(
-                run_id=run_id,
-                payload=job,
-                notices=deduped_notices,
-            )
-        except Exception:
-            logger.exception("Notification (Gmail / Apps Script) failed")
-            mail_triggered = False
+        mail_triggered = _notify_recipients(
+            run_id=run_id,
+            payload=job,
+            notices=deduped_notices,
+        )
 
         email_sent_count = 1 if mail_triggered else 0
 

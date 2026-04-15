@@ -118,8 +118,10 @@ jobs:
             --set-env-vars="SCRAPER_INTERNAL_TOKEN=${{ secrets.SCRAPER_INTERNAL_TOKEN }}" \
             --set-env-vars="G2B_SOURCE_URL=${{ secrets.G2B_SOURCE_URL }}" \
             --set-env-vars="GSHEET_ID=${{ secrets.GSHEET_ID }}" \
+            --set-env-vars="GSHEET_SERVICE_ACCOUNT_JSON=${{ secrets.GSHEET_SERVICE_ACCOUNT_JSON }}" \
             --set-env-vars="GSHEET_TAB_NAME=나라장터 공고 수집 목록" \
-            --set-env-vars="APPS_SCRIPT_WEBHOOK_URL=${{ secrets.APPS_SCRIPT_WEBHOOK_URL }}"
+            --set-env-vars="GMAIL_DELEGATED_USER=${{ secrets.GMAIL_DELEGATED_USER }}" \
+            --set-env-vars="GMAIL_SERVICE_ACCOUNT_JSON=${{ secrets.GMAIL_SERVICE_ACCOUNT_JSON }}"
 
   deploy-vm:
     needs: test-and-build
