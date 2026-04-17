@@ -172,6 +172,10 @@ def _upload_hero_image_if_needed(request: DeployRequest, clean_topic: str) -> st
 def _build_landing_context(
     request: DeployRequest, hero_image_url: str | None, expires_at: datetime
 ) -> dict:
+    target_html = "".join([f"<li><span class='chk'>✓</span> {escape(t.description)}</li>" for t in request.content.target_audience])
+    features_html = "".join([f"<article class='feature-card'><h3>{escape(f.title)}</h3><p>{escape(f.description)}</p></article>" for f in request.content.features])
+    curriculum_html = "".join([f"<div class='step'><div class='step-marker'></div><div class='step-content'><h4>{escape(c.step)}: {escape(c.title)}</h4><p>{escape(c.description)}</p></div></div>" for c in request.content.curriculum])
+
     return {
         "title": escape(request.content.title),
         "subtitle": escape(request.content.subtitle),
@@ -192,15 +196,17 @@ def _build_landing_context(
             if hero_image_url
             else ""
         ),
+        "target_audience_html": target_html,
+        "features_html": features_html,
+        "curriculum_html": curriculum_html,
     }
-
 
 def _render_clean_campaign(ctx: dict) -> str:
     return f"""<!doctype html>
-<html lang=\"ko\">
+<html lang="ko">
 <head>
-    <meta charset=\"UTF-8\" />
-    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>{ctx["title"]}</title>
     <style>
         :root {{ --bg: {ctx["bg"]}; --primary: {ctx["primary"]}; --secondary: {ctx["secondary"]}; }}
@@ -212,26 +218,46 @@ def _render_clean_campaign(ctx: dict) -> str:
         .hero {{ margin-top: 24px; display: grid; grid-template-columns: 1.15fr 0.85fr; gap: 24px; align-items: center; }}
         h1 {{ margin: 0 0 8px; font-size: clamp(32px, 5vw, 56px); line-height: 1.08; }}
         h2 {{ margin: 0 0 14px; font-size: clamp(22px, 3.2vw, 34px); color: var(--secondary); }}
-        p {{ margin: 0 0 20px; line-height: 1.7; color: #374151; }}
+        p.desc {{ margin: 0 0 20px; line-height: 1.7; color: #374151; font-size: 18px; }}
         .cta {{ display: inline-block; text-decoration: none; background: var(--primary); color: #fff; font-weight: 700; padding: 12px 22px; border-radius: 12px; }}
         .meta {{ margin-top: 18px; font-size: 13px; color: #6b7280; }}
-        .hero-image {{ width: 100%; border-radius: 16px; border: 1px solid #dbe1ea; box-shadow: 0 20px 50px rgba(2, 6, 23, 0.15); }}
+        .hero-image {{ width: 100%; border-radius: 16px; border: 1px solid #dbe1ea; box-shadow: 0 20px 50px rgba(2,6,23,0.15); }}
+        .section-title {{ font-size: 28px; margin: 40px 0 20px; font-weight: 800; border-bottom: 2px solid #e5e7eb; padding-bottom: 10px; }}
+        .features-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 20px; margin-bottom: 40px; }}
+        .feature-card {{ background: #f8fafc; padding: 20px; border-radius: 16px; border: 1px solid #e2e8f0; }}
+        .feature-card h3 {{ margin: 0 0 8px; font-size: 18px; color: var(--secondary); }}
+        .feature-card p {{ margin: 0; font-size: 15px; color: #475569; line-height: 1.6; }}
+        .target-list {{ list-style: none; padding: 0; margin: 0 0 40px; display: grid; gap: 12px; }}
+        .target-list li {{ background: #fff; border: 1px solid #e5e7eb; padding: 16px 20px; border-radius: 12px; display: flex; align-items: center; gap: 12px; font-size: 16px; font-weight: 600; box-shadow: 0 2px 4px rgba(0,0,0,0.02); }}
+        .target-list .chk {{ color: var(--primary); font-size: 20px; font-weight: bold; }}
+        .curriculum-timeline {{ position: relative; padding-left: 24px; margin-bottom: 40px; }}
+        .curriculum-timeline::before {{ content: ''; position: absolute; left: 6px; top: 10px; bottom: 10px; width: 2px; background: #e2e8f0; }}
+        .step {{ position: relative; margin-bottom: 24px; }}
+        .step-marker {{ position: absolute; left: -24px; top: 4px; width: 14px; height: 14px; border-radius: 50%; background: #fff; border: 3px solid var(--primary); z-index: 1; }}
+        .step-content h4 {{ margin: 0 0 6px; font-size: 18px; color: #0f172a; }}
+        .step-content p {{ margin: 0; font-size: 15px; color: #64748b; line-height: 1.6; }}
         @media (max-width: 920px) {{ .hero {{ grid-template-columns: 1fr; }} .brand {{ font-size: 24px; }} }}
     </style>
 </head>
 <body>
-    <main class=\"shell\">
-        <section class=\"mast\">
-            <div class=\"brand\">{ctx["business_name"]}</div>
-            <div class=\"hero\">
+    <main class="shell">
+        <section class="mast">
+            <div class="brand">{ctx["business_name"]}</div>
+            <div class="hero">
                 <div>
                     <h1>{ctx["title"]}</h1>
                     <h2>{ctx["subtitle"]}</h2>
-                    <p>{ctx["body"]}</p>
-                    <a class=\"cta\" href=\"{ctx["cta_url"]}\">{ctx["cta_text"]}</a>
-                    <div class=\"meta\">대분류: {ctx["major"]} | 소분류: {ctx["minor"]} | 접근 만료 예정: {ctx["expires_kst"]} (KST)</div>
+                    <p class="desc">{ctx["body"]}</p>
+                    <a class="cta" href="{ctx["cta_url"]}">{ctx["cta_text"]}</a>
+                    <div class="meta">대분류: {ctx["major"]} | 소분류: {ctx["minor"]} | 접근 만료 예정: {ctx["expires_kst"]} (KST)</div>
                 </div>
                 <div>{ctx["hero_html"]}</div>
+            </div>
+            
+            <div class="rich-content">
+                { f"<h3 class='section-title'>추천 대상</h3><ul class='target-list'>{ctx['target_audience_html']}</ul>" if ctx["target_audience_html"] else "" }
+                { f"<h3 class='section-title'>과정 특징</h3><div class='features-grid'>{ctx['features_html']}</div>" if ctx["features_html"] else "" }
+                { f"<h3 class='section-title'>커리큘럼</h3><div class='curriculum-timeline'>{ctx['curriculum_html']}</div>" if ctx["curriculum_html"] else "" }
             </div>
         </section>
     </main>
@@ -272,29 +298,49 @@ def _render_dark_product(ctx: dict) -> str:
         .stats {{ margin-top: 20px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }}
         .stat {{ background: rgba(17,24,39,0.9); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 10px; font-size: 13px; color: #cbd5e1; }}
         .hero-image {{ width: 100%; height: 100%; min-height: 280px; object-fit: cover; border-radius: 16px; border: 1px solid rgba(255,255,255,0.1); }}
+        .section-title {{ font-size: 28px; margin: 40px 0 20px; font-weight: 800; border-bottom: 2px solid rgba(255,255,255,0.1); padding-bottom: 10px; }}
+        .features-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 20px; margin-bottom: 40px; }}
+        .feature-card {{ background: rgba(255,255,255,0.03); padding: 20px; border-radius: 16px; border: 1px solid rgba(255,255,255,0.08); }}
+        .feature-card h3 {{ margin: 0 0 8px; font-size: 18px; color: var(--secondary); }}
+        .feature-card p {{ margin: 0; font-size: 15px; color: #9ca3af; line-height: 1.6; }}
+        .target-list {{ list-style: none; padding: 0; margin: 0 0 40px; display: grid; gap: 12px; }}
+        .target-list li {{ background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); padding: 16px 20px; border-radius: 12px; display: flex; align-items: center; gap: 12px; font-size: 16px; font-weight: 600; box-shadow: 0 2px 4px rgba(0,0,0,0.2); }}
+        .target-list .chk {{ color: var(--primary); font-size: 20px; font-weight: bold; }}
+        .curriculum-timeline {{ position: relative; padding-left: 24px; margin-bottom: 40px; }}
+        .curriculum-timeline::before {{ content: ''; position: absolute; left: 6px; top: 10px; bottom: 10px; width: 2px; background: rgba(255,255,255,0.1); }}
+        .step {{ position: relative; margin-bottom: 24px; }}
+        .step-marker {{ position: absolute; left: -24px; top: 4px; width: 14px; height: 14px; border-radius: 50%; background: #030712; border: 3px solid var(--primary); z-index: 1; }}
+        .step-content h4 {{ margin: 0 0 6px; font-size: 18px; color: #e2e8f0; }}
+        .step-content p {{ margin: 0; font-size: 15px; color: #9ca3af; line-height: 1.6; }}
         @media (max-width: 920px) {{ .hero {{ grid-template-columns: 1fr; }} .stats {{ grid-template-columns: 1fr; }} }}
     </style>
 </head>
 <body>
-    <div class=\"shell\">
-        <div class=\"top\">
-            <div class=\"brand\">{ctx["business_name"]}</div>
-            <a class=\"ghost\" href=\"{ctx["cta_url"]}\">문의하기</a>
+    <div class="shell">
+        <div class="top">
+            <div class="brand">{ctx["business_name"]}</div>
+            <a class="ghost" href="{ctx["cta_url"]}">문의하기</a>
         </div>
-        <section class=\"panel\">
-            <div class=\"hero\">
+        <section class="panel">
+            <div class="hero">
                 <article>
                     <h1>{ctx["title"]}</h1>
                     <h2>{ctx["subtitle"]}</h2>
                     <p>{ctx["body"]}</p>
-                    <a class=\"cta\" href=\"{ctx["cta_url"]}\">{ctx["cta_text"]}</a>
-                    <div class=\"stats\">
-                        <div class=\"stat\">대분류<br>{ctx["major"]}</div>
-                        <div class=\"stat\">소분류<br>{ctx["minor"]}</div>
-                        <div class=\"stat\">만료<br>{ctx["expires_kst"]} KST</div>
+                    <a class="cta" href="{ctx["cta_url"]}">{ctx["cta_text"]}</a>
+                    <div class="stats">
+                        <div class="stat">대분류<br>{ctx["major"]}</div>
+                        <div class="stat">소분류<br>{ctx["minor"]}</div>
+                        <div class="stat">만료<br>{ctx["expires_kst"]} KST</div>
                     </div>
                 </article>
                 <div>{ctx["hero_html"]}</div>
+            </div>
+            
+            <div class="rich-content">
+                { f"<h3 class='section-title'>추천 대상</h3><ul class='target-list'>{ctx['target_audience_html']}</ul>" if ctx["target_audience_html"] else "" }
+                { f"<h3 class='section-title'>과정 특징</h3><div class='features-grid'>{ctx['features_html']}</div>" if ctx["features_html"] else "" }
+                { f"<h3 class='section-title'>커리큘럼</h3><div class='curriculum-timeline'>{ctx['curriculum_html']}</div>" if ctx["curriculum_html"] else "" }
             </div>
         </section>
     </div>
@@ -332,24 +378,44 @@ def _render_event_highlight(ctx: dict) -> str:
         .hero-image {{ width: 100%; border: 2px solid #111827; border-radius: 16px; margin: 6px 0 18px; }}
         .foot {{ display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }}
         .cta {{ background: #111827; color: #fff; text-decoration: none; font-weight: 800; padding: 12px 18px; border-radius: 12px; }}
+        .section-title {{ font-size: 24px; margin: 30px 0 16px; font-weight: 800; border-bottom: 2px solid #111827; padding-bottom: 8px; }}
+        .features-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; margin-bottom: 30px; }}
+        .feature-card {{ background: #fff; padding: 16px; border-radius: 12px; border: 2px solid #111827; box-shadow: 4px 4px 0 #111827; }}
+        .feature-card h3 {{ margin: 0 0 6px; font-size: 17px; color: var(--secondary); font-weight: 800; }}
+        .feature-card p {{ margin: 0; font-size: 14px; line-height: 1.6; }}
+        .target-list {{ list-style: none; padding: 0; margin: 0 0 30px; display: grid; gap: 10px; }}
+        .target-list li {{ background: #fff; border: 2px solid #111827; padding: 12px 16px; border-radius: 10px; display: flex; align-items: center; gap: 12px; font-size: 15px; font-weight: 700; box-shadow: 4px 4px 0 #111827; }}
+        .target-list .chk {{ color: var(--primary); font-size: 18px; font-weight: 900; }}
+        .curriculum-timeline {{ position: relative; padding-left: 20px; margin-bottom: 30px; border-left: 3px solid #111827; }}
+        .step {{ position: relative; margin-bottom: 20px; padding-left: 14px; }}
+        .step-marker {{ position: absolute; left: -21px; top: 4px; width: 14px; height: 14px; border-radius: 50%; background: var(--primary); border: 2px solid #111827; z-index: 1; }}
+        .step-content h4 {{ margin: 0 0 4px; font-size: 16px; font-weight: 800; }}
+        .step-content p {{ margin: 0; font-size: 14px; line-height: 1.5; }}
         .meta {{ color: #374151; font-size: 13px; }}
     </style>
 </head>
 <body>
-    <main class=\"shell\">
-        <section class=\"poster\">
-            <header class=\"head\">
+    <main class="shell">
+        <section class="poster">
+            <header class="head">
                 <strong>{ctx["business_name"]}</strong>
-                <span class=\"tag\">EVENT</span>
+                <span class="tag">EVENT</span>
             </header>
-            <div class=\"body\">
+            <div class="body">
                 <h1>{ctx["title"]}</h1>
                 <h2>{ctx["subtitle"]}</h2>
                 <p>{ctx["body"]}</p>
                 {ctx["hero_html"]}
-                <div class=\"foot\">
-                    <a class=\"cta\" href=\"{ctx["cta_url"]}\">{ctx["cta_text"]}</a>
-                    <div class=\"meta\">{ctx["major"]} · {ctx["minor"]} · {ctx["expires_kst"]} KST까지</div>
+                
+                <div class="rich-content" style="margin-top:40px;">
+                    { f"<h3 class='section-title'>추천 대상</h3><ul class='target-list'>{ctx['target_audience_html']}</ul>" if ctx["target_audience_html"] else "" }
+                    { f"<h3 class='section-title'>과정 특징</h3><div class='features-grid'>{ctx['features_html']}</div>" if ctx["features_html"] else "" }
+                    { f"<h3 class='section-title'>커리큘럼</h3><div class='curriculum-timeline'>{ctx['curriculum_html']}</div>" if ctx["curriculum_html"] else "" }
+                </div>
+                
+                <div class="foot" style="margin-top:20px;">
+                    <a class="cta" href="{ctx["cta_url"]}">{ctx["cta_text"]}</a>
+                    <div class="meta">{ctx["major"]} · {ctx["minor"]} · {ctx["expires_kst"]} KST까지</div>
                 </div>
             </div>
         </section>
@@ -481,6 +547,9 @@ def create_landing_page(db: Session, request: DeployRequest) -> DeployResponse:
         primary_color=request.content.primary_color,
         secondary_color=request.content.secondary_color,
         background_color=request.content.background_color,
+        features_json=json.dumps([c.model_dump() for c in request.content.features], ensure_ascii=False),
+        curriculum_json=json.dumps([c.model_dump() for c in request.content.curriculum], ensure_ascii=False),
+        target_audience_json=json.dumps([c.model_dump() for c in request.content.target_audience], ensure_ascii=False),
         deployed_at=deployed_at,
     )
     db.add(row)

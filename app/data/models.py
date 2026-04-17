@@ -43,6 +43,9 @@ class LandingPageModel(Base):
     primary_color: Mapped[str] = mapped_column(String(7), nullable=False)
     secondary_color: Mapped[str] = mapped_column(String(7), nullable=False)
     background_color: Mapped[str] = mapped_column(String(7), nullable=False)
+    features_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    curriculum_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    target_audience_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
     deployed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc)
