@@ -152,7 +152,10 @@ def _upload_hero_image_if_needed(request: DeployRequest, clean_topic: str) -> st
                 return None
 
         try:
-                image_bytes = base64.b64decode(request.content.hero_image_base64)
+                b64_data = request.content.hero_image_base64
+                if "," in b64_data:
+                        b64_data = b64_data.split(",")[1]
+                image_bytes = base64.b64decode(b64_data)
         except Exception as error:
                 raise ValueError("이미지 파일 디코딩에 실패했습니다.") from error
 
@@ -167,6 +170,28 @@ def _upload_hero_image_if_needed(request: DeployRequest, clean_topic: str) -> st
                 cache_control="public, max-age=31536000, immutable",
         )
         return f"https://storage.googleapis.com/{settings.client_web_bucket}/{object_path}"
+
+
+def _upload_item_image_if_needed(request: DeployRequest, clean_topic: str, base64_str: str | None, index: int, prefix: str) -> str | None:
+    if not base64_str:
+        return None
+    try:
+        b64_data = base64_str
+        if "," in base64_str:
+            b64_data = base64_str.split(",")[1]
+        image_bytes = base64.b64decode(b64_data)
+    except Exception as error:
+        raise ValueError(f"{prefix} 첨부 이미지 디코딩에 실패했습니다.") from error
+
+    object_path = f"landings/{clean_topic}/{request.slug}/assets/{prefix}_{index}.png"
+    _upload_bytes_to_gcs(
+        bucket_name=settings.client_web_bucket,
+        object_path=object_path,
+        data=image_bytes,
+        content_type="image/png",
+        cache_control="public, max-age=31536000, immutable",
+    )
+    return f"https://storage.googleapis.com/{settings.client_web_bucket}/{object_path}"
 
 
 def _build_landing_context(
@@ -199,6 +224,8 @@ def _build_landing_context(
         "target_audience_html": target_html,
         "features_html": features_html,
         "curriculum_html": curriculum_html,
+        "content_obj": request.content,
+        "hero_image_url_raw": hero_image_url,
     }
 
 def _render_clean_campaign(ctx: dict) -> str:
@@ -425,10 +452,179 @@ def _render_event_highlight(ctx: dict) -> str:
 """
 
 
+def _render_premium_bootcamp(ctx: dict) -> str:
+    content = ctx["content_obj"]
+    
+    stats_html = "".join([f"<div class='stat-card'><h3>{escape(s.value)}</h3><p>{escape(s.title)}</p></div>" for s in getattr(content, "stats", [])])
+    
+    infos_html = "".join([f"<div class='info-card'><span class='label'>{escape(i.label)}</span><p class='val'>{escape(i.val)}</p></div>" for i in getattr(content, "infos", [])])
+    
+    features_html = ""
+    for f in getattr(content, "features", []):
+        img_url = escape(f.image_url or "")
+        features_html += f"<div class='feature-card'><div class='img-wrap'><img src='{img_url}' alt='feature' loading='lazy'/></div><div class='text-wrap'><h3>{escape(f.title)}</h3><p>{escape(f.description)}</p></div></div>"
+    
+    curr_html = ""
+    for c in getattr(content, "curriculum", []):
+        bullets = "".join([f"<li>✓ {escape(b.strip())}</li>" for b in c.description.split("\n") if b.strip()])
+        curr_html += f"""
+        <div class="curr-card">
+            <div class="curr-text">
+                <span class="step-tag">{escape(c.step)}</span>
+                <h3>{escape(c.title)}</h3>
+                <ul class="bullets">{bullets}</ul>
+            </div>
+            <div class="curr-img"><img src="{escape(c.image_url or '')}" alt="curriculum" loading="lazy" /></div>
+        </div>
+        """
+        
+    faqs_html = "".join([f"<details class='faq-item'><summary>{escape(q.q)}</summary><div class='ans'>{escape(q.a).replace(chr(10), '<br>')}</div></details>" for q in getattr(content, "faqs", [])])
+
+    return f"""<!doctype html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{ctx["title"]}</title>
+    <style>
+        :root {{ --primary: {ctx["primary"]}; --secondary: {ctx["secondary"]}; --bg: {ctx["bg"]}; }}
+        * {{ box-sizing: border-box; margin: 0; padding: 0; font-family: "Noto Sans KR", "Inter", sans-serif; }}
+        body {{ background-color: var(--bg); color: #111827; line-height: 1.6; padding-top: 64px; }}
+        a {{ text-decoration: none; color: inherit; }}
+        img {{ max-width: 100%; height: auto; display: block; }}
+        .nav {{ position: fixed; top: 0; width: 100%; height: 64px; background: rgba(255,255,255,0.95); backdrop-filter: blur(8px); border-bottom: 1px solid #e5e7eb; display: flex; align-items: center; z-index: 100; }}
+        .nav-inner {{ max-width: 1200px; margin: 0 auto; width: 100%; padding: 0 40px; display: flex; justify-content: space-between; align-items: center; }}
+        .brand {{ font-size: 20px; font-weight: 900; color: var(--secondary); }}
+        .nav-cta {{ background: var(--primary); color: #fff; padding: 8px 24px; border-radius: 8px; font-weight: 700; }}
+        
+        .hero {{ padding: 120px 40px 80px; max-width: 1200px; margin: 0 auto; display: grid; grid-template-columns: 1.2fr 0.8fr; gap: 48px; align-items: center; }}
+        .hero-title {{ font-size: clamp(40px, 5vw, 64px); font-weight: 900; line-height: 1.05; margin-bottom: 32px; letter-spacing: -0.02em; }}
+        .hero-desc {{ font-size: 20px; color: #4b5563; margin-bottom: 40px; font-weight: 500; }}
+        .hero-cta {{ background: var(--primary); color: #fff; padding: 20px 40px; border-radius: 12px; font-size: 18px; font-weight: 800; display: inline-block; box-shadow: 0 10px 25px -5px rgba(37,99,235,0.4); }}
+        .stats-grid {{ background: #f3f4f6; border-radius: 40px; padding: 40px; display: grid; grid-template-columns: 1fr 1fr; gap: 32px; border: 1px solid #e5e7eb; }}
+        .stat-card {{ background: #fff; padding: 16px; border-radius: 16px; transition: transform 0.3s; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); }}
+        .stat-card:hover {{ transform: scale(1.05); border: 1px solid var(--primary); }}
+        .stat-card h3 {{ font-size: 36px; font-weight: 900; color: var(--primary); margin-bottom: 4px; }}
+        .stat-card p {{ font-size: 10px; font-weight: 700; color: #6b7280; text-transform: uppercase; }}
+
+        .infos {{ background: #f3f4f6; padding: 96px 40px; border-bottom: 1px solid #e5e7eb; }}
+        .infos-inner {{ max-width: 1200px; margin: 0 auto; display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 24px; }}
+        .info-card {{ background: #fff; border: 1px solid #e5e7eb; padding: 32px; border-radius: 24px; position: relative; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); }}
+        .info-card::before {{ content: ''; position: absolute; top: 0; left: 0; width: 4px; height: 0; background: var(--primary); transition: height 0.3s; }}
+        .info-card:hover::before {{ height: 100%; }}
+        .info-card .label {{ font-size: 10px; font-weight: 900; color: var(--primary); text-transform: uppercase; letter-spacing: 0.2em; display: block; margin-bottom: 12px; }}
+        .info-card .val {{ font-size: 16px; font-weight: 700; }}
+
+        .features {{ padding: 120px 40px; max-width: 1200px; margin: 0 auto; }}
+        .sec-header {{ text-align: center; margin-bottom: 80px; }}
+        .sec-header h2 {{ font-size: 36px; font-weight: 900; margin-bottom: 24px; }}
+        .features-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 40px; }}
+        .feature-card {{ border: 1px solid #e5e7eb; border-radius: 32px; overflow: hidden; transition: box-shadow 0.5s; }}
+        .feature-card:hover {{ box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25); }}
+        .feature-card .img-wrap {{ height: 224px; overflow: hidden; background: #f9fafb; }}
+        .feature-card img {{ width: 100%; height: 100%; object-fit: cover; transition: transform 1s; }}
+        .feature-card:hover img {{ transform: scale(1.1); }}
+        .feature-card .text-wrap {{ padding: 40px; }}
+        .feature-card h3 {{ font-size: 20px; font-weight: 800; margin-bottom: 16px; transition: color 0.3s; }}
+        .feature-card:hover h3 {{ color: var(--primary); }}
+        .feature-card p {{ color: #4b5563; font-size: 14px; font-weight: 500; }}
+
+        .curriculums {{ background: #fff; padding: 120px 40px; border-bottom: 1px solid #e5e7eb; }}
+        .curr-inner {{ max-width: 1200px; margin: 0 auto; }}
+        .curr-card {{ display: grid; grid-template-columns: 1fr 1fr; gap: 64px; background: #f3f4f6; padding: 80px; border-radius: 64px; margin-bottom: 40px; align-items: center; }}
+        .curr-text h3 {{ font-size: 30px; font-weight: 900; margin: 16px 0 24px; }}
+        .step-tag {{ font-size: 10px; font-weight: 900; color: var(--primary); text-transform: uppercase; letter-spacing: 0.25em; }}
+        .bullets {{ list-style: none; display: grid; gap: 24px; }}
+        .bullets li {{ display: flex; gap: 16px; font-size: 16px; font-weight: 600; color: #4b5563; align-items: flex-start; }}
+        .curr-img {{ border-radius: 48px; overflow: hidden; border: 12px solid #fff; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25); aspect-ratio: 1; background: #e5e7eb; }}
+        .curr-img img {{ width: 100%; height: 100%; object-fit: cover; }}
+
+        .faqs {{ padding: 120px 40px; max-width: 900px; margin: 0 auto; }}
+        .faq-item {{ background: #fff; border: 1px solid #e5e7eb; border-radius: 24px; margin-bottom: 24px; overflow: hidden; }}
+        .faq-item summary {{ padding: 32px; font-weight: 700; font-size: 18px; cursor: pointer; list-style: none; display: flex; justify-content: space-between; align-items: center; }}
+        .faq-item summary::-webkit-details-marker {{ display: none; }}
+        .faq-item summary::after {{ content: '+'; width: 32px; height: 32px; background: #f3f4f6; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 24px; }}
+        .faq-item[open] summary::after {{ content: '-'; background: var(--primary); color: #fff; }}
+        .faq-item .ans {{ padding: 0 32px 32px; border-top: 1px solid #e5e7eb; margin-top: 16px; padding-top: 32px; color: #4b5563; font-weight: 500; font-size: 15px; background: #fafafa; line-height: 1.8; }}
+
+        .footer {{ background: #fff; border-top: 1px solid #e5e7eb; padding: 80px 40px; text-align: center; color: #6b7280; font-size: 12px; font-weight: 900; letter-spacing: 0.2em; }}
+        
+        @media (max-width: 992px) {{
+            .hero {{ grid-template-columns: 1fr; padding: 80px 20px 40px; }}
+            .hero-title {{ font-size: 32px; }}
+            .stats-grid {{ padding: 24px; gap: 16px; }}
+            .curr-card {{ grid-template-columns: 1fr; padding: 32px; border-radius: 32px; }}
+            .nav-inner {{ padding: 0 20px; }}
+        }}
+    </style>
+</head>
+<body>
+    <nav class="nav">
+        <div class="nav-inner">
+            <div class="brand">{ctx["business_name"]}</div>
+            <a href="{ctx["cta_url"]}" class="nav-cta">지원하기</a>
+        </div>
+    </nav>
+
+    <header class="hero">
+        <div>
+            <h1 class="hero-title">{ctx["title"]}</h1>
+            <p class="hero-desc">{ctx["subtitle"]}<br/><br/>{ctx["body"]}</p>
+            <a href="{ctx["cta_url"]}" class="hero-cta">{ctx["cta_text"]}</a>
+        </div>
+        <div class="stats-grid">
+            {stats_html}
+        </div>
+    </header>
+
+    <section class="infos">
+        <div class="infos-inner">
+            {infos_html}
+        </div>
+    </section>
+
+    <section class="features">
+        <div class="sec-header">
+            <h2>성장이 증명되는 공간</h2>
+            <p>우리는 단순 코더가 아닌, 비즈니스 가치를 창출하는 개발 파트너를 양성합니다.</p>
+        </div>
+        <div class="features-grid">
+            {features_html}
+        </div>
+    </section>
+
+    <section class="curriculums">
+        <div class="curr-inner">
+            <div class="sec-header">
+                <h2>정교하게 설계된 실무 커리큘럼</h2>
+            </div>
+            {curr_html}
+        </div>
+    </section>
+
+    <section class="faqs">
+        <div class="sec-header">
+            <h2>자주 묻는 질문</h2>
+        </div>
+        <div class="faq-list">
+            {faqs_html}
+        </div>
+    </section>
+
+    <footer class="footer">
+        © 2026 {ctx["business_name"]} INC. All Rights Reserved.
+    </footer>
+</body>
+</html>
+"""
+
+
 def _render_landing_html(
     template_id: str, request: DeployRequest, hero_image_url: str | None, expires_at: datetime
 ) -> str:
     ctx = _build_landing_context(request, hero_image_url, expires_at)
+    if template_id == "template4-premium-bootcamp":
+        return _render_premium_bootcamp(ctx)
     if template_id == "dark-product":
         return _render_dark_product(ctx)
     if template_id == "event-highlight":
@@ -504,6 +700,17 @@ def create_landing_page(db: Session, request: DeployRequest) -> DeployResponse:
     public_url = _build_public_url(request.business_topic, request.slug, request.custom_domain)
 
     uploaded_hero_image_url = _upload_hero_image_if_needed(request, clean_topic)
+    
+    for i, f in enumerate(request.content.features):
+        if f.image_base64:
+            f.image_url = _upload_item_image_if_needed(request, clean_topic, f.image_base64, i, "feature")
+            f.image_base64 = None
+
+    for i, c in enumerate(request.content.curriculum):
+        if c.image_base64:
+            c.image_url = _upload_item_image_if_needed(request, clean_topic, c.image_base64, i, "curriculum")
+            c.image_base64 = None
+
     html = _render_landing_html(
         request.template_id,
         request,
@@ -550,6 +757,9 @@ def create_landing_page(db: Session, request: DeployRequest) -> DeployResponse:
         features_json=json.dumps([c.model_dump() for c in request.content.features], ensure_ascii=False),
         curriculum_json=json.dumps([c.model_dump() for c in request.content.curriculum], ensure_ascii=False),
         target_audience_json=json.dumps([c.model_dump() for c in request.content.target_audience], ensure_ascii=False),
+        stats_json=json.dumps([c.model_dump() for c in request.content.stats], ensure_ascii=False),
+        infos_json=json.dumps([c.model_dump() for c in request.content.infos], ensure_ascii=False),
+        faqs_json=json.dumps([c.model_dump() for c in request.content.faqs], ensure_ascii=False),
         deployed_at=deployed_at,
     )
     db.add(row)

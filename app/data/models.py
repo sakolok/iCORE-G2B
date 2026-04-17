@@ -46,6 +46,9 @@ class LandingPageModel(Base):
     features_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
     curriculum_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
     target_audience_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    stats_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    infos_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    faqs_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
     deployed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc)

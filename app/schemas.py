@@ -4,14 +4,30 @@ from typing import Literal, Optional
 from pydantic import BaseModel, EmailStr, Field
 
 
+class StatItem(BaseModel):
+    title: str = Field(..., max_length=100)
+    value: str = Field(..., max_length=100)
+
+class InfoItem(BaseModel):
+    label: str = Field(..., max_length=100)
+    val: str = Field(..., max_length=200)
+
+class FaqItem(BaseModel):
+    q: str = Field(..., max_length=300)
+    a: str = Field(..., max_length=1000)
+
 class FeatureItem(BaseModel):
     title: str = Field(..., max_length=100)
     description: str = Field(..., max_length=500)
+    image_base64: Optional[str] = None
+    image_url: Optional[str] = Field(default=None, max_length=500)
 
 class CurriculumItem(BaseModel):
     step: str = Field(..., max_length=50)
     title: str = Field(..., max_length=100)
     description: str = Field(..., max_length=500)
+    image_base64: Optional[str] = None
+    image_url: Optional[str] = Field(default=None, max_length=500)
 
 class TargetAudienceItem(BaseModel):
     description: str = Field(..., max_length=200)
@@ -36,6 +52,9 @@ class LandingTemplateDetail(BaseModel):
     features: list[dict] = Field(default_factory=list)
     curriculum: list[dict] = Field(default_factory=list)
     target_audience: list[dict] = Field(default_factory=list)
+    stats: list[dict] = Field(default_factory=list)
+    infos: list[dict] = Field(default_factory=list)
+    faqs: list[dict] = Field(default_factory=list)
     title_color: str = Field(default="#0f172a", pattern=r"^#[0-9a-fA-F]{6}$")
     subtitle_color: str = Field(default="#2563eb", pattern=r"^#[0-9a-fA-F]{6}$")
     body_color: str = Field(default="#334155", pattern=r"^#[0-9a-fA-F]{6}$")
@@ -57,6 +76,9 @@ class LandingContent(BaseModel):
     features: list[FeatureItem] = Field(default_factory=list)
     curriculum: list[CurriculumItem] = Field(default_factory=list)
     target_audience: list[TargetAudienceItem] = Field(default_factory=list)
+    stats: list[StatItem] = Field(default_factory=list)
+    infos: list[InfoItem] = Field(default_factory=list)
+    faqs: list[FaqItem] = Field(default_factory=list)
     primary_color: str = Field(default="#2563eb", pattern=r"^#[0-9a-fA-F]{6}$")
     secondary_color: str = Field(default="#0f172a", pattern=r"^#[0-9a-fA-F]{6}$")
     background_color: str = Field(default="#f8fafc", pattern=r"^#[0-9a-fA-F]{6}$")
