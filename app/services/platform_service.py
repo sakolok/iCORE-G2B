@@ -228,6 +228,35 @@ def _build_landing_context(
         "hero_image_url_raw": hero_image_url,
     }
 
+def _build_extra_sections_html(ctx: dict, bg_dark: bool = False) -> str:
+    """Build stats / infos / faqs HTML + inline CSS for legacy templates."""
+    content = ctx.get("content_obj")
+    if not content:
+        return ""
+    parts = []
+    text_color = "#e2e8f0" if bg_dark else "#0f172a"
+    sub_color = "#9ca3af" if bg_dark else "#64748b"
+    card_bg = "rgba(255,255,255,0.05)" if bg_dark else "#f8fafc"
+    card_border = "rgba(255,255,255,0.1)" if bg_dark else "#e2e8f0"
+    primary = ctx.get("primary", "#2563eb")
+    # Stats
+    stats = getattr(content, "stats", [])
+    if stats:
+        cards = "".join([f"<div style='background:{card_bg};border:1px solid {card_border};border-radius:16px;padding:20px;text-align:center'><div style='font-size:32px;font-weight:900;color:{primary}'>{escape(s.value)}</div><div style='font-size:12px;font-weight:700;color:{sub_color};text-transform:uppercase;margin-top:4px'>{escape(s.title)}</div></div>" for s in stats])
+        parts.append(f"<div style='display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin:30px 0'>{cards}</div>")
+    # Infos
+    infos = getattr(content, "infos", [])
+    if infos:
+        cards = "".join([f"<div style='background:{card_bg};border:1px solid {card_border};border-radius:12px;padding:16px 18px;border-left:4px solid {primary}'><div style='font-size:10px;font-weight:800;color:{primary};text-transform:uppercase;letter-spacing:.15em;margin-bottom:6px'>{escape(i.label)}</div><div style='font-size:15px;font-weight:700;color:{text_color}'>{escape(i.val)}</div></div>" for i in infos])
+        parts.append(f"<h3 class='section-title'>모집 정보</h3><div style='display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:30px'>{cards}</div>")
+    # FAQs
+    faqs = getattr(content, "faqs", [])
+    if faqs:
+        items = "".join([f"<details style='background:{card_bg};border:1px solid {card_border};border-radius:12px;margin-bottom:10px;overflow:hidden'><summary style='padding:16px 20px;font-weight:700;font-size:15px;cursor:pointer;list-style:none;color:{text_color}'>{escape(q.q)}</summary><div style='padding:0 20px 16px;font-size:14px;color:{sub_color};line-height:1.7'>{escape(q.a).replace(chr(10), '<br>')}</div></details>" for q in faqs])
+        parts.append(f"<h3 class='section-title'>자주 묻는 질문</h3>{items}")
+    return "\n".join(parts)
+
+
 def _render_clean_campaign(ctx: dict) -> str:
     return f"""<!doctype html>
 <html lang="ko">
@@ -269,14 +298,12 @@ def _render_clean_campaign(ctx: dict) -> str:
 <body>
     <main class="shell">
         <section class="mast">
-            <div class="brand">{ctx["business_name"]}</div>
             <div class="hero">
                 <div>
                     <h1>{ctx["title"]}</h1>
                     <h2>{ctx["subtitle"]}</h2>
                     <p class="desc">{ctx["body"]}</p>
                     <a class="cta" href="{ctx["cta_url"]}">{ctx["cta_text"]}</a>
-                    <div class="meta">대분류: {ctx["major"]} | 소분류: {ctx["minor"]} | 접근 만료 예정: {ctx["expires_kst"]} (KST)</div>
                 </div>
                 <div>{ctx["hero_html"]}</div>
             </div>
@@ -285,6 +312,7 @@ def _render_clean_campaign(ctx: dict) -> str:
                 { f"<h3 class='section-title'>추천 대상</h3><ul class='target-list'>{ctx['target_audience_html']}</ul>" if ctx["target_audience_html"] else "" }
                 { f"<h3 class='section-title'>과정 특징</h3><div class='features-grid'>{ctx['features_html']}</div>" if ctx["features_html"] else "" }
                 { f"<h3 class='section-title'>커리큘럼</h3><div class='curriculum-timeline'>{ctx['curriculum_html']}</div>" if ctx["curriculum_html"] else "" }
+                {_build_extra_sections_html(ctx, bg_dark=False)}
             </div>
         </section>
     </main>
@@ -345,7 +373,6 @@ def _render_dark_product(ctx: dict) -> str:
 <body>
     <div class="shell">
         <div class="top">
-            <div class="brand">{ctx["business_name"]}</div>
             <a class="ghost" href="{ctx["cta_url"]}">문의하기</a>
         </div>
         <section class="panel">
@@ -355,11 +382,6 @@ def _render_dark_product(ctx: dict) -> str:
                     <h2>{ctx["subtitle"]}</h2>
                     <p>{ctx["body"]}</p>
                     <a class="cta" href="{ctx["cta_url"]}">{ctx["cta_text"]}</a>
-                    <div class="stats">
-                        <div class="stat">대분류<br>{ctx["major"]}</div>
-                        <div class="stat">소분류<br>{ctx["minor"]}</div>
-                        <div class="stat">만료<br>{ctx["expires_kst"]} KST</div>
-                    </div>
                 </article>
                 <div>{ctx["hero_html"]}</div>
             </div>
@@ -368,6 +390,7 @@ def _render_dark_product(ctx: dict) -> str:
                 { f"<h3 class='section-title'>추천 대상</h3><ul class='target-list'>{ctx['target_audience_html']}</ul>" if ctx["target_audience_html"] else "" }
                 { f"<h3 class='section-title'>과정 특징</h3><div class='features-grid'>{ctx['features_html']}</div>" if ctx["features_html"] else "" }
                 { f"<h3 class='section-title'>커리큘럼</h3><div class='curriculum-timeline'>{ctx['curriculum_html']}</div>" if ctx["curriculum_html"] else "" }
+                {_build_extra_sections_html(ctx, bg_dark=True)}
             </div>
         </section>
     </div>
@@ -425,8 +448,8 @@ def _render_event_highlight(ctx: dict) -> str:
     <main class="shell">
         <section class="poster">
             <header class="head">
-                <strong>{ctx["business_name"]}</strong>
-                <span class="tag">EVENT</span>
+                <strong>EVENT</strong>
+                <span class="tag">모집중</span>
             </header>
             <div class="body">
                 <h1>{ctx["title"]}</h1>
@@ -438,11 +461,11 @@ def _render_event_highlight(ctx: dict) -> str:
                     { f"<h3 class='section-title'>추천 대상</h3><ul class='target-list'>{ctx['target_audience_html']}</ul>" if ctx["target_audience_html"] else "" }
                     { f"<h3 class='section-title'>과정 특징</h3><div class='features-grid'>{ctx['features_html']}</div>" if ctx["features_html"] else "" }
                     { f"<h3 class='section-title'>커리큘럼</h3><div class='curriculum-timeline'>{ctx['curriculum_html']}</div>" if ctx["curriculum_html"] else "" }
+                    {_build_extra_sections_html(ctx, bg_dark=False)}
                 </div>
                 
                 <div class="foot" style="margin-top:20px;">
                     <a class="cta" href="{ctx["cta_url"]}">{ctx["cta_text"]}</a>
-                    <div class="meta">{ctx["major"]} · {ctx["minor"]} · {ctx["expires_kst"]} KST까지</div>
                 </div>
             </div>
         </section>
@@ -454,169 +477,211 @@ def _render_event_highlight(ctx: dict) -> str:
 
 def _render_premium_bootcamp(ctx: dict) -> str:
     content = ctx["content_obj"]
-    
-    stats_html = "".join([f"<div class='stat-card'><h3>{escape(s.value)}</h3><p>{escape(s.title)}</p></div>" for s in getattr(content, "stats", [])])
-    
-    infos_html = "".join([f"<div class='info-card'><span class='label'>{escape(i.label)}</span><p class='val'>{escape(i.val)}</p></div>" for i in getattr(content, "infos", [])])
-    
+
+    # ── Stats cards ──
+    stats_html = ""
+    for s in getattr(content, "stats", []):
+        stats_html += f"<div class='stat-card'><h3>{escape(s.value)}</h3><p>{escape(s.title)}</p></div>"
+
+    # ── Info cards ──
+    infos_html = ""
+    for i in getattr(content, "infos", []):
+        infos_html += f"<div class='info-card'><span class='info-label'>{escape(i.label)}</span><p class='info-val'>{escape(i.val)}</p></div>"
+
+    # ── Feature cards ──
     features_html = ""
-    for f in getattr(content, "features", []):
+    for idx, f in enumerate(getattr(content, "features", [])):
         img_url = escape(f.image_url or "")
-        features_html += f"<div class='feature-card'><div class='img-wrap'><img src='{img_url}' alt='feature' loading='lazy'/></div><div class='text-wrap'><h3>{escape(f.title)}</h3><p>{escape(f.description)}</p></div></div>"
-    
-    curr_html = ""
-    for c in getattr(content, "curriculum", []):
-        bullets = "".join([f"<li>✓ {escape(b.strip())}</li>" for b in c.description.split("\n") if b.strip()])
-        curr_html += f"""
-        <div class="curr-card">
-            <div class="curr-text">
-                <span class="step-tag">{escape(c.step)}</span>
-                <h3>{escape(c.title)}</h3>
-                <ul class="bullets">{bullets}</ul>
-            </div>
-            <div class="curr-img"><img src="{escape(c.image_url or '')}" alt="curriculum" loading="lazy" /></div>
-        </div>
-        """
-        
-    faqs_html = "".join([f"<details class='faq-item'><summary>{escape(q.q)}</summary><div class='ans'>{escape(q.a).replace(chr(10), '<br>')}</div></details>" for q in getattr(content, "faqs", [])])
+        img_block = f"<div class='feat-img'><img src='{img_url}' alt='' loading='lazy'/></div>" if img_url else ""
+        features_html += f"<div class='feat-card'>{img_block}<div class='feat-body'><h3>{escape(f.title)}</h3><p>{escape(f.description)}</p></div></div>"
+
+    # ── Curriculum tabs (JS interactive) ──
+    curr_tabs = ""
+    curr_panels = ""
+    for idx, c in enumerate(getattr(content, "curriculum", [])):
+        active_cls = " active" if idx == 0 else ""
+        curr_tabs += f"<button class='curr-tab{active_cls}' data-idx='{idx}'>{escape(c.step)}</button>"
+        bullets = "".join([f"<li>{escape(b.strip())}</li>" for b in c.description.split(chr(10)) if b.strip()])
+        display = "block" if idx == 0 else "none"
+        curr_panels += f"<div class='curr-panel' data-idx='{idx}' style='display:{display}'><h3>{escape(c.title)}</h3><ul>{bullets}</ul></div>"
+
+    # ── Target audience ──
+    target_html = ""
+    for t in getattr(content, "target_audience", []):
+        target_html += f"<li><span class='chk-icon'>✓</span>{escape(t.description)}</li>"
+
+    # ── FAQ accordion ──
+    faqs_html = ""
+    for q in getattr(content, "faqs", []):
+        answer = escape(q.a).replace(chr(10), "<br>")
+        faqs_html += f"<details class='faq-item'><summary>{escape(q.q)}</summary><div class='faq-ans'>{answer}</div></details>"
+
+    # ── Hero image ──
+    hero_img = ""
+    raw_hero = ctx.get("hero_image_url_raw") or ""
+    if raw_hero:
+        hero_img = f"<div class='hero-visual'><img src='{escape(raw_hero)}' alt='hero' /></div>"
 
     return f"""<!doctype html>
 <html lang="ko">
 <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>{ctx["title"]}</title>
-    <style>
-        :root {{ --primary: {ctx["primary"]}; --secondary: {ctx["secondary"]}; --bg: {ctx["bg"]}; }}
-        * {{ box-sizing: border-box; margin: 0; padding: 0; font-family: "Noto Sans KR", "Inter", sans-serif; }}
-        body {{ background-color: var(--bg); color: #111827; line-height: 1.6; padding-top: 64px; }}
-        a {{ text-decoration: none; color: inherit; }}
-        img {{ max-width: 100%; height: auto; display: block; }}
-        .nav {{ position: fixed; top: 0; width: 100%; height: 64px; background: rgba(255,255,255,0.95); backdrop-filter: blur(8px); border-bottom: 1px solid #e5e7eb; display: flex; align-items: center; z-index: 100; }}
-        .nav-inner {{ max-width: 1200px; margin: 0 auto; width: 100%; padding: 0 40px; display: flex; justify-content: space-between; align-items: center; }}
-        .brand {{ font-size: 20px; font-weight: 900; color: var(--secondary); }}
-        .nav-cta {{ background: var(--primary); color: #fff; padding: 8px 24px; border-radius: 8px; font-weight: 700; }}
-        
-        .hero {{ padding: 120px 40px 80px; max-width: 1200px; margin: 0 auto; display: grid; grid-template-columns: 1.2fr 0.8fr; gap: 48px; align-items: center; }}
-        .hero-title {{ font-size: clamp(40px, 5vw, 64px); font-weight: 900; line-height: 1.05; margin-bottom: 32px; letter-spacing: -0.02em; }}
-        .hero-desc {{ font-size: 20px; color: #4b5563; margin-bottom: 40px; font-weight: 500; }}
-        .hero-cta {{ background: var(--primary); color: #fff; padding: 20px 40px; border-radius: 12px; font-size: 18px; font-weight: 800; display: inline-block; box-shadow: 0 10px 25px -5px rgba(37,99,235,0.4); }}
-        .stats-grid {{ background: #f3f4f6; border-radius: 40px; padding: 40px; display: grid; grid-template-columns: 1fr 1fr; gap: 32px; border: 1px solid #e5e7eb; }}
-        .stat-card {{ background: #fff; padding: 16px; border-radius: 16px; transition: transform 0.3s; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); }}
-        .stat-card:hover {{ transform: scale(1.05); border: 1px solid var(--primary); }}
-        .stat-card h3 {{ font-size: 36px; font-weight: 900; color: var(--primary); margin-bottom: 4px; }}
-        .stat-card p {{ font-size: 10px; font-weight: 700; color: #6b7280; text-transform: uppercase; }}
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>{ctx["title"]}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;600;800;900&display=swap" rel="stylesheet"/>
+<style>
+:root{{--p:{ctx["primary"]};--s:{ctx["secondary"]};--bg:{ctx["bg"]};}}
+*{{box-sizing:border-box;margin:0;padding:0;}}
+body{{font-family:"Noto Sans KR",system-ui,sans-serif;color:#1e293b;line-height:1.7;background:var(--bg);-webkit-font-smoothing:antialiased;}}
+a{{text-decoration:none;color:inherit;}}
+img{{max-width:100%;height:auto;display:block;}}
+.inner{{max-width:1200px;margin:0 auto;padding:0 40px;}}
 
-        .infos {{ background: #f3f4f6; padding: 96px 40px; border-bottom: 1px solid #e5e7eb; }}
-        .infos-inner {{ max-width: 1200px; margin: 0 auto; display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 24px; }}
-        .info-card {{ background: #fff; border: 1px solid #e5e7eb; padding: 32px; border-radius: 24px; position: relative; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); }}
-        .info-card::before {{ content: ''; position: absolute; top: 0; left: 0; width: 4px; height: 0; background: var(--primary); transition: height 0.3s; }}
-        .info-card:hover::before {{ height: 100%; }}
-        .info-card .label {{ font-size: 10px; font-weight: 900; color: var(--primary); text-transform: uppercase; letter-spacing: 0.2em; display: block; margin-bottom: 12px; }}
-        .info-card .val {{ font-size: 16px; font-weight: 700; }}
+/* ── HERO ── */
+.hero{{background:linear-gradient(135deg,#0f172a 0%,#1e3a5f 50%,var(--p) 100%);color:#fff;padding:140px 0 100px;position:relative;overflow:hidden;}}
+.hero::after{{content:'';position:absolute;bottom:-2px;left:0;width:100%;height:80px;background:var(--bg);clip-path:ellipse(55% 100% at 50% 100%);}}
+.hero .inner{{display:grid;grid-template-columns:1.1fr 0.9fr;gap:60px;align-items:center;}}
+.hero-title{{font-size:clamp(36px,5vw,60px);font-weight:900;line-height:1.08;margin-bottom:24px;letter-spacing:-0.03em;}}
+.hero-desc{{font-size:18px;color:rgba(255,255,255,0.8);margin-bottom:40px;font-weight:500;}}
+.hero-cta{{background:#fff;color:var(--p);padding:18px 44px;border-radius:60px;font-size:17px;font-weight:800;display:inline-block;transition:transform .3s,box-shadow .3s;box-shadow:0 8px 30px rgba(0,0,0,0.25);}}
+.hero-cta:hover{{transform:translateY(-3px);box-shadow:0 14px 40px rgba(0,0,0,0.35);}}
+.hero-visual img{{border-radius:24px;box-shadow:0 20px 60px rgba(0,0,0,0.4);}}
 
-        .features {{ padding: 120px 40px; max-width: 1200px; margin: 0 auto; }}
-        .sec-header {{ text-align: center; margin-bottom: 80px; }}
-        .sec-header h2 {{ font-size: 36px; font-weight: 900; margin-bottom: 24px; }}
-        .features-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 40px; }}
-        .feature-card {{ border: 1px solid #e5e7eb; border-radius: 32px; overflow: hidden; transition: box-shadow 0.5s; }}
-        .feature-card:hover {{ box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25); }}
-        .feature-card .img-wrap {{ height: 224px; overflow: hidden; background: #f9fafb; }}
-        .feature-card img {{ width: 100%; height: 100%; object-fit: cover; transition: transform 1s; }}
-        .feature-card:hover img {{ transform: scale(1.1); }}
-        .feature-card .text-wrap {{ padding: 40px; }}
-        .feature-card h3 {{ font-size: 20px; font-weight: 800; margin-bottom: 16px; transition: color 0.3s; }}
-        .feature-card:hover h3 {{ color: var(--primary); }}
-        .feature-card p {{ color: #4b5563; font-size: 14px; font-weight: 500; }}
+/* ── STATS ── */
+.stats{{background:var(--bg);padding:0 0 80px;position:relative;z-index:2;margin-top:-50px;}}
+.stats-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:24px;}}
+.stat-card{{background:#fff;border:1px solid #e2e8f0;border-radius:20px;padding:32px 24px;text-align:center;box-shadow:0 4px 20px rgba(0,0,0,0.04);transition:transform .3s,box-shadow .3s;}}
+.stat-card:hover{{transform:translateY(-6px);box-shadow:0 16px 40px rgba(0,0,0,0.1);}}
+.stat-card h3{{font-size:38px;font-weight:900;color:var(--p);margin-bottom:6px;}}
+.stat-card p{{font-size:13px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.1em;}}
 
-        .curriculums {{ background: #fff; padding: 120px 40px; border-bottom: 1px solid #e5e7eb; }}
-        .curr-inner {{ max-width: 1200px; margin: 0 auto; }}
-        .curr-card {{ display: grid; grid-template-columns: 1fr 1fr; gap: 64px; background: #f3f4f6; padding: 80px; border-radius: 64px; margin-bottom: 40px; align-items: center; }}
-        .curr-text h3 {{ font-size: 30px; font-weight: 900; margin: 16px 0 24px; }}
-        .step-tag {{ font-size: 10px; font-weight: 900; color: var(--primary); text-transform: uppercase; letter-spacing: 0.25em; }}
-        .bullets {{ list-style: none; display: grid; gap: 24px; }}
-        .bullets li {{ display: flex; gap: 16px; font-size: 16px; font-weight: 600; color: #4b5563; align-items: flex-start; }}
-        .curr-img {{ border-radius: 48px; overflow: hidden; border: 12px solid #fff; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25); aspect-ratio: 1; background: #e5e7eb; }}
-        .curr-img img {{ width: 100%; height: 100%; object-fit: cover; }}
+/* ── INFOS ── */
+.infos{{background:#f1f5f9;padding:96px 0;}}
+.infos-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:20px;}}
+.info-card{{background:#fff;border-radius:20px;padding:28px 24px;position:relative;overflow:hidden;border:1px solid #e2e8f0;transition:transform .3s;}}
+.info-card:hover{{transform:translateY(-4px);}}
+.info-card::before{{content:'';position:absolute;top:0;left:0;width:4px;height:100%;background:var(--p);border-radius:0 4px 4px 0;}}
+.info-label{{font-size:11px;font-weight:900;color:var(--p);text-transform:uppercase;letter-spacing:.2em;display:block;margin-bottom:10px;}}
+.info-val{{font-size:17px;font-weight:800;color:#0f172a;}}
 
-        .faqs {{ padding: 120px 40px; max-width: 900px; margin: 0 auto; }}
-        .faq-item {{ background: #fff; border: 1px solid #e5e7eb; border-radius: 24px; margin-bottom: 24px; overflow: hidden; }}
-        .faq-item summary {{ padding: 32px; font-weight: 700; font-size: 18px; cursor: pointer; list-style: none; display: flex; justify-content: space-between; align-items: center; }}
-        .faq-item summary::-webkit-details-marker {{ display: none; }}
-        .faq-item summary::after {{ content: '+'; width: 32px; height: 32px; background: #f3f4f6; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 24px; }}
-        .faq-item[open] summary::after {{ content: '-'; background: var(--primary); color: #fff; }}
-        .faq-item .ans {{ padding: 0 32px 32px; border-top: 1px solid #e5e7eb; margin-top: 16px; padding-top: 32px; color: #4b5563; font-weight: 500; font-size: 15px; background: #fafafa; line-height: 1.8; }}
+/* ── TARGET AUDIENCE ── */
+.targets{{background:#fff;padding:96px 0;}}
+.sec-title{{font-size:clamp(28px,3.5vw,40px);font-weight:900;text-align:center;margin-bottom:16px;color:#0f172a;}}
+.sec-sub{{text-align:center;color:#64748b;font-size:16px;margin-bottom:56px;font-weight:500;}}
+.target-list{{list-style:none;max-width:700px;margin:0 auto;display:grid;gap:14px;}}
+.target-list li{{background:#f8fafc;border:1px solid #e2e8f0;border-radius:16px;padding:18px 24px;font-size:16px;font-weight:700;display:flex;align-items:center;gap:14px;transition:border-color .3s;}}
+.target-list li:hover{{border-color:var(--p);}}
+.chk-icon{{color:var(--p);font-size:20px;font-weight:900;flex-shrink:0;}}
 
-        .footer {{ background: #fff; border-top: 1px solid #e5e7eb; padding: 80px 40px; text-align: center; color: #6b7280; font-size: 12px; font-weight: 900; letter-spacing: 0.2em; }}
-        
-        @media (max-width: 992px) {{
-            .hero {{ grid-template-columns: 1fr; padding: 80px 20px 40px; }}
-            .hero-title {{ font-size: 32px; }}
-            .stats-grid {{ padding: 24px; gap: 16px; }}
-            .curr-card {{ grid-template-columns: 1fr; padding: 32px; border-radius: 32px; }}
-            .nav-inner {{ padding: 0 20px; }}
-        }}
-    </style>
+/* ── FEATURES ── */
+.features{{background:linear-gradient(180deg,#f8fafc,#eef2ff);padding:96px 0;}}
+.feat-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:32px;}}
+.feat-card{{background:#fff;border-radius:24px;overflow:hidden;border:1px solid #e2e8f0;transition:transform .4s,box-shadow .4s;}}
+.feat-card:hover{{transform:translateY(-8px);box-shadow:0 24px 48px rgba(0,0,0,0.12);}}
+.feat-img{{height:220px;overflow:hidden;background:#f1f5f9;}}
+.feat-img img{{width:100%;height:100%;object-fit:cover;transition:transform .8s;}}
+.feat-card:hover .feat-img img{{transform:scale(1.08);}}
+.feat-body{{padding:32px;}}
+.feat-body h3{{font-size:20px;font-weight:800;margin-bottom:12px;transition:color .3s;}}
+.feat-card:hover .feat-body h3{{color:var(--p);}}
+.feat-body p{{color:#64748b;font-size:15px;line-height:1.7;}}
+
+/* ── CURRICULUM TABS ── */
+.curriculum{{background:#0f172a;color:#fff;padding:96px 0;}}
+.curr-wrap{{display:grid;grid-template-columns:280px 1fr;gap:48px;align-items:start;}}
+.curr-tabs{{display:flex;flex-direction:column;gap:8px;}}
+.curr-tab{{background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);color:rgba(255,255,255,0.6);padding:18px 24px;border-radius:14px;font-size:16px;font-weight:700;cursor:pointer;text-align:left;transition:all .3s;}}
+.curr-tab:hover{{background:rgba(255,255,255,0.1);color:#fff;}}
+.curr-tab.active{{background:var(--p);color:#fff;border-color:var(--p);box-shadow:0 8px 24px rgba(37,99,235,0.4);}}
+.curr-panel{{background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:24px;padding:48px;}}
+.curr-panel h3{{font-size:28px;font-weight:900;margin-bottom:28px;}}
+.curr-panel ul{{list-style:none;display:grid;gap:16px;}}
+.curr-panel li{{display:flex;align-items:flex-start;gap:12px;font-size:16px;color:rgba(255,255,255,0.85);font-weight:500;}}
+.curr-panel li::before{{content:'→';color:var(--p);font-weight:900;flex-shrink:0;}}
+
+/* ── FAQS ── */
+.faqs{{background:#fff;padding:96px 0;}}
+.faq-list{{max-width:820px;margin:0 auto;}}
+.faq-item{{border:1px solid #e2e8f0;border-radius:20px;margin-bottom:16px;overflow:hidden;transition:border-color .3s;}}
+.faq-item[open]{{border-color:var(--p);}}
+.faq-item summary{{padding:24px 28px;font-weight:700;font-size:17px;cursor:pointer;list-style:none;display:flex;justify-content:space-between;align-items:center;}}
+.faq-item summary::-webkit-details-marker{{display:none;}}
+.faq-item summary::after{{content:'+';width:32px;height:32px;background:#f1f5f9;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:600;transition:all .3s;flex-shrink:0;}}
+.faq-item[open] summary::after{{content:'−';background:var(--p);color:#fff;}}
+.faq-ans{{padding:0 28px 28px;color:#64748b;font-size:15px;line-height:1.8;}}
+
+/* ── CTA BOTTOM ── */
+.cta-bottom{{background:linear-gradient(135deg,var(--p),#7c3aed);padding:80px 0;text-align:center;}}
+.cta-bottom h2{{font-size:clamp(28px,4vw,44px);font-weight:900;color:#fff;margin-bottom:32px;}}
+.cta-bottom a{{background:#fff;color:var(--p);padding:20px 56px;border-radius:60px;font-size:18px;font-weight:800;display:inline-block;transition:transform .3s;box-shadow:0 8px 30px rgba(0,0,0,0.2);}}
+.cta-bottom a:hover{{transform:translateY(-3px);}}
+
+/* ── FOOTER ── */
+.footer{{background:#0f172a;color:rgba(255,255,255,0.4);padding:48px 0;text-align:center;font-size:13px;font-weight:600;letter-spacing:.1em;}}
+
+/* ── RESPONSIVE ── */
+@media(max-width:992px){{
+  .hero .inner{{grid-template-columns:1fr;gap:40px;}}
+  .hero{{padding:100px 0 80px;}}
+  .curr-wrap{{grid-template-columns:1fr;}}
+  .curr-tabs{{flex-direction:row;overflow-x:auto;}}
+  .curr-tab{{white-space:nowrap;}}
+  .feat-grid{{grid-template-columns:1fr;}}
+  .inner{{padding:0 20px;}}
+}}
+</style>
 </head>
 <body>
-    <nav class="nav">
-        <div class="nav-inner">
-            <div class="brand">{ctx["business_name"]}</div>
-            <a href="{ctx["cta_url"]}" class="nav-cta">지원하기</a>
-        </div>
-    </nav>
 
-    <header class="hero">
-        <div>
-            <h1 class="hero-title">{ctx["title"]}</h1>
-            <p class="hero-desc">{ctx["subtitle"]}<br/><br/>{ctx["body"]}</p>
-            <a href="{ctx["cta_url"]}" class="hero-cta">{ctx["cta_text"]}</a>
-        </div>
-        <div class="stats-grid">
-            {stats_html}
-        </div>
-    </header>
+<section class="hero">
+  <div class="inner">
+    <div>
+      <h1 class="hero-title">{ctx["title"]}</h1>
+      <p class="hero-desc">{ctx["subtitle"]}<br/>{ctx["body"]}</p>
+      <a href="{ctx["cta_url"]}" class="hero-cta">{ctx["cta_text"]}</a>
+    </div>
+    {hero_img if hero_img else "<div></div>"}
+  </div>
+</section>
 
-    <section class="infos">
-        <div class="infos-inner">
-            {infos_html}
-        </div>
-    </section>
+{"<section class='stats'><div class='inner'><div class='stats-grid'>" + stats_html + "</div></div></section>" if stats_html else ""}
 
-    <section class="features">
-        <div class="sec-header">
-            <h2>성장이 증명되는 공간</h2>
-            <p>우리는 단순 코더가 아닌, 비즈니스 가치를 창출하는 개발 파트너를 양성합니다.</p>
-        </div>
-        <div class="features-grid">
-            {features_html}
-        </div>
-    </section>
+{"<section class='infos'><div class='inner'><div class='infos-grid'>" + infos_html + "</div></div></section>" if infos_html else ""}
 
-    <section class="curriculums">
-        <div class="curr-inner">
-            <div class="sec-header">
-                <h2>정교하게 설계된 실무 커리큘럼</h2>
-            </div>
-            {curr_html}
-        </div>
-    </section>
+{"<section class='targets'><div class='inner'><h2 class='sec-title'>이런 분들에게 추천합니다</h2><ul class='target-list'>" + target_html + "</ul></div></section>" if target_html else ""}
 
-    <section class="faqs">
-        <div class="sec-header">
-            <h2>자주 묻는 질문</h2>
-        </div>
-        <div class="faq-list">
-            {faqs_html}
-        </div>
-    </section>
+{"<section class='features'><div class='inner'><h2 class='sec-title'>과정 특징</h2><div class='feat-grid'>" + features_html + "</div></div></section>" if features_html else ""}
 
-    <footer class="footer">
-        © 2026 {ctx["business_name"]} INC. All Rights Reserved.
-    </footer>
+{"<section class='curriculum'><div class='inner'><h2 class='sec-title' style='color:#fff'>커리큘럼</h2><p class='sec-sub' style='color:rgba(255,255,255,0.6)'>단계별로 설계된 실무 중심 교육 과정</p><div class='curr-wrap'><div class='curr-tabs'>" + curr_tabs + "</div><div class='curr-panels'>" + curr_panels + "</div></div></div></section>" if curr_tabs else ""}
+
+{"<section class='faqs'><div class='inner'><h2 class='sec-title'>자주 묻는 질문</h2><p class='sec-sub'>궁금한 점을 빠르게 확인하세요</p><div class='faq-list'>" + faqs_html + "</div></div></section>" if faqs_html else ""}
+
+<section class="cta-bottom">
+  <div class="inner">
+    <h2>지금 바로 시작하세요</h2>
+    <a href="{ctx["cta_url"]}">{ctx["cta_text"]}</a>
+  </div>
+</section>
+
+<footer class="footer">
+  <div class="inner">© 2026 All Rights Reserved.</div>
+</footer>
+
+<script>
+document.querySelectorAll('.curr-tab').forEach(function(tab){{
+  tab.addEventListener('click',function(){{
+    document.querySelectorAll('.curr-tab').forEach(function(t){{t.classList.remove('active')}});
+    document.querySelectorAll('.curr-panel').forEach(function(p){{p.style.display='none'}});
+    tab.classList.add('active');
+    var idx=tab.getAttribute('data-idx');
+    var panel=document.querySelector('.curr-panel[data-idx="'+idx+'"]');
+    if(panel)panel.style.display='block';
+  }});
+}});
+</script>
 </body>
-</html>
-"""
+</html>"""
 
 
 def _render_landing_html(
