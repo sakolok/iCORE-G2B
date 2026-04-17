@@ -257,231 +257,401 @@ def _build_extra_sections_html(ctx: dict, bg_dark: bool = False) -> str:
     return "\n".join(parts)
 
 
+
+def _build_shared_sections(content):
+    """Build HTML fragments for stats/infos/features/curriculum/target/faqs."""
+    stats_html = ""
+    for s in getattr(content, "stats", []):
+        raw = s.value.strip()
+        stats_html += f"<div class='stat-card'><h3 data-target='{escape(raw)}'>0</h3><p>{escape(s.title)}</p></div>"
+    infos_html = ""
+    for i in getattr(content, "infos", []):
+        infos_html += f"<div class='info-card'><span class='info-label'>{escape(i.label)}</span><p class='info-val'>{escape(i.val)}</p></div>"
+    features_html = ""
+    for f in getattr(content, "features", []):
+        img_url = escape(f.image_url or "")
+        img_block = f"<div class='feat-img'><img src='{img_url}' alt='' loading='lazy'/></div>" if img_url else ""
+        features_html += f"<div class='feat-card'>{img_block}<div class='feat-body'><h3>{escape(f.title)}</h3><p>{escape(f.description)}</p></div></div>"
+    curr_tabs = ""
+    curr_panels = ""
+    for idx, c in enumerate(getattr(content, "curriculum", [])):
+        active_cls = " active" if idx == 0 else ""
+        curr_tabs += f"<button class='curr-tab{active_cls}' data-idx='{idx}'>{escape(c.step)}</button>"
+        bullets = "".join([f"<li>{escape(b.strip())}</li>" for b in c.description.split(chr(10)) if b.strip()])
+        display = "block" if idx == 0 else "none"
+        curr_panels += f"<div class='curr-panel' data-idx='{idx}' style='display:{display}'><h3>{escape(c.title)}</h3><ul>{bullets}</ul></div>"
+    target_html = ""
+    for t in getattr(content, "target_audience", []):
+        target_html += f"<li><span class='chk-icon'>✓</span>{escape(t.description)}</li>"
+    faqs_html = ""
+    for q in getattr(content, "faqs", []):
+        answer = escape(q.a).replace(chr(10), "<br>")
+        faqs_html += f"<details class='faq-item'><summary>{escape(q.q)}</summary><div class='faq-ans'>{answer}</div></details>"
+    return stats_html, infos_html, features_html, curr_tabs, curr_panels, target_html, faqs_html
+
+
+_SHARED_JS = """
+document.querySelectorAll('.curr-tab').forEach(function(tab){
+  tab.addEventListener('click',function(){
+    document.querySelectorAll('.curr-tab').forEach(function(t){t.classList.remove('active')});
+    document.querySelectorAll('.curr-panel').forEach(function(p){p.style.display='none'});
+    tab.classList.add('active');
+    var idx=tab.getAttribute('data-idx');
+    var panel=document.querySelector('.curr-panel[data-idx=\"'+idx+'\"]');
+    if(panel)panel.style.display='block';
+  });
+});
+function animateCounters(){
+  document.querySelectorAll('.stat-card h3[data-target]').forEach(function(el){
+    if(el.dataset.done)return;
+    var raw=el.getAttribute('data-target');
+    var m=raw.match(/^([^0-9]*?)(\\d+)(.*?)$/);
+    if(!m){el.textContent=raw;el.dataset.done='1';return;}
+    var prefix=m[1],target=parseInt(m[2],10),suffix=m[3];
+    var duration=1200,start=performance.now();
+    function tick(now){
+      var p=Math.min((now-start)/duration,1);
+      var ease=1-Math.pow(1-p,3);
+      el.textContent=prefix+Math.round(target*ease)+suffix;
+      if(p<1)requestAnimationFrame(tick);
+      else el.dataset.done='1';
+    }
+    requestAnimationFrame(tick);
+  });
+}
+var statsEl=document.querySelector('.stats,.section');
+if(statsEl&&'IntersectionObserver' in window){
+  new IntersectionObserver(function(entries,obs){
+    entries.forEach(function(e){
+      if(e.isIntersecting){animateCounters();obs.unobserve(e.target);}
+    });
+  },{threshold:0.3}).observe(statsEl);
+}else{animateCounters();}
+"""
+
+
 def _render_clean_campaign(ctx: dict) -> str:
+    content = ctx["content_obj"]
+    stats_html, infos_html, features_html, curr_tabs, curr_panels, target_html, faqs_html = _build_shared_sections(content)
+    feat_cls = "feat-five" if len(getattr(content, "features", [])) == 5 else ""
+    hero_img = ""
+    raw_hero = ctx.get("hero_image_url_raw") or ""
+    if raw_hero:
+        hero_img = f"<div class='hero-visual'><img src='{escape(raw_hero)}' alt='hero'/></div>"
     return f"""<!doctype html>
 <html lang="ko">
 <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>{ctx["title"]}</title>
-    <style>
-        :root {{ --bg: {ctx["bg"]}; --primary: {ctx["primary"]}; --secondary: {ctx["secondary"]}; }}
-        * {{ box-sizing: border-box; }}
-        body {{ margin: 0; font-family: "Noto Sans KR", sans-serif; background: #f4f7fb; color: #111827; }}
-        .shell {{ max-width: 1140px; margin: 0 auto; padding: 28px 20px 40px; }}
-        .mast {{ background: #fff; border-radius: 24px; padding: 26px; border: 1px solid #e5e7eb; }}
-        .brand {{ font-size: 30px; font-weight: 800; }}
-        .hero {{ margin-top: 24px; display: grid; grid-template-columns: 1.15fr 0.85fr; gap: 24px; align-items: center; }}
-        h1 {{ margin: 0 0 8px; font-size: clamp(32px, 5vw, 56px); line-height: 1.08; }}
-        h2 {{ margin: 0 0 14px; font-size: clamp(22px, 3.2vw, 34px); color: var(--secondary); }}
-        p.desc {{ margin: 0 0 20px; line-height: 1.7; color: #374151; font-size: 18px; }}
-        .cta {{ display: inline-block; text-decoration: none; background: var(--primary); color: #fff; font-weight: 700; padding: 12px 22px; border-radius: 12px; }}
-        .meta {{ margin-top: 18px; font-size: 13px; color: #6b7280; }}
-        .hero-image {{ width: 100%; border-radius: 16px; border: 1px solid #dbe1ea; box-shadow: 0 20px 50px rgba(2,6,23,0.15); }}
-        .section-title {{ font-size: 28px; margin: 40px 0 20px; font-weight: 800; border-bottom: 2px solid #e5e7eb; padding-bottom: 10px; }}
-        .features-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 20px; margin-bottom: 40px; }}
-        .feature-card {{ background: #f8fafc; padding: 20px; border-radius: 16px; border: 1px solid #e2e8f0; }}
-        .feature-card h3 {{ margin: 0 0 8px; font-size: 18px; color: var(--secondary); }}
-        .feature-card p {{ margin: 0; font-size: 15px; color: #475569; line-height: 1.6; }}
-        .target-list {{ list-style: none; padding: 0; margin: 0 0 40px; display: grid; gap: 12px; }}
-        .target-list li {{ background: #fff; border: 1px solid #e5e7eb; padding: 16px 20px; border-radius: 12px; display: flex; align-items: center; gap: 12px; font-size: 16px; font-weight: 600; box-shadow: 0 2px 4px rgba(0,0,0,0.02); }}
-        .target-list .chk {{ color: var(--primary); font-size: 20px; font-weight: bold; }}
-        .curriculum-timeline {{ position: relative; padding-left: 24px; margin-bottom: 40px; }}
-        .curriculum-timeline::before {{ content: ''; position: absolute; left: 6px; top: 10px; bottom: 10px; width: 2px; background: #e2e8f0; }}
-        .step {{ position: relative; margin-bottom: 24px; }}
-        .step-marker {{ position: absolute; left: -24px; top: 4px; width: 14px; height: 14px; border-radius: 50%; background: #fff; border: 3px solid var(--primary); z-index: 1; }}
-        .step-content h4 {{ margin: 0 0 6px; font-size: 18px; color: #0f172a; }}
-        .step-content p {{ margin: 0; font-size: 15px; color: #64748b; line-height: 1.6; }}
-        @media (max-width: 920px) {{ .hero {{ grid-template-columns: 1fr; }} .brand {{ font-size: 24px; }} }}
-    </style>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>{ctx["title"]}</title>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;600;800;900&display=swap" rel="stylesheet"/>
+<style>
+:root{{--p:{ctx["primary"]};--s:{ctx["secondary"]};}}
+*{{box-sizing:border-box;margin:0;padding:0;}}
+body{{font-family:"Noto Sans KR",system-ui,sans-serif;color:#1e293b;line-height:1.7;background:#fff;}}
+a{{text-decoration:none;color:inherit;}}
+img{{max-width:100%;height:auto;display:block;}}
+.inner{{max-width:1100px;margin:0 auto;padding:0 32px;}}
+.hero{{padding:120px 0 80px;background:#fff;}}
+.hero .inner{{display:grid;grid-template-columns:1fr 1fr;gap:48px;align-items:center;}}
+.hero-title{{font-size:clamp(32px,4.5vw,56px);font-weight:900;line-height:1.1;margin-bottom:20px;color:#0f172a;}}
+.hero-desc{{font-size:17px;color:#64748b;margin-bottom:36px;}}
+.hero-cta{{background:var(--p);color:#fff;padding:16px 40px;border-radius:12px;font-size:16px;font-weight:800;display:inline-block;transition:transform .3s;box-shadow:0 6px 20px rgba(37,99,235,0.3);}}
+.hero-cta:hover{{transform:translateY(-2px);}}
+@keyframes heroFloat{{0%,100%{{transform:translateY(0)}}50%{{transform:translateY(-12px)}}}}
+.hero-visual img{{border-radius:20px;box-shadow:0 16px 48px rgba(0,0,0,0.08);animation:heroFloat 4s ease-in-out infinite;}}
+.section{{padding:80px 0;}}
+.section.alt{{background:#f8fafc;}}
+.sec-title{{font-size:clamp(26px,3vw,36px);font-weight:900;text-align:center;margin-bottom:48px;color:#0f172a;}}
+.stats-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:20px;}}
+.stat-card{{background:#f8fafc;border:1px solid #e2e8f0;border-radius:16px;padding:28px 20px;text-align:center;transition:transform .3s;}}
+.stat-card:hover{{transform:translateY(-4px);}}
+.stat-card h3{{font-size:36px;font-weight:900;color:var(--p);margin-bottom:4px;}}
+.stat-card p{{font-size:12px;font-weight:700;color:#94a3b8;text-transform:uppercase;}}
+.infos-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;}}
+.info-card{{background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:24px;border-left:4px solid var(--p);}}
+.info-label{{font-size:10px;font-weight:900;color:var(--p);text-transform:uppercase;letter-spacing:.15em;margin-bottom:8px;display:block;}}
+.info-val{{font-size:16px;font-weight:800;color:#0f172a;}}
+.target-list{{list-style:none;max-width:640px;margin:0 auto;display:grid;gap:12px;}}
+.target-list li{{background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:16px 22px;font-size:15px;font-weight:700;display:flex;align-items:center;gap:12px;}}
+.chk-icon{{color:var(--p);font-weight:900;font-size:18px;flex-shrink:0;}}
+.feat-grid{{display:grid;grid-template-columns:repeat(3,1fr);gap:24px;}}
+.feat-grid.feat-five{{grid-template-columns:repeat(6,1fr);}}
+.feat-grid.feat-five .feat-card:nth-child(-n+3){{grid-column:span 2;}}
+.feat-grid.feat-five .feat-card:nth-child(4){{grid-column:2/4;}}
+.feat-grid.feat-five .feat-card:nth-child(5){{grid-column:4/6;}}
+.feat-card{{background:#fff;border:1px solid #e2e8f0;border-radius:20px;overflow:hidden;transition:transform .3s,box-shadow .3s;}}
+.feat-card:hover{{transform:translateY(-6px);box-shadow:0 16px 40px rgba(0,0,0,0.08);}}
+.feat-img{{height:200px;overflow:hidden;background:#f1f5f9;}}
+.feat-img img{{width:100%;height:100%;object-fit:cover;transition:transform .6s;}}
+.feat-card:hover .feat-img img{{transform:scale(1.06);}}
+.feat-body{{padding:28px;}}
+.feat-body h3{{font-size:18px;font-weight:800;margin-bottom:10px;}}
+.feat-body p{{color:#64748b;font-size:14px;}}
+.curr-wrap{{display:grid;grid-template-columns:240px 1fr;gap:32px;}}
+.curr-tabs{{display:flex;flex-direction:column;gap:6px;}}
+.curr-tab{{background:#f1f5f9;border:1px solid #e2e8f0;color:#64748b;padding:14px 20px;border-radius:12px;font-size:15px;font-weight:700;cursor:pointer;text-align:left;transition:all .3s;}}
+.curr-tab.active{{background:var(--p);color:#fff;border-color:var(--p);}}
+.curr-panel{{background:#f8fafc;border:1px solid #e2e8f0;border-radius:20px;padding:40px;}}
+.curr-panel h3{{font-size:24px;font-weight:900;margin-bottom:24px;color:#0f172a;}}
+.curr-panel ul{{list-style:none;display:grid;gap:14px;}}
+.curr-panel li{{font-size:15px;color:#475569;font-weight:500;padding-left:20px;position:relative;}}
+.curr-panel li::before{{content:'→';position:absolute;left:0;color:var(--p);font-weight:900;}}
+.faq-list{{max-width:780px;margin:0 auto;}}
+.faq-item{{border:1px solid #e2e8f0;border-radius:16px;margin-bottom:12px;overflow:hidden;transition:border-color .3s;}}
+.faq-item[open]{{border-color:var(--p);}}
+.faq-item summary{{padding:20px 24px;font-weight:700;font-size:16px;cursor:pointer;list-style:none;display:flex;justify-content:space-between;align-items:center;}}
+.faq-item summary::-webkit-details-marker{{display:none;}}
+.faq-item summary::after{{content:'+';width:28px;height:28px;background:#f1f5f9;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;}}
+.faq-item[open] summary::after{{content:'−';background:var(--p);color:#fff;}}
+.faq-ans{{padding:14px 24px 24px;color:#64748b;font-size:14px;line-height:1.8;border-top:1px solid #e5e7eb;margin:0 10px;}}
+.cta-bottom{{background:var(--p);padding:64px 0;text-align:center;}}
+.cta-bottom h2{{font-size:clamp(24px,3vw,36px);font-weight:900;color:#fff;margin-bottom:28px;}}
+.cta-bottom a{{background:#fff;color:var(--p);padding:16px 48px;border-radius:12px;font-size:17px;font-weight:800;display:inline-block;}}
+.footer{{background:#f8fafc;border-top:1px solid #e2e8f0;padding:40px 0;text-align:center;font-size:12px;color:#94a3b8;font-weight:600;}}
+@media(max-width:768px){{
+  .hero .inner,.curr-wrap{{grid-template-columns:1fr;}}
+  .feat-grid,.feat-grid.feat-five{{grid-template-columns:1fr;}}
+  .feat-grid.feat-five .feat-card{{grid-column:auto;}}
+  .curr-tabs{{flex-direction:row;overflow-x:auto;}}
+}}
+</style>
 </head>
 <body>
-    <main class="shell">
-        <section class="mast">
-            <div class="hero">
-                <div>
-                    <h1>{ctx["title"]}</h1>
-                    <h2>{ctx["subtitle"]}</h2>
-                    <p class="desc">{ctx["body"]}</p>
-                    <a class="cta" href="{ctx["cta_url"]}">{ctx["cta_text"]}</a>
-                </div>
-                <div>{ctx["hero_html"]}</div>
-            </div>
-            
-            <div class="rich-content">
-                { f"<h3 class='section-title'>추천 대상</h3><ul class='target-list'>{ctx['target_audience_html']}</ul>" if ctx["target_audience_html"] else "" }
-                { f"<h3 class='section-title'>과정 특징</h3><div class='features-grid'>{ctx['features_html']}</div>" if ctx["features_html"] else "" }
-                { f"<h3 class='section-title'>커리큘럼</h3><div class='curriculum-timeline'>{ctx['curriculum_html']}</div>" if ctx["curriculum_html"] else "" }
-                {_build_extra_sections_html(ctx, bg_dark=False)}
-            </div>
-        </section>
-    </main>
-</body>
-</html>
-"""
+<section class="hero"><div class="inner">
+  <div><h1 class="hero-title">{ctx["title"]}</h1><p class="hero-desc">{ctx["subtitle"]}<br/>{ctx["body"]}</p><a href="{ctx["cta_url"]}" class="hero-cta">{ctx["cta_text"]}</a></div>
+  {hero_img if hero_img else "<div></div>"}
+</div></section>
+{"<section class='section'><div class='inner'><div class='stats-grid'>" + stats_html + "</div></div></section>" if stats_html else ""}
+{"<section class='section alt'><div class='inner'><h2 class='sec-title'>모집 정보</h2><div class='infos-grid'>" + infos_html + "</div></div></section>" if infos_html else ""}
+{"<section class='section'><div class='inner'><h2 class='sec-title'>이런 분들에게 추천합니다</h2><ul class='target-list'>" + target_html + "</ul></div></section>" if target_html else ""}
+{"<section class='section alt'><div class='inner'><h2 class='sec-title'>과정 특징</h2><div class='feat-grid " + feat_cls + "'>" + features_html + "</div></div></section>" if features_html else ""}
+{"<section class='section'><div class='inner'><h2 class='sec-title'>커리큘럼</h2><div class='curr-wrap'><div class='curr-tabs'>" + curr_tabs + "</div><div class='curr-panels'>" + curr_panels + "</div></div></div></section>" if curr_tabs else ""}
+{"<section class='section alt'><div class='inner'><h2 class='sec-title'>자주 묻는 질문</h2><div class='faq-list'>" + faqs_html + "</div></div></section>" if faqs_html else ""}
+<section class="cta-bottom"><div class="inner"><h2>지금 바로 시작하세요</h2><a href="{ctx["cta_url"]}">{ctx["cta_text"]}</a></div></section>
+<footer class="footer"><div class="inner">© 2026 All Rights Reserved.</div></footer>
+<script>{_SHARED_JS}</script>
+</body></html>"""
 
 
 def _render_dark_product(ctx: dict) -> str:
+    content = ctx["content_obj"]
+    stats_html, infos_html, features_html, curr_tabs, curr_panels, target_html, faqs_html = _build_shared_sections(content)
+    feat_cls = "feat-five" if len(getattr(content, "features", [])) == 5 else ""
+    hero_img = ""
+    raw_hero = ctx.get("hero_image_url_raw") or ""
+    if raw_hero:
+        hero_img = f"<div class='hero-visual'><img src='{escape(raw_hero)}' alt='hero'/></div>"
     return f"""<!doctype html>
-<html lang=\"ko\">
+<html lang="ko">
 <head>
-    <meta charset=\"UTF-8\" />
-    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />
-    <title>{ctx["title"]}</title>
-    <style>
-        :root {{ --bg: {ctx["bg"]}; --primary: {ctx["primary"]}; --secondary: {ctx["secondary"]}; }}
-        * {{ box-sizing: border-box; }}
-        body {{
-            margin: 0;
-            font-family: "Noto Sans KR", sans-serif;
-            color: #e5e7eb;
-            background:
-                radial-gradient(circle at 0% 0%, rgba(59,130,246,0.25), transparent 35%),
-                radial-gradient(circle at 100% 0%, rgba(16,185,129,0.2), transparent 30%),
-                #030712;
-        }}
-        .shell {{ max-width: 1200px; margin: 0 auto; padding: 34px 22px 48px; }}
-        .top {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 26px; }}
-        .brand {{ font-size: 26px; font-weight: 700; letter-spacing: .03em; }}
-        .ghost {{ border: 1px solid #374151; color: #d1d5db; padding: 10px 16px; border-radius: 999px; text-decoration: none; }}
-        .panel {{ border-radius: 24px; padding: 28px; background: linear-gradient(150deg, rgba(17,24,39,0.9), rgba(15,23,42,0.74)); border: 1px solid rgba(255,255,255,0.08); }}
-        .hero {{ display: grid; grid-template-columns: 1fr 1fr; gap: 22px; align-items: stretch; }}
-        h1 {{ margin: 0 0 10px; font-size: clamp(34px, 5vw, 60px); }}
-        h2 {{ margin: 0 0 14px; color: var(--secondary); font-size: clamp(22px, 3.2vw, 36px); }}
-        p {{ margin: 0 0 20px; color: #9ca3af; line-height: 1.8; }}
-        .cta {{ display: inline-block; padding: 14px 28px; background: var(--primary); color: #fff; font-weight: 800; text-decoration: none; border-radius: 999px; }}
-        .stats {{ margin-top: 20px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }}
-        .stat {{ background: rgba(17,24,39,0.9); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 10px; font-size: 13px; color: #cbd5e1; }}
-        .hero-image {{ width: 100%; height: 100%; min-height: 280px; object-fit: cover; border-radius: 16px; border: 1px solid rgba(255,255,255,0.1); }}
-        .section-title {{ font-size: 28px; margin: 40px 0 20px; font-weight: 800; border-bottom: 2px solid rgba(255,255,255,0.1); padding-bottom: 10px; }}
-        .features-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 20px; margin-bottom: 40px; }}
-        .feature-card {{ background: rgba(255,255,255,0.03); padding: 20px; border-radius: 16px; border: 1px solid rgba(255,255,255,0.08); }}
-        .feature-card h3 {{ margin: 0 0 8px; font-size: 18px; color: var(--secondary); }}
-        .feature-card p {{ margin: 0; font-size: 15px; color: #9ca3af; line-height: 1.6; }}
-        .target-list {{ list-style: none; padding: 0; margin: 0 0 40px; display: grid; gap: 12px; }}
-        .target-list li {{ background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); padding: 16px 20px; border-radius: 12px; display: flex; align-items: center; gap: 12px; font-size: 16px; font-weight: 600; box-shadow: 0 2px 4px rgba(0,0,0,0.2); }}
-        .target-list .chk {{ color: var(--primary); font-size: 20px; font-weight: bold; }}
-        .curriculum-timeline {{ position: relative; padding-left: 24px; margin-bottom: 40px; }}
-        .curriculum-timeline::before {{ content: ''; position: absolute; left: 6px; top: 10px; bottom: 10px; width: 2px; background: rgba(255,255,255,0.1); }}
-        .step {{ position: relative; margin-bottom: 24px; }}
-        .step-marker {{ position: absolute; left: -24px; top: 4px; width: 14px; height: 14px; border-radius: 50%; background: #030712; border: 3px solid var(--primary); z-index: 1; }}
-        .step-content h4 {{ margin: 0 0 6px; font-size: 18px; color: #e2e8f0; }}
-        .step-content p {{ margin: 0; font-size: 15px; color: #9ca3af; line-height: 1.6; }}
-        @media (max-width: 920px) {{ .hero {{ grid-template-columns: 1fr; }} .stats {{ grid-template-columns: 1fr; }} }}
-    </style>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>{ctx["title"]}</title>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;600;800;900&display=swap" rel="stylesheet"/>
+<style>
+:root{{--p:{ctx["primary"]};--s:{ctx["secondary"]};}}
+*{{box-sizing:border-box;margin:0;padding:0;}}
+body{{font-family:"Noto Sans KR",system-ui,sans-serif;color:#e2e8f0;line-height:1.7;background:#030712;}}
+a{{text-decoration:none;color:inherit;}}
+img{{max-width:100%;height:auto;display:block;}}
+.inner{{max-width:1100px;margin:0 auto;padding:0 32px;}}
+.hero{{padding:120px 0 80px;background:radial-gradient(circle at 20% 50%,rgba(59,130,246,0.15),transparent 50%),radial-gradient(circle at 80% 50%,rgba(139,92,246,0.1),transparent 50%),#030712;}}
+.hero .inner{{display:grid;grid-template-columns:1fr 1fr;gap:48px;align-items:center;}}
+.hero-title{{font-size:clamp(32px,4.5vw,56px);font-weight:900;line-height:1.1;margin-bottom:20px;color:#fff;}}
+.hero-desc{{font-size:17px;color:#94a3b8;margin-bottom:36px;}}
+.hero-cta{{background:var(--p);color:#fff;padding:16px 40px;border-radius:999px;font-size:16px;font-weight:800;display:inline-block;transition:all .3s;box-shadow:0 0 30px rgba(59,130,246,0.4);}}
+.hero-cta:hover{{box-shadow:0 0 50px rgba(59,130,246,0.6);transform:translateY(-2px);}}
+@keyframes heroFloat{{0%,100%{{transform:translateY(0)}}50%{{transform:translateY(-12px)}}}}
+.hero-visual img{{border-radius:20px;border:1px solid rgba(255,255,255,0.1);animation:heroFloat 4s ease-in-out infinite;}}
+.section{{padding:80px 0;}}
+.section.alt{{background:rgba(255,255,255,0.02);border-top:1px solid rgba(255,255,255,0.06);border-bottom:1px solid rgba(255,255,255,0.06);}}
+.sec-title{{font-size:clamp(26px,3vw,36px);font-weight:900;text-align:center;margin-bottom:48px;color:#fff;}}
+.stats-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:20px;}}
+.stat-card{{background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:16px;padding:28px 20px;text-align:center;transition:all .3s;backdrop-filter:blur(8px);}}
+.stat-card:hover{{border-color:var(--p);transform:translateY(-4px);box-shadow:0 0 30px rgba(59,130,246,0.2);}}
+.stat-card h3{{font-size:36px;font-weight:900;color:var(--p);margin-bottom:4px;}}
+.stat-card p{{font-size:12px;font-weight:700;color:#64748b;text-transform:uppercase;}}
+.infos-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;}}
+.info-card{{background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:14px;padding:24px;border-left:4px solid var(--p);}}
+.info-label{{font-size:10px;font-weight:900;color:var(--p);text-transform:uppercase;letter-spacing:.15em;margin-bottom:8px;display:block;}}
+.info-val{{font-size:16px;font-weight:800;color:#e2e8f0;}}
+.target-list{{list-style:none;max-width:640px;margin:0 auto;display:grid;gap:12px;}}
+.target-list li{{background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:14px;padding:16px 22px;font-size:15px;font-weight:700;display:flex;gap:12px;}}
+.chk-icon{{color:var(--p);font-weight:900;font-size:18px;flex-shrink:0;}}
+.feat-grid{{display:grid;grid-template-columns:repeat(3,1fr);gap:24px;}}
+.feat-grid.feat-five{{grid-template-columns:repeat(6,1fr);}}
+.feat-grid.feat-five .feat-card:nth-child(-n+3){{grid-column:span 2;}}
+.feat-grid.feat-five .feat-card:nth-child(4){{grid-column:2/4;}}
+.feat-grid.feat-five .feat-card:nth-child(5){{grid-column:4/6;}}
+.feat-card{{background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:20px;overflow:hidden;transition:all .4s;}}
+.feat-card:hover{{border-color:var(--p);box-shadow:0 0 40px rgba(59,130,246,0.15);transform:translateY(-6px);}}
+.feat-img{{height:200px;overflow:hidden;background:rgba(255,255,255,0.02);}}
+.feat-img img{{width:100%;height:100%;object-fit:cover;transition:transform .6s;}}
+.feat-card:hover .feat-img img{{transform:scale(1.06);}}
+.feat-body{{padding:28px;}}
+.feat-body h3{{font-size:18px;font-weight:800;margin-bottom:10px;color:#fff;}}
+.feat-body p{{color:#94a3b8;font-size:14px;}}
+.curr-wrap{{display:grid;grid-template-columns:240px 1fr;gap:32px;}}
+.curr-tabs{{display:flex;flex-direction:column;gap:6px;}}
+.curr-tab{{background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);color:#94a3b8;padding:14px 20px;border-radius:12px;font-size:15px;font-weight:700;cursor:pointer;text-align:left;transition:all .3s;}}
+.curr-tab:hover{{color:#fff;}}
+.curr-tab.active{{background:var(--p);color:#fff;border-color:var(--p);box-shadow:0 0 24px rgba(59,130,246,0.3);}}
+.curr-panel{{background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:20px;padding:40px;}}
+.curr-panel h3{{font-size:24px;font-weight:900;margin-bottom:24px;color:#fff;}}
+.curr-panel ul{{list-style:none;display:grid;gap:14px;}}
+.curr-panel li{{font-size:15px;color:#94a3b8;font-weight:500;padding-left:20px;position:relative;}}
+.curr-panel li::before{{content:'→';position:absolute;left:0;color:var(--p);font-weight:900;}}
+.faq-list{{max-width:780px;margin:0 auto;}}
+.faq-item{{border:1px solid rgba(255,255,255,0.08);border-radius:16px;margin-bottom:12px;overflow:hidden;transition:border-color .3s;}}
+.faq-item[open]{{border-color:var(--p);}}
+.faq-item summary{{padding:20px 24px;font-weight:700;font-size:16px;cursor:pointer;list-style:none;display:flex;justify-content:space-between;align-items:center;color:#e2e8f0;}}
+.faq-item summary::-webkit-details-marker{{display:none;}}
+.faq-item summary::after{{content:'+';width:28px;height:28px;background:rgba(255,255,255,0.06);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;}}
+.faq-item[open] summary::after{{content:'−';background:var(--p);color:#fff;}}
+.faq-ans{{padding:14px 24px 24px;color:#94a3b8;font-size:14px;line-height:1.8;border-top:1px solid rgba(255,255,255,0.06);margin:0 10px;}}
+.cta-bottom{{background:linear-gradient(135deg,var(--p),#7c3aed);padding:64px 0;text-align:center;}}
+.cta-bottom h2{{font-size:clamp(24px,3vw,36px);font-weight:900;color:#fff;margin-bottom:28px;}}
+.cta-bottom a{{background:#fff;color:var(--p);padding:16px 48px;border-radius:999px;font-size:17px;font-weight:800;display:inline-block;}}
+.footer{{background:#030712;border-top:1px solid rgba(255,255,255,0.06);padding:40px 0;text-align:center;font-size:12px;color:#475569;font-weight:600;}}
+@media(max-width:768px){{
+  .hero .inner,.curr-wrap{{grid-template-columns:1fr;}}
+  .feat-grid,.feat-grid.feat-five{{grid-template-columns:1fr;}}
+  .feat-grid.feat-five .feat-card{{grid-column:auto;}}
+  .curr-tabs{{flex-direction:row;overflow-x:auto;}}
+}}
+</style>
 </head>
 <body>
-    <div class="shell">
-        <div class="top">
-            <a class="ghost" href="{ctx["cta_url"]}">문의하기</a>
-        </div>
-        <section class="panel">
-            <div class="hero">
-                <article>
-                    <h1>{ctx["title"]}</h1>
-                    <h2>{ctx["subtitle"]}</h2>
-                    <p>{ctx["body"]}</p>
-                    <a class="cta" href="{ctx["cta_url"]}">{ctx["cta_text"]}</a>
-                </article>
-                <div>{ctx["hero_html"]}</div>
-            </div>
-            
-            <div class="rich-content">
-                { f"<h3 class='section-title'>추천 대상</h3><ul class='target-list'>{ctx['target_audience_html']}</ul>" if ctx["target_audience_html"] else "" }
-                { f"<h3 class='section-title'>과정 특징</h3><div class='features-grid'>{ctx['features_html']}</div>" if ctx["features_html"] else "" }
-                { f"<h3 class='section-title'>커리큘럼</h3><div class='curriculum-timeline'>{ctx['curriculum_html']}</div>" if ctx["curriculum_html"] else "" }
-                {_build_extra_sections_html(ctx, bg_dark=True)}
-            </div>
-        </section>
-    </div>
-</body>
-</html>
-"""
+<section class="hero"><div class="inner">
+  <div><h1 class="hero-title">{ctx["title"]}</h1><p class="hero-desc">{ctx["subtitle"]}<br/>{ctx["body"]}</p><a href="{ctx["cta_url"]}" class="hero-cta">{ctx["cta_text"]}</a></div>
+  {hero_img if hero_img else "<div></div>"}
+</div></section>
+{"<section class='section'><div class='inner'><div class='stats-grid'>" + stats_html + "</div></div></section>" if stats_html else ""}
+{"<section class='section alt'><div class='inner'><h2 class='sec-title'>모집 정보</h2><div class='infos-grid'>" + infos_html + "</div></div></section>" if infos_html else ""}
+{"<section class='section'><div class='inner'><h2 class='sec-title'>이런 분들에게 추천합니다</h2><ul class='target-list'>" + target_html + "</ul></div></section>" if target_html else ""}
+{"<section class='section alt'><div class='inner'><h2 class='sec-title'>과정 특징</h2><div class='feat-grid " + feat_cls + "'>" + features_html + "</div></div></section>" if features_html else ""}
+{"<section class='section'><div class='inner'><h2 class='sec-title' style='color:#fff'>커리큘럼</h2><div class='curr-wrap'><div class='curr-tabs'>" + curr_tabs + "</div><div class='curr-panels'>" + curr_panels + "</div></div></div></section>" if curr_tabs else ""}
+{"<section class='section alt'><div class='inner'><h2 class='sec-title'>자주 묻는 질문</h2><div class='faq-list'>" + faqs_html + "</div></div></section>" if faqs_html else ""}
+<section class="cta-bottom"><div class="inner"><h2>지금 바로 시작하세요</h2><a href="{ctx["cta_url"]}">{ctx["cta_text"]}</a></div></section>
+<footer class="footer"><div class="inner">© 2026 All Rights Reserved.</div></footer>
+<script>{_SHARED_JS}</script>
+</body></html>"""
 
 
 def _render_event_highlight(ctx: dict) -> str:
+    content = ctx["content_obj"]
+    stats_html, infos_html, features_html, curr_tabs, curr_panels, target_html, faqs_html = _build_shared_sections(content)
+    feat_cls = "feat-five" if len(getattr(content, "features", [])) == 5 else ""
+    hero_img = ""
+    raw_hero = ctx.get("hero_image_url_raw") or ""
+    if raw_hero:
+        hero_img = f"<div class='hero-visual'><img src='{escape(raw_hero)}' alt='hero'/></div>"
     return f"""<!doctype html>
-<html lang=\"ko\">
+<html lang="ko">
 <head>
-    <meta charset=\"UTF-8\" />
-    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />
-    <title>{ctx["title"]}</title>
-    <style>
-        :root {{ --bg: {ctx["bg"]}; --primary: {ctx["primary"]}; --secondary: {ctx["secondary"]}; }}
-        * {{ box-sizing: border-box; }}
-        body {{
-            margin: 0;
-            font-family: "Noto Sans KR", sans-serif;
-            color: #111827;
-            background:
-                linear-gradient(135deg, #fff7ed, #f0f9ff 40%, #fefce8 100%);
-            min-height: 100vh;
-        }}
-        .shell {{ max-width: 980px; margin: 0 auto; padding: 24px 18px 36px; }}
-        .poster {{ background: #fff; border: 2px solid #111827; border-radius: 28px; overflow: hidden; box-shadow: 14px 14px 0 #111827; }}
-        .head {{ background: var(--primary); color: #fff; padding: 20px 24px; display: flex; justify-content: space-between; align-items: center; }}
-        .tag {{ background: #111827; color: #fff; border-radius: 999px; padding: 8px 14px; font-weight: 700; font-size: 13px; }}
-        .body {{ padding: 26px 24px 28px; }}
-        h1 {{ margin: 0 0 10px; font-size: clamp(30px, 5vw, 52px); line-height: 1.06; }}
-        h2 {{ margin: 0 0 12px; color: var(--secondary); font-size: clamp(20px, 3.3vw, 32px); }}
-        p {{ margin: 0 0 16px; line-height: 1.8; }}
-        .hero-image {{ width: 100%; border: 2px solid #111827; border-radius: 16px; margin: 6px 0 18px; }}
-        .foot {{ display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }}
-        .cta {{ background: #111827; color: #fff; text-decoration: none; font-weight: 800; padding: 12px 18px; border-radius: 12px; }}
-        .section-title {{ font-size: 24px; margin: 30px 0 16px; font-weight: 800; border-bottom: 2px solid #111827; padding-bottom: 8px; }}
-        .features-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; margin-bottom: 30px; }}
-        .feature-card {{ background: #fff; padding: 16px; border-radius: 12px; border: 2px solid #111827; box-shadow: 4px 4px 0 #111827; }}
-        .feature-card h3 {{ margin: 0 0 6px; font-size: 17px; color: var(--secondary); font-weight: 800; }}
-        .feature-card p {{ margin: 0; font-size: 14px; line-height: 1.6; }}
-        .target-list {{ list-style: none; padding: 0; margin: 0 0 30px; display: grid; gap: 10px; }}
-        .target-list li {{ background: #fff; border: 2px solid #111827; padding: 12px 16px; border-radius: 10px; display: flex; align-items: center; gap: 12px; font-size: 15px; font-weight: 700; box-shadow: 4px 4px 0 #111827; }}
-        .target-list .chk {{ color: var(--primary); font-size: 18px; font-weight: 900; }}
-        .curriculum-timeline {{ position: relative; padding-left: 20px; margin-bottom: 30px; border-left: 3px solid #111827; }}
-        .step {{ position: relative; margin-bottom: 20px; padding-left: 14px; }}
-        .step-marker {{ position: absolute; left: -21px; top: 4px; width: 14px; height: 14px; border-radius: 50%; background: var(--primary); border: 2px solid #111827; z-index: 1; }}
-        .step-content h4 {{ margin: 0 0 4px; font-size: 16px; font-weight: 800; }}
-        .step-content p {{ margin: 0; font-size: 14px; line-height: 1.5; }}
-        .meta {{ color: #374151; font-size: 13px; }}
-    </style>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>{ctx["title"]}</title>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;600;800;900&display=swap" rel="stylesheet"/>
+<style>
+:root{{--p:{ctx["primary"]};--s:{ctx["secondary"]};}}
+*{{box-sizing:border-box;margin:0;padding:0;}}
+body{{font-family:"Noto Sans KR",system-ui,sans-serif;color:#1e293b;line-height:1.7;background:#fffbeb;}}
+a{{text-decoration:none;color:inherit;}}
+img{{max-width:100%;height:auto;display:block;}}
+.inner{{max-width:1100px;margin:0 auto;padding:0 32px;}}
+.hero{{padding:120px 0 80px;background:linear-gradient(135deg,#fef3c7,#fce7f3 50%,#e0e7ff);}}
+.hero .inner{{display:grid;grid-template-columns:1fr 1fr;gap:48px;align-items:center;}}
+.hero-title{{font-size:clamp(32px,4.5vw,56px);font-weight:900;line-height:1.1;margin-bottom:20px;color:#0f172a;}}
+.hero-desc{{font-size:17px;color:#64748b;margin-bottom:36px;}}
+.hero-cta{{background:#0f172a;color:#fff;padding:16px 40px;border-radius:14px;font-size:16px;font-weight:800;display:inline-block;transition:all .3s;box-shadow:6px 6px 0 var(--p);}}
+.hero-cta:hover{{box-shadow:8px 8px 0 var(--p);transform:translate(-2px,-2px);}}
+@keyframes heroFloat{{0%,100%{{transform:translateY(0)}}50%{{transform:translateY(-12px)}}}}
+.hero-visual img{{border-radius:20px;border:3px solid #0f172a;box-shadow:8px 8px 0 #0f172a;animation:heroFloat 4s ease-in-out infinite;}}
+.section{{padding:80px 0;}}
+.section.warm{{background:#fff;}}
+.section.cool{{background:#f0f9ff;}}
+.section.peach{{background:#fef7ee;}}
+.sec-title{{font-size:clamp(26px,3vw,36px);font-weight:900;text-align:center;margin-bottom:48px;color:#0f172a;}}
+.stats-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:20px;}}
+.stat-card{{background:#fff;border:3px solid #0f172a;border-radius:16px;padding:28px 20px;text-align:center;box-shadow:4px 4px 0 #0f172a;transition:all .3s;}}
+.stat-card:hover{{box-shadow:6px 6px 0 var(--p);transform:translate(-2px,-2px);}}
+.stat-card h3{{font-size:36px;font-weight:900;color:var(--p);margin-bottom:4px;}}
+.stat-card p{{font-size:12px;font-weight:700;color:#64748b;text-transform:uppercase;}}
+.infos-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;}}
+.info-card{{background:#fff;border:2px solid #0f172a;border-radius:14px;padding:24px;box-shadow:3px 3px 0 #0f172a;}}
+.info-label{{font-size:10px;font-weight:900;color:var(--p);text-transform:uppercase;letter-spacing:.15em;margin-bottom:8px;display:block;}}
+.info-val{{font-size:16px;font-weight:800;color:#0f172a;}}
+.target-list{{list-style:none;max-width:640px;margin:0 auto;display:grid;gap:12px;}}
+.target-list li{{background:#fff;border:2px solid #0f172a;border-radius:14px;padding:16px 22px;font-size:15px;font-weight:700;display:flex;gap:12px;box-shadow:3px 3px 0 #0f172a;}}
+.chk-icon{{color:var(--p);font-weight:900;font-size:18px;flex-shrink:0;}}
+.feat-grid{{display:grid;grid-template-columns:repeat(3,1fr);gap:24px;}}
+.feat-grid.feat-five{{grid-template-columns:repeat(6,1fr);}}
+.feat-grid.feat-five .feat-card:nth-child(-n+3){{grid-column:span 2;}}
+.feat-grid.feat-five .feat-card:nth-child(4){{grid-column:2/4;}}
+.feat-grid.feat-five .feat-card:nth-child(5){{grid-column:4/6;}}
+.feat-card{{background:#fff;border:2px solid #0f172a;border-radius:20px;overflow:hidden;box-shadow:4px 4px 0 #0f172a;transition:all .3s;}}
+.feat-card:hover{{box-shadow:6px 6px 0 var(--p);transform:translate(-2px,-2px);}}
+.feat-img{{height:200px;overflow:hidden;background:#f1f5f9;}}
+.feat-img img{{width:100%;height:100%;object-fit:cover;}}
+.feat-body{{padding:28px;}}
+.feat-body h3{{font-size:18px;font-weight:800;margin-bottom:10px;}}
+.feat-body p{{color:#64748b;font-size:14px;}}
+.curr-wrap{{display:grid;grid-template-columns:240px 1fr;gap:32px;}}
+.curr-tabs{{display:flex;flex-direction:column;gap:6px;}}
+.curr-tab{{background:#fff;border:2px solid #0f172a;color:#0f172a;padding:14px 20px;border-radius:12px;font-size:15px;font-weight:700;cursor:pointer;text-align:left;transition:all .3s;box-shadow:3px 3px 0 #0f172a;}}
+.curr-tab.active{{background:#0f172a;color:#fff;box-shadow:3px 3px 0 var(--p);}}
+.curr-panel{{background:#fff;border:2px solid #0f172a;border-radius:20px;padding:40px;box-shadow:4px 4px 0 #0f172a;}}
+.curr-panel h3{{font-size:24px;font-weight:900;margin-bottom:24px;color:#0f172a;}}
+.curr-panel ul{{list-style:none;display:grid;gap:14px;}}
+.curr-panel li{{font-size:15px;color:#475569;font-weight:500;padding-left:20px;position:relative;}}
+.curr-panel li::before{{content:'→';position:absolute;left:0;color:var(--p);font-weight:900;}}
+.faq-list{{max-width:780px;margin:0 auto;}}
+.faq-item{{border:2px solid #0f172a;border-radius:16px;margin-bottom:12px;overflow:hidden;box-shadow:3px 3px 0 #0f172a;transition:all .3s;}}
+.faq-item[open]{{box-shadow:3px 3px 0 var(--p);}}
+.faq-item summary{{padding:20px 24px;font-weight:700;font-size:16px;cursor:pointer;list-style:none;display:flex;justify-content:space-between;align-items:center;}}
+.faq-item summary::-webkit-details-marker{{display:none;}}
+.faq-item summary::after{{content:'+';width:28px;height:28px;background:#f1f5f9;border:2px solid #0f172a;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;}}
+.faq-item[open] summary::after{{content:'−';background:#0f172a;color:#fff;}}
+.faq-ans{{padding:14px 24px 24px;color:#64748b;font-size:14px;line-height:1.8;border-top:2px solid #e5e7eb;margin:0 10px;}}
+.cta-bottom{{background:#0f172a;padding:64px 0;text-align:center;}}
+.cta-bottom h2{{font-size:clamp(24px,3vw,36px);font-weight:900;color:#fff;margin-bottom:28px;}}
+.cta-bottom a{{background:#fbbf24;color:#0f172a;padding:16px 48px;border-radius:14px;font-size:17px;font-weight:800;display:inline-block;box-shadow:4px 4px 0 rgba(255,255,255,0.3);}}
+.footer{{background:#fffbeb;border-top:2px solid #0f172a;padding:40px 0;text-align:center;font-size:12px;color:#64748b;font-weight:600;}}
+@media(max-width:768px){{
+  .hero .inner,.curr-wrap{{grid-template-columns:1fr;}}
+  .feat-grid,.feat-grid.feat-five{{grid-template-columns:1fr;}}
+  .feat-grid.feat-five .feat-card{{grid-column:auto;}}
+  .curr-tabs{{flex-direction:row;overflow-x:auto;}}
+}}
+</style>
 </head>
 <body>
-    <main class="shell">
-        <section class="poster">
-            <header class="head">
-                <strong>EVENT</strong>
-                <span class="tag">모집중</span>
-            </header>
-            <div class="body">
-                <h1>{ctx["title"]}</h1>
-                <h2>{ctx["subtitle"]}</h2>
-                <p>{ctx["body"]}</p>
-                {ctx["hero_html"]}
-                
-                <div class="rich-content" style="margin-top:40px;">
-                    { f"<h3 class='section-title'>추천 대상</h3><ul class='target-list'>{ctx['target_audience_html']}</ul>" if ctx["target_audience_html"] else "" }
-                    { f"<h3 class='section-title'>과정 특징</h3><div class='features-grid'>{ctx['features_html']}</div>" if ctx["features_html"] else "" }
-                    { f"<h3 class='section-title'>커리큘럼</h3><div class='curriculum-timeline'>{ctx['curriculum_html']}</div>" if ctx["curriculum_html"] else "" }
-                    {_build_extra_sections_html(ctx, bg_dark=False)}
-                </div>
-                
-                <div class="foot" style="margin-top:20px;">
-                    <a class="cta" href="{ctx["cta_url"]}">{ctx["cta_text"]}</a>
-                </div>
-            </div>
-        </section>
-    </main>
-</body>
-</html>
-"""
+<section class="hero"><div class="inner">
+  <div><h1 class="hero-title">{ctx["title"]}</h1><p class="hero-desc">{ctx["subtitle"]}<br/>{ctx["body"]}</p><a href="{ctx["cta_url"]}" class="hero-cta">{ctx["cta_text"]}</a></div>
+  {hero_img if hero_img else "<div></div>"}
+</div></section>
+{"<section class='section warm'><div class='inner'><div class='stats-grid'>" + stats_html + "</div></div></section>" if stats_html else ""}
+{"<section class='section cool'><div class='inner'><h2 class='sec-title'>모집 정보</h2><div class='infos-grid'>" + infos_html + "</div></div></section>" if infos_html else ""}
+{"<section class='section warm'><div class='inner'><h2 class='sec-title'>이런 분들에게 추천합니다</h2><ul class='target-list'>" + target_html + "</ul></div></section>" if target_html else ""}
+{"<section class='section peach'><div class='inner'><h2 class='sec-title'>과정 특징</h2><div class='feat-grid " + feat_cls + "'>" + features_html + "</div></div></section>" if features_html else ""}
+{"<section class='section warm'><div class='inner'><h2 class='sec-title'>커리큘럼</h2><div class='curr-wrap'><div class='curr-tabs'>" + curr_tabs + "</div><div class='curr-panels'>" + curr_panels + "</div></div></div></section>" if curr_tabs else ""}
+{"<section class='section cool'><div class='inner'><h2 class='sec-title'>자주 묻는 질문</h2><div class='faq-list'>" + faqs_html + "</div></div></section>" if faqs_html else ""}
+<section class="cta-bottom"><div class="inner"><h2>지금 바로 시작하세요</h2><a href="{ctx["cta_url"]}">{ctx["cta_text"]}</a></div></section>
+<footer class="footer"><div class="inner">© 2026 All Rights Reserved.</div></footer>
+<script>{_SHARED_JS}</script>
+</body></html>"""
 
 
 def _render_premium_bootcamp(ctx: dict) -> str:
     content = ctx["content_obj"]
 
-    # ── Stats cards ──
+    # ── Stats cards (data-target for counter animation) ──
     stats_html = ""
     for s in getattr(content, "stats", []):
-        stats_html += f"<div class='stat-card'><h3>{escape(s.value)}</h3><p>{escape(s.title)}</p></div>"
+        raw = s.value.strip()
+        stats_html += f"<div class='stat-card'><h3 data-target='{escape(raw)}'>0</h3><p>{escape(s.title)}</p></div>"
 
     # ── Info cards ──
     infos_html = ""
@@ -489,13 +659,15 @@ def _render_premium_bootcamp(ctx: dict) -> str:
         infos_html += f"<div class='info-card'><span class='info-label'>{escape(i.label)}</span><p class='info-val'>{escape(i.val)}</p></div>"
 
     # ── Feature cards ──
+    feat_count = len(getattr(content, "features", []))
+    feat_cls = "feat-five" if feat_count == 5 else ""
     features_html = ""
-    for idx, f in enumerate(getattr(content, "features", [])):
+    for f in getattr(content, "features", []):
         img_url = escape(f.image_url or "")
         img_block = f"<div class='feat-img'><img src='{img_url}' alt='' loading='lazy'/></div>" if img_url else ""
         features_html += f"<div class='feat-card'>{img_block}<div class='feat-body'><h3>{escape(f.title)}</h3><p>{escape(f.description)}</p></div></div>"
 
-    # ── Curriculum tabs (JS interactive) ──
+    # ── Curriculum tabs ──
     curr_tabs = ""
     curr_panels = ""
     for idx, c in enumerate(getattr(content, "curriculum", [])):
@@ -538,34 +710,36 @@ a{{text-decoration:none;color:inherit;}}
 img{{max-width:100%;height:auto;display:block;}}
 .inner{{max-width:1200px;margin:0 auto;padding:0 40px;}}
 
-/* ── HERO ── */
-.hero{{background:linear-gradient(135deg,#0f172a 0%,#1e3a5f 50%,var(--p) 100%);color:#fff;padding:140px 0 100px;position:relative;overflow:hidden;}}
-.hero::after{{content:'';position:absolute;bottom:-2px;left:0;width:100%;height:80px;background:var(--bg);clip-path:ellipse(55% 100% at 50% 100%);}}
+/* ── HERO (straight bottom, no curve) ── */
+.hero{{background:linear-gradient(135deg,#0f172a 0%,#1e3a5f 50%,var(--p) 100%);color:#fff;padding:140px 0 100px;position:relative;overflow:hidden;border-bottom:4px solid var(--p);}}
 .hero .inner{{display:grid;grid-template-columns:1.1fr 0.9fr;gap:60px;align-items:center;}}
 .hero-title{{font-size:clamp(36px,5vw,60px);font-weight:900;line-height:1.08;margin-bottom:24px;letter-spacing:-0.03em;}}
 .hero-desc{{font-size:18px;color:rgba(255,255,255,0.8);margin-bottom:40px;font-weight:500;}}
 .hero-cta{{background:#fff;color:var(--p);padding:18px 44px;border-radius:60px;font-size:17px;font-weight:800;display:inline-block;transition:transform .3s,box-shadow .3s;box-shadow:0 8px 30px rgba(0,0,0,0.25);}}
 .hero-cta:hover{{transform:translateY(-3px);box-shadow:0 14px 40px rgba(0,0,0,0.35);}}
-.hero-visual img{{border-radius:24px;box-shadow:0 20px 60px rgba(0,0,0,0.4);}}
+/* Floating animation for hero image */
+@keyframes heroFloat{{0%,100%{{transform:translateY(0)}}50%{{transform:translateY(-16px)}}}}
+.hero-visual img{{border-radius:24px;box-shadow:0 20px 60px rgba(0,0,0,0.4);animation:heroFloat 4s ease-in-out infinite;}}
 
-/* ── STATS ── */
-.stats{{background:var(--bg);padding:0 0 80px;position:relative;z-index:2;margin-top:-50px;}}
+/* ── STATS (counter animated) ── */
+.stats{{background:var(--bg);padding:60px 0 80px;}}
 .stats-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:24px;}}
 .stat-card{{background:#fff;border:1px solid #e2e8f0;border-radius:20px;padding:32px 24px;text-align:center;box-shadow:0 4px 20px rgba(0,0,0,0.04);transition:transform .3s,box-shadow .3s;}}
 .stat-card:hover{{transform:translateY(-6px);box-shadow:0 16px 40px rgba(0,0,0,0.1);}}
-.stat-card h3{{font-size:38px;font-weight:900;color:var(--p);margin-bottom:6px;}}
+.stat-card h3{{font-size:42px;font-weight:900;color:var(--p);margin-bottom:6px;}}
 .stat-card p{{font-size:13px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.1em;}}
 
-/* ── INFOS ── */
+/* ── INFOS (bigger title) ── */
 .infos{{background:#f1f5f9;padding:96px 0;}}
-.infos-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:20px;}}
+.infos-title{{font-size:clamp(32px,4vw,48px);font-weight:900;text-align:center;margin-bottom:48px;color:#0f172a;}}
+.infos-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:20px;}}
 .info-card{{background:#fff;border-radius:20px;padding:28px 24px;position:relative;overflow:hidden;border:1px solid #e2e8f0;transition:transform .3s;}}
 .info-card:hover{{transform:translateY(-4px);}}
 .info-card::before{{content:'';position:absolute;top:0;left:0;width:4px;height:100%;background:var(--p);border-radius:0 4px 4px 0;}}
 .info-label{{font-size:11px;font-weight:900;color:var(--p);text-transform:uppercase;letter-spacing:.2em;display:block;margin-bottom:10px;}}
 .info-val{{font-size:17px;font-weight:800;color:#0f172a;}}
 
-/* ── TARGET AUDIENCE ── */
+/* ── TARGET ── */
 .targets{{background:#fff;padding:96px 0;}}
 .sec-title{{font-size:clamp(28px,3.5vw,40px);font-weight:900;text-align:center;margin-bottom:16px;color:#0f172a;}}
 .sec-sub{{text-align:center;color:#64748b;font-size:16px;margin-bottom:56px;font-weight:500;}}
@@ -574,9 +748,13 @@ img{{max-width:100%;height:auto;display:block;}}
 .target-list li:hover{{border-color:var(--p);}}
 .chk-icon{{color:var(--p);font-size:20px;font-weight:900;flex-shrink:0;}}
 
-/* ── FEATURES ── */
+/* ── FEATURES (supports 3, 5, 6 layouts) ── */
 .features{{background:linear-gradient(180deg,#f8fafc,#eef2ff);padding:96px 0;}}
-.feat-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:32px;}}
+.feat-grid{{display:grid;grid-template-columns:repeat(3,1fr);gap:32px;}}
+.feat-grid.feat-five{{grid-template-columns:repeat(6,1fr);}}
+.feat-grid.feat-five .feat-card:nth-child(-n+3){{grid-column:span 2;}}
+.feat-grid.feat-five .feat-card:nth-child(4){{grid-column:2/4;}}
+.feat-grid.feat-five .feat-card:nth-child(5){{grid-column:4/6;}}
 .feat-card{{background:#fff;border-radius:24px;overflow:hidden;border:1px solid #e2e8f0;transition:transform .4s,box-shadow .4s;}}
 .feat-card:hover{{transform:translateY(-8px);box-shadow:0 24px 48px rgba(0,0,0,0.12);}}
 .feat-img{{height:220px;overflow:hidden;background:#f1f5f9;}}
@@ -600,7 +778,7 @@ img{{max-width:100%;height:auto;display:block;}}
 .curr-panel li{{display:flex;align-items:flex-start;gap:12px;font-size:16px;color:rgba(255,255,255,0.85);font-weight:500;}}
 .curr-panel li::before{{content:'→';color:var(--p);font-weight:900;flex-shrink:0;}}
 
-/* ── FAQS ── */
+/* ── FAQS (separator line between Q and A) ── */
 .faqs{{background:#fff;padding:96px 0;}}
 .faq-list{{max-width:820px;margin:0 auto;}}
 .faq-item{{border:1px solid #e2e8f0;border-radius:20px;margin-bottom:16px;overflow:hidden;transition:border-color .3s;}}
@@ -609,7 +787,7 @@ img{{max-width:100%;height:auto;display:block;}}
 .faq-item summary::-webkit-details-marker{{display:none;}}
 .faq-item summary::after{{content:'+';width:32px;height:32px;background:#f1f5f9;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:600;transition:all .3s;flex-shrink:0;}}
 .faq-item[open] summary::after{{content:'−';background:var(--p);color:#fff;}}
-.faq-ans{{padding:0 28px 28px;color:#64748b;font-size:15px;line-height:1.8;}}
+.faq-ans{{padding:16px 28px 28px;color:#64748b;font-size:15px;line-height:1.8;border-top:1px solid #e5e7eb;margin:0 12px;padding-top:20px;}}
 
 /* ── CTA BOTTOM ── */
 .cta-bottom{{background:linear-gradient(135deg,var(--p),#7c3aed);padding:80px 0;text-align:center;}}
@@ -620,14 +798,14 @@ img{{max-width:100%;height:auto;display:block;}}
 /* ── FOOTER ── */
 .footer{{background:#0f172a;color:rgba(255,255,255,0.4);padding:48px 0;text-align:center;font-size:13px;font-weight:600;letter-spacing:.1em;}}
 
-/* ── RESPONSIVE ── */
 @media(max-width:992px){{
   .hero .inner{{grid-template-columns:1fr;gap:40px;}}
   .hero{{padding:100px 0 80px;}}
   .curr-wrap{{grid-template-columns:1fr;}}
   .curr-tabs{{flex-direction:row;overflow-x:auto;}}
   .curr-tab{{white-space:nowrap;}}
-  .feat-grid{{grid-template-columns:1fr;}}
+  .feat-grid,.feat-grid.feat-five{{grid-template-columns:1fr;}}
+  .feat-grid.feat-five .feat-card{{grid-column:auto;}}
   .inner{{padding:0 20px;}}
 }}
 </style>
@@ -647,11 +825,11 @@ img{{max-width:100%;height:auto;display:block;}}
 
 {"<section class='stats'><div class='inner'><div class='stats-grid'>" + stats_html + "</div></div></section>" if stats_html else ""}
 
-{"<section class='infos'><div class='inner'><div class='infos-grid'>" + infos_html + "</div></div></section>" if infos_html else ""}
+{"<section class='infos'><div class='inner'><h2 class='infos-title'>모집 정보</h2><div class='infos-grid'>" + infos_html + "</div></div></section>" if infos_html else ""}
 
 {"<section class='targets'><div class='inner'><h2 class='sec-title'>이런 분들에게 추천합니다</h2><ul class='target-list'>" + target_html + "</ul></div></section>" if target_html else ""}
 
-{"<section class='features'><div class='inner'><h2 class='sec-title'>과정 특징</h2><div class='feat-grid'>" + features_html + "</div></div></section>" if features_html else ""}
+{"<section class='features'><div class='inner'><h2 class='sec-title'>과정 특징</h2><div class='feat-grid " + feat_cls + "'>" + features_html + "</div></div></section>" if features_html else ""}
 
 {"<section class='curriculum'><div class='inner'><h2 class='sec-title' style='color:#fff'>커리큘럼</h2><p class='sec-sub' style='color:rgba(255,255,255,0.6)'>단계별로 설계된 실무 중심 교육 과정</p><div class='curr-wrap'><div class='curr-tabs'>" + curr_tabs + "</div><div class='curr-panels'>" + curr_panels + "</div></div></div></section>" if curr_tabs else ""}
 
@@ -669,6 +847,7 @@ img{{max-width:100%;height:auto;display:block;}}
 </footer>
 
 <script>
+/* Curriculum tab switching */
 document.querySelectorAll('.curr-tab').forEach(function(tab){{
   tab.addEventListener('click',function(){{
     document.querySelectorAll('.curr-tab').forEach(function(t){{t.classList.remove('active')}});
@@ -679,6 +858,37 @@ document.querySelectorAll('.curr-tab').forEach(function(tab){{
     if(panel)panel.style.display='block';
   }});
 }});
+
+/* Stats counter animation */
+function animateCounters(){{
+  document.querySelectorAll('.stat-card h3[data-target]').forEach(function(el){{
+    if(el.dataset.done)return;
+    var raw=el.getAttribute('data-target');
+    // Parse: extract leading number and surrounding text
+    // e.g. "92%" -> prefix="", num=92, suffix="%"
+    // e.g. "75/100" -> prefix="", num=75, suffix="/100"
+    var m=raw.match(/^([^0-9]*?)(\\d+)(.*?)$/);
+    if(!m){{el.textContent=raw;el.dataset.done='1';return;}}
+    var prefix=m[1],target=parseInt(m[2],10),suffix=m[3];
+    var duration=1200,start=performance.now();
+    function tick(now){{
+      var p=Math.min((now-start)/duration,1);
+      var ease=1-Math.pow(1-p,3);
+      el.textContent=prefix+Math.round(target*ease)+suffix;
+      if(p<1)requestAnimationFrame(tick);
+      else el.dataset.done='1';
+    }}
+    requestAnimationFrame(tick);
+  }});
+}}
+var statsEl=document.querySelector('.stats');
+if(statsEl&&'IntersectionObserver' in window){{
+  new IntersectionObserver(function(entries,obs){{
+    entries.forEach(function(e){{
+      if(e.isIntersecting){{animateCounters();obs.unobserve(e.target);}}
+    }});
+  }},{{threshold:0.3}}).observe(statsEl);
+}}else if(statsEl){{animateCounters();}}
 </script>
 </body>
 </html>"""
