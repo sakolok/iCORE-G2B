@@ -1182,32 +1182,45 @@ def get_scraper_config(db: Session) -> ScraperConfig:
 
 
 def upsert_scraper_config(db: Session, config: ScraperConfig) -> ScraperConfig:
-    row = db.execute(select(ScraperConfigModel).limit(1)).scalar_one()
-    row.enabled = config.enabled
-    serialized_notify_times = _serialize_notify_times(config.notify_times)
-    try:
-        row.notify_times = serialized_notify_times
-        db.flush()
-    except Exception:
-        db.rollback()
-        row = db.execute(select(ScraperConfigModel).limit(1)).scalar_one()
+    result = db.execute(select(ScraperConfigModel).limit(1))
+    row = result.scalar_one_or_none()
+    if row is None:
+        # 데이터가 없는 경우: 새 객체 생성(Insert) 로직
+        serialized_notify_times = _serialize_notify_times(config.notify_times)
+        row = ScraperConfigModel(
+            enabled=config.enabled,
+            notify_times=serialized_notify_times,
+            gsheet_ids=",".join(item.strip() for item in config.gsheet_ids if item.strip()),
+            receiver_emails=",".join(str(email) for email in config.receiver_emails),
+            keywords=",".join(config.keywords),
+            updated_at=datetime.now(timezone.utc)
+        )
+        db.add(row)
+    else:
+        # 데이터가 있는 경우: 기존 객체 수정(Update) 로직
         row.enabled = config.enabled
+        serialized_notify_times = _serialize_notify_times(config.notify_times)
         try:
-            # Legacy DB compatibility: notify_times가 TIME 타입이면 TEXT로 승격 후 재시도
-            db.execute(text("ALTER TABLE scraper_configs MODIFY COLUMN notify_times TEXT NOT NULL"))
-            db.flush()
             row.notify_times = serialized_notify_times
             db.flush()
         except Exception:
-            # ALTER 권한이 없거나 실패하면 최소한 첫 번째 시각이라도 저장
             db.rollback()
-            row = db.execute(select(ScraperConfigModel).limit(1)).scalar_one()
             row.enabled = config.enabled
-            row.notify_times = _parse_notify_times(serialized_notify_times)[0]
-    row.gsheet_ids = ",".join(item.strip() for item in config.gsheet_ids if item.strip())
-    row.receiver_emails = ",".join(str(email) for email in config.receiver_emails)
-    row.keywords = ",".join(config.keywords)
-    row.updated_at = datetime.now(timezone.utc)
+            try:
+                # Legacy DB compatibility: notify_times가 TIME 타입이면 TEXT로 승격 후 재시도
+                db.execute(text("ALTER TABLE scraper_configs MODIFY COLUMN notify_times TEXT NOT NULL"))
+                db.flush()
+                row.notify_times = serialized_notify_times
+                db.flush()
+            except Exception:
+                # ALTER 권한이 없거나 실패하면 최소한 첫 번째 시각이라도 저장
+                db.rollback()
+                row.enabled = config.enabled
+                row.notify_times = _parse_notify_times(serialized_notify_times)[0]
+        row.gsheet_ids = ",".join(item.strip() for item in config.gsheet_ids if item.strip())
+        row.receiver_emails = ",".join(str(email) for email in config.receiver_emails)
+        row.keywords = ",".join(config.keywords)
+        row.updated_at = datetime.now(timezone.utc)
     db.commit()
     return get_scraper_config(db)
 
