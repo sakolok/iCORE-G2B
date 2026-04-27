@@ -339,6 +339,7 @@ def _fetch_g2b_rows(
     row_extractor: Any,
     source_label: str,
     fallback_operation_paths: list[str] | None = None,
+    try_all_candidate_urls: bool = False,
     query_date_format: str = "%Y%m%d%H%M",
 ) -> list[NoticeRow]:
     source_url = os.getenv(source_url_env, "").strip()
@@ -399,7 +400,7 @@ def _fetch_g2b_rows(
                 "inqryBgnDt": inqry_bgn,
                 "inqryEndDt": inqry_end,
                 keyword_param_name: keyword,
-                "numOfRows": "100",
+                "numOfRows": "500",
                 "pageNo": "1",
             }
             if "type" not in existing_query_keys_lc and "_type" not in existing_query_keys_lc:
@@ -418,31 +419,39 @@ def _fetch_g2b_rows(
 
             headers = {"Accept": "application/json"}
 
-        try:
+        had_any_success = False
+        for idx, candidate_url in enumerate(candidate_urls):
             response = None
-            last_http_error: Exception | None = None
-            for idx, candidate_url in enumerate(candidate_urls):
-                try:
-                    response = requests.get(candidate_url, params=params, headers=headers, timeout=timeout)
-                    response.raise_for_status()
-                    if idx > 0:
-                        logger.info(
-                            "%s recovered by fallback operation path. keyword=%r url=%s",
-                            source_label,
-                            keyword,
-                            candidate_url,
-                        )
-                    break
-                except requests.HTTPError as http_error:
-                    last_http_error = http_error
-                    # 404면 다른 오퍼레이션 URL로 재시도, 그 외는 즉시 실패
-                    if response is not None and response.status_code == 404 and idx < len(candidate_urls) - 1:
-                        continue
-                    raise
-            if response is None:
-                if last_http_error is not None:
-                    raise last_http_error
-                raise RuntimeError(f"{source_label} failed with empty HTTP response")
+            try:
+                response = requests.get(candidate_url, params=params, headers=headers, timeout=timeout)
+                response.raise_for_status()
+                had_any_success = True
+                if idx > 0 and not try_all_candidate_urls:
+                    logger.info(
+                        "%s recovered by fallback operation path. keyword=%r url=%s",
+                        source_label,
+                        keyword,
+                        candidate_url,
+                    )
+            except requests.HTTPError:
+                # 기본 모드: 404면 다음 후보 URL로만 재시도
+                if (
+                    not try_all_candidate_urls
+                    and response is not None
+                    and response.status_code == 404
+                    and idx < len(candidate_urls) - 1
+                ):
+                    continue
+                # try_all 모드: 한 후보가 실패해도 다음 후보를 계속 시도
+                if try_all_candidate_urls:
+                    continue
+                logger.exception("%s fetch failed for keyword=%r", source_label, keyword)
+                break
+            except Exception:
+                if try_all_candidate_urls:
+                    continue
+                logger.exception("%s fetch failed for keyword=%r", source_label, keyword)
+                break
 
             raw_body = (response.text or "").strip()
             content_type = (response.headers.get("Content-Type") or "").lower()
@@ -495,6 +504,7 @@ def _fetch_g2b_rows(
                         preview,
                     )
                     continue
+
             result_code, result_message = _extract_result_error(payload, raw_body)
             if result_code and result_code != "00":
                 logger.warning(
@@ -506,28 +516,33 @@ def _fetch_g2b_rows(
                 )
                 if result_code == "06":
                     continue
-        except Exception:
-            logger.exception("%s fetch failed for keyword=%r", source_label, keyword)
-            continue
 
-        body = payload.get("response", {}).get("body", {}) if isinstance(payload, dict) else {}
-        total_count_raw = body.get("totalCount")
-        try:
-            total_count = int(str(total_count_raw).strip()) if total_count_raw is not None else None
-        except Exception:
-            total_count = None
-        if total_count == 0:
-            continue
+            body = payload.get("response", {}).get("body", {}) if isinstance(payload, dict) else {}
+            total_count_raw = body.get("totalCount")
+            try:
+                total_count = int(str(total_count_raw).strip()) if total_count_raw is not None else None
+            except Exception:
+                total_count = None
+            if total_count == 0:
+                continue
 
-        items = _normalize_items(payload)
-        for item in items:
-            parsed = row_extractor(item)
-            if parsed is not None:
-                parsed.matched_keyword = keyword
-                dedup_key = ((parsed.notice_id or "").strip(), (parsed.title or "").strip())
-                if dedup_key not in fetched_keys:
-                    fetched_keys.add(dedup_key)
-                    notices.append(parsed)
+            items = _normalize_items(payload)
+            for item in items:
+                parsed = row_extractor(item)
+                if parsed is not None:
+                    parsed.matched_keyword = keyword
+                    dedup_key = ((parsed.notice_id or "").strip(), (parsed.title or "").strip())
+                    if dedup_key not in fetched_keys:
+                        fetched_keys.add(dedup_key)
+                        notices.append(parsed)
+
+            # 기본 모드에서는 첫 성공 응답만 처리하고 종료(기존 동작 유지)
+            if not try_all_candidate_urls:
+                break
+
+        if not had_any_success and not try_all_candidate_urls:
+            # 기본 모드에서 모든 후보가 실패한 경우: 다음 키워드로
+            continue
 
     return notices
 
@@ -568,7 +583,11 @@ def _fetch_g2b_prestandards(keywords: list[str]) -> list[NoticeRow]:
         keywords=keywords,
         row_extractor=_extract_from_prestandard_item,
         source_label="G2B prestandard",
-        fallback_operation_paths=["/getPublicPrcureThngInfoThngPPSSrch"],
+        fallback_operation_paths=[
+            "/getPublicPrcureThngInfoThngPPSSrch",
+            "/getPublicPrcureThngInfoServcPPSSrch",
+        ],
+        try_all_candidate_urls=True,
     )
 
 
