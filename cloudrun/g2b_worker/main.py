@@ -300,25 +300,6 @@ def _parse_xml_response(raw_body: str) -> dict[str, Any] | None:
     }
 
 
-def _normalize_search_text(raw: Any) -> str:
-    text = str(raw or "").lower()
-    text = re.sub(r"[^0-9a-zㄱ-힣]+", " ", text)
-    return re.sub(r"\s+", " ", text).strip()
-
-
-def _keyword_matches_title(keyword: str, title: str) -> bool:
-    keyword_norm = _normalize_search_text(keyword)
-    title_norm = _normalize_search_text(title)
-    if not keyword_norm or not title_norm:
-        return False
-    if keyword_norm in title_norm:
-        return True
-    tokens = [token for token in keyword_norm.split(" ") if token]
-    if not tokens:
-        return False
-    return all(token in title_norm for token in tokens)
-
-
 def _extract_xml_tag(text: str, tag_name: str) -> str:
     matched = re.search(rf"<{tag_name}>(.*?)</{tag_name}>", text, flags=re.IGNORECASE | re.DOTALL)
     if not matched:
@@ -541,16 +522,12 @@ def _fetch_g2b_rows(
         items = _normalize_items(payload)
         for item in items:
             parsed = row_extractor(item)
-            if parsed is None:
-                continue
-            if source_label == "G2B prestandard" and not _keyword_matches_title(keyword, parsed.title):
-                continue
-            parsed.matched_keyword = keyword
-            dedup_key = ((parsed.notice_id or "").strip(), (parsed.title or "").strip())
-            if dedup_key in fetched_keys:
-                continue
-            fetched_keys.add(dedup_key)
-            notices.append(parsed)
+            if parsed is not None:
+                parsed.matched_keyword = keyword
+                dedup_key = ((parsed.notice_id or "").strip(), (parsed.title or "").strip())
+                if dedup_key not in fetched_keys:
+                    fetched_keys.add(dedup_key)
+                    notices.append(parsed)
 
     return notices
 
@@ -587,16 +564,10 @@ def _fetch_g2b_prestandards(keywords: list[str]) -> list[NoticeRow]:
     return _fetch_g2b_rows(
         source_url_env="G2B_PRESTANDARD_SOURCE_URL",
         service_key_env="G2B_PRESTANDARD_SERVICE_KEY",
-        keyword_param_name=["prcureSlsNm", "thngNm", "prdctClsfcNoNm", "bfSpecRgstNoNm"],
+        keyword_param_name="prdctClsfcNoNm",
         keywords=keywords,
         row_extractor=_extract_from_prestandard_item,
         source_label="G2B prestandard",
-        fallback_operation_paths=[
-            "/getPublicPrcureThngInfoThng",
-            "/getInsttAcctoThngListInfoThng",
-            "/getPublicPrcureThngInfoPPSsrch",
-        ],
-        query_date_format="%Y%m%d%H%M",
     )
 
 
