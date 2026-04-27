@@ -300,6 +300,25 @@ def _parse_xml_response(raw_body: str) -> dict[str, Any] | None:
     }
 
 
+def _normalize_search_text(raw: Any) -> str:
+    text = str(raw or "").lower()
+    text = re.sub(r"[^0-9a-zㄱ-힣]+", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _keyword_matches_title(keyword: str, title: str) -> bool:
+    keyword_norm = _normalize_search_text(keyword)
+    title_norm = _normalize_search_text(title)
+    if not keyword_norm or not title_norm:
+        return False
+    if keyword_norm in title_norm:
+        return True
+    tokens = [token for token in keyword_norm.split(" ") if token]
+    if not tokens:
+        return False
+    return all(token in title_norm for token in tokens)
+
+
 def _extract_xml_tag(text: str, tag_name: str) -> str:
     matched = re.search(rf"<{tag_name}>(.*?)</{tag_name}>", text, flags=re.IGNORECASE | re.DOTALL)
     if not matched:
@@ -334,7 +353,7 @@ def _fetch_g2b_rows(
     *,
     source_url_env: str,
     service_key_env: str,
-    keyword_param_name: str,
+    keyword_param_name: str | list[str],
     keywords: list[str],
     row_extractor: Any,
     source_label: str,
@@ -360,9 +379,18 @@ def _fetch_g2b_rows(
     if fallback_paths and source_base_path.lower().endswith("service"):
         for op_path in fallback_paths:
             normalized = op_path if op_path.startswith("/") else f"/{op_path}"
-            candidate = f"{source_url.rstrip('/')}{normalized}"
+            candidate = f"{source_url.rstrip('/')}" + normalized
             if candidate not in candidate_urls:
                 candidate_urls.append(candidate)
+
+    keyword_param_names = (
+        [keyword_param_name]
+        if isinstance(keyword_param_name, str)
+        else [name.strip() for name in keyword_param_name if str(name).strip()]
+    )
+    if not keyword_param_names:
+        logger.warning("%s has no keyword_param_names configured", source_label)
+        return []
 
     timeout = int(os.getenv("G2B_HTTP_TIMEOUT_SECONDS", "20"))
     inqry_bgn_raw, inqry_end_raw = _build_query_window()
@@ -381,30 +409,33 @@ def _fetch_g2b_rows(
 
     service_key = os.getenv(service_key_env, "").strip()
     notices: list[NoticeRow] = []
+    fetched_keys: set[tuple[str, str]] = set()
 
     for keyword in keywords:
-        params = {
-            "inqryDiv": "1",
-            "inqryBgnDt": inqry_bgn,
-            "inqryEndDt": inqry_end,
-            keyword_param_name: keyword,
-            "numOfRows": "100",
-            "pageNo": "1",
-        }
-        if "type" not in existing_query_keys_lc and "_type" not in existing_query_keys_lc:
-            params["type"] = "json"
-        if "servicekey" not in existing_query_keys_lc and service_key:
-            params["serviceKey"] = service_key
-        if "servicekey" not in existing_query_keys_lc and not service_key:
-            logger.warning(
-                "%s has no service key in query and %s is empty. keyword=%r",
-                source_url_env,
-                service_key_env,
-                keyword,
-            )
-            continue
+        for keyword_param_name in keyword_param_names:
+            params = {
+                "inqryDiv": "1",
+                "inqryBgnDt": inqry_bgn,
+                "inqryEndDt": inqry_end,
+                keyword_param_name: keyword,
+                "numOfRows": "100",
+                "pageNo": "1",
+            }
+            if "type" not in existing_query_keys_lc and "_type" not in existing_query_keys_lc:
+                params["type"] = "json"
+            if "servicekey" not in existing_query_keys_lc and service_key:
+                params["serviceKey"] = service_key
+            if "servicekey" not in existing_query_keys_lc and not service_key:
+                logger.warning(
+                    "%s has no service key in query and %s is empty. keyword=%r param=%r",
+                    source_url_env,
+                    service_key_env,
+                    keyword,
+                    keyword_param_name,
+                )
+                continue
 
-        headers = {"Accept": "application/json"}
+            headers = {"Accept": "application/json"}
 
         try:
             response = None
@@ -510,9 +541,16 @@ def _fetch_g2b_rows(
         items = _normalize_items(payload)
         for item in items:
             parsed = row_extractor(item)
-            if parsed is not None:
-                parsed.matched_keyword = keyword
-                notices.append(parsed)
+            if parsed is None:
+                continue
+            if source_label == "G2B prestandard" and not _keyword_matches_title(keyword, parsed.title):
+                continue
+            parsed.matched_keyword = keyword
+            dedup_key = ((parsed.notice_id or "").strip(), (parsed.title or "").strip())
+            if dedup_key in fetched_keys:
+                continue
+            fetched_keys.add(dedup_key)
+            notices.append(parsed)
 
     return notices
 
@@ -549,7 +587,7 @@ def _fetch_g2b_prestandards(keywords: list[str]) -> list[NoticeRow]:
     return _fetch_g2b_rows(
         source_url_env="G2B_PRESTANDARD_SOURCE_URL",
         service_key_env="G2B_PRESTANDARD_SERVICE_KEY",
-        keyword_param_name="prcureSlsNm",
+        keyword_param_name=["prcureSlsNm", "thngNm", "prdctClsfcNoNm", "bfSpecRgstNoNm"],
         keywords=keywords,
         row_extractor=_extract_from_prestandard_item,
         source_label="G2B prestandard",
