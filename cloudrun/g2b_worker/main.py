@@ -154,6 +154,7 @@ def _extract_from_prestandard_item(item: dict[str, Any]) -> NoticeRow | None:
     title = str(
         item.get("title")
         or item.get("noticeTitle")
+        or item.get("prdctClsfcNoNm")  # ← 추가: 실제 title 필드
         or item.get("bfSpecRgstNoNm")
         or item.get("prsvPrdctNm")
         or item.get("thngNm")
@@ -165,13 +166,16 @@ def _extract_from_prestandard_item(item: dict[str, Any]) -> NoticeRow | None:
     notice_id = str(
         item.get("notice_id")
         or item.get("noticeId")
-        or item.get("bfSpecRgstNo")
+        or item.get("bfSpecRgstNo")  # ← 우선: 사전규격 등록 번호
+        or item.get("refNo")  # ← 추가: 참조 번호
         or item.get("bsnsDivNm")
         or ""
     ).strip()
     agency = str(
         item.get("agency")
         or item.get("organization")
+        or item.get("orderInsttNm")  # ← 추가: 발주기관명
+        or item.get("rlDminsttNm")  # ← 추가: 실수행기관명
         or item.get("dminsttNm")
         or item.get("ntceInsttNm")
         or item.get("rgstInsttNm")
@@ -180,27 +184,29 @@ def _extract_from_prestandard_item(item: dict[str, Any]) -> NoticeRow | None:
     estimated_price = str(
         item.get("estimated_price")
         or item.get("estPrice")
+        or item.get("asignBdgtAmt")  # ← 우선: 배정예산금액
         or item.get("presmptPrce")
-        or item.get("asignBdgtAmt")
         or ""
     ).strip()
     notice_url = str(
         item.get("notice_url")
         or item.get("url")
         or item.get("link")
+        or item.get("specDocFileUrl1")  # ← 추가: 규격서 URL
         or item.get("bfSpecDtlUrl")
         or ""
     ).strip()
     deadline_at = _parse_deadline(
         item.get("deadline_at")
         or item.get("deadline")
-        or item.get("opninRgstClseDt")
+        or item.get("opninRgstClseDt")  # ← 우선: 의견등록마감일시
         or item.get("specDocRcvClseDt")
     )
     published_at = _parse_deadline(
         item.get("published_at")
         or item.get("created_at")
-        or item.get("rgstDt")
+        or item.get("rgstDt")  # ← 우선: 등록일시
+        or item.get("rcptDt")  # ← 추가: 접수일시
         or item.get("bfSpecRgstDt")
     )
 
