@@ -568,6 +568,7 @@ def _fetch_g2b_prestandards(keywords: list[str]) -> list[NoticeRow]:
         keywords=keywords,
         row_extractor=_extract_from_prestandard_item,
         source_label="G2B prestandard",
+        fallback_operation_paths=["/getPublicPrcureThngInfoThngPPSSrch"],
     )
 
 
