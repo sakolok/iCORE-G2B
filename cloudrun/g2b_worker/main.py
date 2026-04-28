@@ -400,8 +400,6 @@ def _fetch_g2b_rows(
                 "inqryBgnDt": inqry_bgn,
                 "inqryEndDt": inqry_end,
                 keyword_param_name: keyword,
-                "numOfRows": "500",
-                "pageNo": "1",
             }
             if "type" not in existing_query_keys_lc and "_type" not in existing_query_keys_lc:
                 params["type"] = "json"
