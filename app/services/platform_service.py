@@ -82,10 +82,18 @@ def _load_template_payload_from_gcs(template_id: str) -> dict:
         "dark-product": "templates/template2-dark-product.json",
         "event-highlight": "templates/template3-event-highlight.json",
     }
-    candidate_paths = [
-        f"templates/{template_id}.json",
-        alias_object_path_by_template.get(template_id),
-    ]
+    template_backgrounds = {
+        "clean-campaign": "#eff6ff",
+        "dark-product": "#020617",
+        "event-highlight": "#fef3c7",
+    }
+
+    candidate_paths: list[str] = []
+    if template_id in alias_object_path_by_template:
+        candidate_paths.append("templates/template4-premium-bootcamp.json")
+    candidate_paths.extend(
+        [f"templates/{template_id}.json", alias_object_path_by_template.get(template_id)]
+    )
     candidate_paths = [path for path in candidate_paths if path]
 
     try:
@@ -93,7 +101,10 @@ def _load_template_payload_from_gcs(template_id: str) -> dict:
         for object_path in candidate_paths:
             blob = bucket.blob(object_path)
             if blob.exists():
-                return json.loads(blob.download_as_text(encoding="utf-8"))
+                payload = json.loads(blob.download_as_text(encoding="utf-8"))
+                if template_id in template_backgrounds:
+                    payload["background_color"] = template_backgrounds[template_id]
+                return payload
 
         path_message = ", ".join(
             [f"gs://{bucket_name}/{path}" for path in candidate_paths]
@@ -107,25 +118,6 @@ def _load_template_payload_from_gcs(template_id: str) -> dict:
 
 def _load_template_payload(template_id: str) -> dict:
     return _load_template_payload_from_gcs(template_id)
-
-
-def _guess_ext(mime_type: str | None, file_name: str | None) -> str:
-        if file_name and "." in file_name:
-                ext = file_name.rsplit(".", maxsplit=1)[1].strip().lower()
-                if ext in {"jpg", "jpeg", "png", "webp", "gif"}:
-                        return ext
-
-        if not mime_type:
-                return "png"
-
-        mime_map = {
-                "image/jpeg": "jpg",
-                "image/jpg": "jpg",
-                "image/png": "png",
-                "image/webp": "webp",
-                "image/gif": "gif",
-        }
-        return mime_map.get(mime_type.lower(), "png")
 
 
 def _upload_bytes_to_gcs(
@@ -142,34 +134,6 @@ def _upload_bytes_to_gcs(
         blob = client.bucket(bucket_name).blob(object_path)
         blob.cache_control = cache_control
         blob.upload_from_string(data, content_type=content_type)
-
-
-def _upload_hero_image_if_needed(request: DeployRequest, clean_topic: str) -> str | None:
-        if request.content.hero_image_url:
-                return request.content.hero_image_url
-
-        if not request.content.hero_image_base64:
-                return None
-
-        try:
-                b64_data = request.content.hero_image_base64
-                if "," in b64_data:
-                        b64_data = b64_data.split(",")[1]
-                image_bytes = base64.b64decode(b64_data)
-        except Exception as error:
-                raise ValueError("이미지 파일 디코딩에 실패했습니다.") from error
-
-        ext = _guess_ext(request.content.hero_image_mime_type, request.content.hero_image_file_name)
-        object_path = f"landings/{clean_topic}/{request.slug}/assets/hero.{ext}"
-        content_type = request.content.hero_image_mime_type or f"image/{ext}"
-        _upload_bytes_to_gcs(
-                bucket_name=settings.client_web_bucket,
-                object_path=object_path,
-                data=image_bytes,
-                content_type=content_type,
-                cache_control="public, max-age=31536000, immutable",
-        )
-        return f"https://storage.googleapis.com/{settings.client_web_bucket}/{object_path}"
 
 
 def _upload_item_image_if_needed(request: DeployRequest, clean_topic: str, base64_str: str | None, index: int, prefix: str) -> str | None:
@@ -216,16 +180,10 @@ def _build_landing_context(
         "bg": request.content.background_color,
         "primary": request.content.primary_color,
         "secondary": request.content.secondary_color,
-        "hero_html": (
-            f'<img class="hero-image" src="{escape(hero_image_url)}" alt="landing hero" loading="lazy" />'
-            if hero_image_url
-            else ""
-        ),
         "target_audience_html": target_html,
         "features_html": features_html,
         "curriculum_html": curriculum_html,
         "content_obj": request.content,
-        "hero_image_url_raw": hero_image_url,
     }
 
 def _build_extra_sections_html(ctx: dict, bg_dark: bool = False) -> str:
@@ -898,17 +856,19 @@ def _render_landing_html(
     template_id: str, request: DeployRequest, hero_image_url: str | None, expires_at: datetime
 ) -> str:
     ctx = _build_landing_context(request, hero_image_url, expires_at)
-    if template_id == "template4-premium-bootcamp":
-        return _render_premium_bootcamp(ctx)
-    if template_id == "dark-product":
-        return _render_dark_product(ctx)
-    if template_id == "event-highlight":
-        return _render_event_highlight(ctx)
-    return _render_clean_campaign(ctx)
+    return _render_premium_bootcamp(ctx)
 
 
 def _list_templates_from_db(db: Session) -> list[LandingTemplate]:
-    rows = db.execute(select(LandingTemplateModel).order_by(LandingTemplateModel.name.asc())).scalars().all()
+    rows = (
+        db.execute(
+            select(LandingTemplateModel)
+            .where(LandingTemplateModel.id != "template4-premium-bootcamp")
+            .order_by(LandingTemplateModel.name.asc())
+        )
+        .scalars()
+        .all()
+    )
     return [
         LandingTemplate(
             id=row.id,
@@ -943,10 +903,6 @@ def get_template_detail(db: Session, template_id: str) -> LandingTemplateDetail:
         subtitle=payload.get("subtitle") or "",
         body=payload.get("body") or "",
         cta_text=payload.get("cta_text") or "",
-        hero_image_url=payload.get("hero_image_url"),
-        title_color=payload.get("title_color") or "#0f172a",
-        subtitle_color=payload.get("subtitle_color") or "#2563eb",
-        body_color=payload.get("body_color") or "#334155",
         cta_text_color=payload.get("cta_text_color") or "#ffffff",
         cta_bg_color=payload.get("cta_bg_color") or "#2563eb",
         background_color=payload.get("background_color") or "#f8fafc",
@@ -974,8 +930,6 @@ def create_landing_page(db: Session, request: DeployRequest) -> DeployResponse:
     clean_topic = request.business_topic.strip().replace(" ", "-").lower()
     public_url = _build_public_url(request.business_topic, request.slug, request.custom_domain)
 
-    uploaded_hero_image_url = _upload_hero_image_if_needed(request, clean_topic)
-    
     for i, f in enumerate(request.content.features):
         if f.image_base64:
             f.image_url = _upload_item_image_if_needed(request, clean_topic, f.image_base64, i, "feature")
@@ -989,7 +943,7 @@ def create_landing_page(db: Session, request: DeployRequest) -> DeployResponse:
     html = _render_landing_html(
         request.template_id,
         request,
-        uploaded_hero_image_url,
+        None,
         expires_at,
     )
     object_path = f"landings/{clean_topic}/{request.slug}/index.html"
@@ -1025,7 +979,6 @@ def create_landing_page(db: Session, request: DeployRequest) -> DeployResponse:
         body=request.content.body,
         cta_text=request.content.cta_text,
         cta_url=request.content.cta_url,
-        hero_image_url=uploaded_hero_image_url,
         primary_color=request.content.primary_color,
         secondary_color=request.content.secondary_color,
         background_color=request.content.background_color,

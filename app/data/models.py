@@ -39,7 +39,6 @@ class LandingPageModel(Base):
     body: Mapped[str] = mapped_column(Text, nullable=False)
     cta_text: Mapped[str] = mapped_column(String(60), nullable=False)
     cta_url: Mapped[str] = mapped_column(String(240), nullable=False)
-    hero_image_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     primary_color: Mapped[str] = mapped_column(String(7), nullable=False)
     secondary_color: Mapped[str] = mapped_column(String(7), nullable=False)
     background_color: Mapped[str] = mapped_column(String(7), nullable=False)

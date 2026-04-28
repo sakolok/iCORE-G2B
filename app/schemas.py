@@ -48,16 +48,12 @@ class LandingTemplateDetail(BaseModel):
     subtitle: str
     body: str
     cta_text: str
-    hero_image_url: Optional[str] = None
     features: list[dict] = Field(default_factory=list)
     curriculum: list[dict] = Field(default_factory=list)
     target_audience: list[dict] = Field(default_factory=list)
     stats: list[dict] = Field(default_factory=list)
     infos: list[dict] = Field(default_factory=list)
     faqs: list[dict] = Field(default_factory=list)
-    title_color: str = Field(default="#0f172a", pattern=r"^#[0-9a-fA-F]{6}$")
-    subtitle_color: str = Field(default="#2563eb", pattern=r"^#[0-9a-fA-F]{6}$")
-    body_color: str = Field(default="#334155", pattern=r"^#[0-9a-fA-F]{6}$")
     cta_text_color: str = Field(default="#ffffff", pattern=r"^#[0-9a-fA-F]{6}$")
     cta_bg_color: str = Field(default="#2563eb", pattern=r"^#[0-9a-fA-F]{6}$")
     background_color: str = Field(default="#f8fafc", pattern=r"^#[0-9a-fA-F]{6}$")
@@ -69,10 +65,6 @@ class LandingContent(BaseModel):
     body: str = Field(..., min_length=1, max_length=1000)
     cta_text: str = Field(..., min_length=1, max_length=60)
     cta_url: str = Field(..., min_length=1, max_length=240)
-    hero_image_url: Optional[str] = Field(default=None, max_length=500)
-    hero_image_file_name: Optional[str] = Field(default=None, max_length=200)
-    hero_image_mime_type: Optional[str] = Field(default=None, max_length=100)
-    hero_image_base64: Optional[str] = None
     features: list[FeatureItem] = Field(default_factory=list)
     curriculum: list[CurriculumItem] = Field(default_factory=list)
     target_audience: list[TargetAudienceItem] = Field(default_factory=list)
