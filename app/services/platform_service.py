@@ -993,6 +993,12 @@ def get_template_detail(db: Session, template_id: str) -> LandingTemplateDetail:
         instructor_title=payload.get("instructor_title"),
         instructor_description=payload.get("instructor_description"),
         instructor_image_url=payload.get("instructor_image_url"),
+        features=list(payload.get("features") or []),
+        curriculum=list(payload.get("curriculum") or []),
+        target_audience=list(payload.get("target_audience") or []),
+        stats=list(payload.get("stats") or []),
+        infos=list(payload.get("infos") or []),
+        faqs=list(payload.get("faqs") or []),
         cta_text_color=payload.get("cta_text_color") or "#ffffff",
         cta_bg_color=payload.get("cta_bg_color") or "#2563eb",
         background_color=payload.get("background_color") or "#f8fafc",
@@ -1034,11 +1040,15 @@ def create_landing_page(db: Session, request: DeployRequest) -> DeployResponse:
     if request.content.hero_image_base64:
         hero_image_url = _upload_item_image_if_needed(request, clean_topic, request.content.hero_image_base64, 0, "hero")
         request.content.hero_image_base64 = None
+    if not hero_image_url and request.content.hero_image_url:
+        hero_image_url = request.content.hero_image_url.strip() or None
 
     instructor_image_url = None
     if request.content.instructor_image_base64:
         instructor_image_url = _upload_item_image_if_needed(request, clean_topic, request.content.instructor_image_base64, 0, "instructor")
         request.content.instructor_image_base64 = None
+    if not instructor_image_url and request.content.instructor_image_url:
+        instructor_image_url = request.content.instructor_image_url.strip() or None
 
     html = _render_landing_html(
         request.template_id,

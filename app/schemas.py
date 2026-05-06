@@ -3,6 +3,9 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, EmailStr, Field
 
+# CSS hex: #rgb, #rrggbb, #rrggbbaa (브라우저/피커에서 3·8자리가 들어오는 경우 대비)
+HEX_COLOR_PATTERN = r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$"
+
 
 class StatItem(BaseModel):
     title: str = Field(..., max_length=100)
@@ -63,9 +66,9 @@ class LandingTemplateDetail(BaseModel):
     stats: list[dict] = Field(default_factory=list)
     infos: list[dict] = Field(default_factory=list)
     faqs: list[dict] = Field(default_factory=list)
-    cta_text_color: str = Field(default="#ffffff", pattern=r"^#[0-9a-fA-F]{6}$")
-    cta_bg_color: str = Field(default="#2563eb", pattern=r"^#[0-9a-fA-F]{6}$")
-    background_color: str = Field(default="#f8fafc", pattern=r"^#[0-9a-fA-F]{6}$")
+    cta_text_color: str = Field(default="#ffffff", pattern=HEX_COLOR_PATTERN)
+    cta_bg_color: str = Field(default="#2563eb", pattern=HEX_COLOR_PATTERN)
+    background_color: str = Field(default="#f8fafc", pattern=HEX_COLOR_PATTERN)
 
 
 class LandingContent(BaseModel):
@@ -73,6 +76,7 @@ class LandingContent(BaseModel):
     subtitle: str = Field(..., min_length=1, max_length=240)
     body: str = Field(..., min_length=1, max_length=1000)
     hero_image_base64: Optional[str] = None
+    hero_image_url: Optional[str] = Field(default=None, max_length=500)
     cta_text: str = Field(..., min_length=1, max_length=60)
     cta_url: str = Field(..., min_length=1, max_length=240)
     sticky_cta_text: Optional[str] = Field(default="신청하기", max_length=60)
@@ -82,15 +86,16 @@ class LandingContent(BaseModel):
     instructor_title: Optional[str] = Field(default=None, max_length=120)
     instructor_description: Optional[str] = Field(default=None, max_length=1000)
     instructor_image_base64: Optional[str] = None
+    instructor_image_url: Optional[str] = Field(default=None, max_length=500)
     features: list[FeatureItem] = Field(default_factory=list)
     curriculum: list[CurriculumItem] = Field(default_factory=list)
     target_audience: list[TargetAudienceItem] = Field(default_factory=list)
     stats: list[StatItem] = Field(default_factory=list)
     infos: list[InfoItem] = Field(default_factory=list)
     faqs: list[FaqItem] = Field(default_factory=list)
-    primary_color: str = Field(default="#2563eb", pattern=r"^#[0-9a-fA-F]{6}$")
-    secondary_color: str = Field(default="#0f172a", pattern=r"^#[0-9a-fA-F]{6}$")
-    background_color: str = Field(default="#f8fafc", pattern=r"^#[0-9a-fA-F]{6}$")
+    primary_color: str = Field(default="#2563eb", pattern=HEX_COLOR_PATTERN)
+    secondary_color: str = Field(default="#0f172a", pattern=HEX_COLOR_PATTERN)
+    background_color: str = Field(default="#f8fafc", pattern=HEX_COLOR_PATTERN)
 
 
 class DeployRequest(BaseModel):
