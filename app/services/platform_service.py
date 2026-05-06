@@ -387,8 +387,8 @@ img{{max-width:100%;height:auto;display:block;}}
 .faq-item[open] summary::after{{content:'−';background:var(--p);color:#fff;}}
 .faq-ans{{padding:14px 24px 24px;color:#64748b;font-size:14px;line-height:1.8;border-top:1px solid #e5e7eb;margin:0 10px;}}
 .sticky-cta-modal{{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:999;max-width:600px;width:calc(100% - 48px);}}
-.sticky-cta-bar{{display:flex;flex-wrap:wrap;justify-content:center;align-items:center;gap:12px;padding:20px 22px;background:#fff;border:1px solid #e2e8f0;border-radius:20px;box-shadow:0 20px 55px rgba(0,0,0,0.14);}}
-.sticky-cta-copy p{{margin:0;color:#0f172a;font-size:15px;line-height:1.6;}}
+.sticky-cta-bar{{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:12px;padding:12px 22px;background:#fff;border:1px solid #e2e8f0;border-radius:20px;box-shadow:0 20px 55px rgba(0,0,0,0.25);}}
+.sticky-cta-copy p{{margin:0;color:#0f172a;font-size:16px;line-height:1.6;}}
 .sticky-cta-button{{display:inline-flex;align-items:center;justify-content:center;padding:16px 34px;border-radius:999px;background:var(--p);color:#fff;font-weight:800;box-shadow:0 12px 24px rgba(37,99,235,0.2);}}
 .instructor-card{{display:flex;gap:24px;align-items:center;max-width:980px;margin:0 auto;padding:40px;background:#fff;border:1px solid #e2e8f0;border-radius:28px;}}
 .instructor-photo{{width:220px;min-width:220px;border-radius:24px;overflow:hidden;box-shadow:0 16px 40px rgba(15,23,42,0.08);}}
@@ -505,8 +505,8 @@ img{{max-width:100%;height:auto;display:block;}}
 .faq-item[open] summary::after{{content:'−';background:var(--p);color:#fff;}}
 .faq-ans{{padding:14px 24px 24px;color:#94a3b8;font-size:14px;line-height:1.8;border-top:1px solid rgba(255,255,255,0.06);margin:0 10px;}}
 .sticky-cta-modal{{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:999;max-width:600px;width:calc(100% - 48px);}}
-.sticky-cta-bar{{display:flex;flex-wrap:wrap;justify-content:center;align-items:center;gap:12px;padding:20px 22px;background:#1e293b;border:1px solid rgba(255,255,255,0.18);border-radius:20px;box-shadow:0 20px 55px rgba(0,0,0,0.18);}}
-.sticky-cta-copy p{{margin:0;color:#e2e8f0;font-size:15px;line-height:1.6;}}
+.sticky-cta-bar{{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:12px;padding:12px 22px;background:#1e293b;border:1px solid rgba(255,255,255,0.18);border-radius:20px;box-shadow:0 20px 55px rgba(0,0,0,0.3);}}
+.sticky-cta-copy p{{margin:0;color:#e2e8f0;font-size:16px;line-height:1.6;}}
 .sticky-cta-button{{display:inline-flex;align-items:center;justify-content:center;padding:16px 34px;border-radius:999px;background:var(--p);color:#fff;font-weight:800;box-shadow:0 12px 24px rgba(37,99,235,0.2);}}
 .instructor-card{{display:flex;flex-wrap:wrap;gap:24px;align-items:center;max-width:980px;margin:0 auto;padding:40px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.14);border-radius:28px;}}
 .instructor-photo{{width:220px;min-width:220px;border-radius:24px;overflow:hidden;box-shadow:0 16px 40px rgba(0,0,0,0.16);}}
@@ -623,8 +623,8 @@ img{{max-width:100%;height:auto;display:block;}}
 .faq-item[open] summary::after{{content:'−';background:#0f172a;color:#fff;}}
 .faq-ans{{padding:14px 24px 24px;color:#64748b;font-size:14px;line-height:1.8;border-top:2px solid #e5e7eb;margin:0 10px;}}
 .sticky-cta-modal{{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:999;max-width:600px;width:calc(100% - 48px);}}
-.sticky-cta-bar{{display:flex;flex-wrap:wrap;justify-content:center;align-items:center;gap:12px;padding:20px 22px;background:#fff;border:1px solid #e2e8f0;border-radius:20px;box-shadow:0 20px 55px rgba(0,0,0,0.14);}}
-.sticky-cta-copy p{{margin:0;color:#0f172a;font-size:15px;line-height:1.6;}}
+.sticky-cta-bar{{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:12px;padding:12px 22px;background:#fff;border:1px solid #e2e8f0;border-radius:20px;box-shadow:0 20px 55px rgba(0,0,0,0.25);}}
+.sticky-cta-copy p{{margin:0;color:#0f172a;font-size:16px;line-height:1.6;}}
 .sticky-cta-button{{display:inline-flex;align-items:center;justify-content:center;padding:16px 34px;border-radius:999px;background:#fbbf24;color:#0f172a;font-weight:800;box-shadow:0 12px 30px rgba(251,191,36,0.18);}}
 .instructor-card{{display:flex;flex-wrap:wrap;gap:24px;align-items:center;max-width:980px;margin:0 auto;padding:40px;background:#fff;border:1px solid rgba(15,23,42,0.08);border-radius:28px;}}
 .instructor-photo{{width:220px;min-width:220px;border-radius:24px;overflow:hidden;box-shadow:0 16px 40px rgba(15,23,42,0.08);}}
