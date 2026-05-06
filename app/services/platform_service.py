@@ -157,7 +157,7 @@ def _upload_item_image_if_needed(request: DeployRequest, clean_topic: str, base6
 
 
 def _build_landing_context(
-    request: DeployRequest, hero_image_url: str | None, expires_at: datetime
+    request: DeployRequest, hero_image_url: str | None, instructor_image_url: str | None, expires_at: datetime
 ) -> dict:
     target_html = "".join([f"<li><span class='chk'>✓</span> {escape(t.description)}</li>" for t in request.content.target_audience])
     features_html = "".join([f"<article class='feature-card'><h3>{escape(f.title)}</h3><p>{escape(f.description)}</p></article>" for f in request.content.features])
@@ -182,6 +182,14 @@ def _build_landing_context(
         "features_html": features_html,
         "curriculum_html": curriculum_html,
         "content_obj": request.content,
+        "hero_image_url_raw": hero_image_url,
+        "instructor_name": escape(request.content.instructor_name or ""),
+        "instructor_title": escape(request.content.instructor_title or ""),
+        "instructor_description": escape(request.content.instructor_description or "").replace("\n", "<br>"),
+        "instructor_image_url": instructor_image_url,
+        "sticky_cta_text": escape(request.content.sticky_cta_text or ""),
+        "sticky_cta_url": escape(request.content.sticky_cta_url or ""),
+        "sticky_cta_note": escape(request.content.sticky_cta_note or "").replace("\n", "<br>"),
     }
 
 def _build_extra_sections_html(ctx: dict, bg_dark: bool = False) -> str:
@@ -212,6 +220,23 @@ def _build_extra_sections_html(ctx: dict, bg_dark: bool = False) -> str:
         parts.append(f"<h3 class='section-title'>자주 묻는 질문</h3>{items}")
     return "\n".join(parts)
 
+
+def _build_instructor_section_html(ctx: dict) -> str:
+    if not (ctx.get("instructor_name") or ctx.get("instructor_description")):
+        return ""
+    instructor_image = ""
+    raw_instructor = ctx.get("instructor_image_url") or ""
+    if raw_instructor:
+        instructor_image = f"<div class='instructor-photo'><img src='{escape(raw_instructor)}' alt='Instructor'/></div>"
+
+    return f"""<section class='section alt'><div class='inner'><div class='instructor-card'>{instructor_image}<div class='instructor-copy'><p class='instructor-label'>강사 소개</p><h2>{ctx['instructor_name']}</h2><p class='instructor-title'>{ctx['instructor_title']}</p><p class='instructor-description'>{ctx['instructor_description']}</p></div></div></div></section>"""
+
+
+def _build_sticky_cta_html(ctx: dict) -> str:
+    if not ctx.get("sticky_cta_text") or not ctx.get("sticky_cta_url"):
+        return ""
+    note = ctx.get("sticky_cta_note") or ""
+    return f"""<div class='sticky-cta-modal'><div class='sticky-cta-bar'><div class='sticky-cta-copy'><strong>{ctx['sticky_cta_text']}</strong><p>{note}</p></div><a class='sticky-cta-button' href='{ctx['sticky_cta_url']}'>{ctx['sticky_cta_text']}</a></div></div>"""
 
 
 def _build_shared_sections(content):
@@ -361,6 +386,18 @@ img{{max-width:100%;height:auto;display:block;}}
 .faq-item summary::after{{content:'+';width:28px;height:28px;background:#f1f5f9;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;}}
 .faq-item[open] summary::after{{content:'−';background:var(--p);color:#fff;}}
 .faq-ans{{padding:14px 24px 24px;color:#64748b;font-size:14px;line-height:1.8;border-top:1px solid #e5e7eb;margin:0 10px;}}
+.sticky-cta-modal{{position:fixed;bottom:24px;left:24px;right:24px;z-index:999;max-width:420px;width:calc(100% - 48px);}}
+.sticky-cta-bar{{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:12px;padding:20px 22px;background:linear-gradient(180deg,rgba(59,130,246,0.18),rgba(37,99,235,0.1));border:1px solid rgba(37,99,235,0.18);border-radius:20px;box-shadow:0 20px 55px rgba(15,23,42,0.14);}}
+.sticky-cta-copy strong{{display:block;font-size:17px;font-weight:900;color:#fff;}}
+.sticky-cta-copy p{{margin:8px 0 0;color:rgba(255,255,255,0.9);font-size:14px;line-height:1.6;}}
+.sticky-cta-button{{display:inline-flex;align-items:center;justify-content:center;padding:16px 34px;border-radius:999px;background:var(--p);color:#fff;font-weight:800;box-shadow:0 12px 24px rgba(37,99,235,0.2);}}
+.instructor-card{{display:flex;gap:24px;align-items:center;max-width:980px;margin:0 auto;padding:40px;background:#fff;border:1px solid #e2e8f0;border-radius:28px;}}
+.instructor-photo{{width:220px;min-width:220px;border-radius:24px;overflow:hidden;box-shadow:0 16px 40px rgba(15,23,42,0.08);}}
+.instructor-photo img{{width:100%;height:100%;object-fit:cover;display:block;}}
+.instructor-copy{{max-width:680px;}}
+.instructor-label{{font-size:13px;font-weight:800;color:var(--p);text-transform:uppercase;letter-spacing:.2em;display:block;margin-bottom:12px;}}
+.instructor-title{{font-size:17px;font-weight:700;color:#64748b;margin:12px 0 0;}}
+.instructor-description{{font-size:16px;line-height:1.9;color:#475569;}}
 .cta-bottom{{background:var(--p);padding:64px 0;text-align:center;}}
 .cta-bottom h2{{font-size:clamp(24px,3vw,36px);font-weight:900;color:#fff;margin-bottom:28px;}}
 .cta-bottom a{{background:#fff;color:var(--p);padding:16px 48px;border-radius:12px;font-size:17px;font-weight:800;display:inline-block;}}
@@ -385,6 +422,8 @@ img{{max-width:100%;height:auto;display:block;}}
 {"<section class='section'><div class='inner'><h2 class='sec-title'>커리큘럼</h2><div class='curr-wrap'><div class='curr-tabs'>" + curr_tabs + "</div><div class='curr-panels'>" + curr_panels + "</div></div></div></section>" if curr_tabs else ""}
 {"<section class='section alt'><div class='inner'><h2 class='sec-title'>자주 묻는 질문</h2><div class='faq-list'>" + faqs_html + "</div></div></section>" if faqs_html else ""}
 <section class="cta-bottom"><div class="inner"><h2>지금 바로 시작하세요</h2><a href="{ctx["cta_url"]}">{ctx["cta_text"]}</a></div></section>
+{_build_instructor_section_html(ctx)}
+{_build_sticky_cta_html(ctx)}
 <footer class="footer"><div class="inner">© 2026 All Rights Reserved.</div></footer>
 <script>{_SHARED_JS}</script>
 </body></html>"""
@@ -466,6 +505,18 @@ img{{max-width:100%;height:auto;display:block;}}
 .faq-item summary::after{{content:'+';width:28px;height:28px;background:rgba(255,255,255,0.06);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;}}
 .faq-item[open] summary::after{{content:'−';background:var(--p);color:#fff;}}
 .faq-ans{{padding:14px 24px 24px;color:#94a3b8;font-size:14px;line-height:1.8;border-top:1px solid rgba(255,255,255,0.06);margin:0 10px;}}
+.sticky-cta-modal{{position:fixed;bottom:24px;left:24px;right:24px;z-index:999;max-width:420px;min-width:320px;width:calc(100% - 48px);}}
+.sticky-cta-bar{{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:12px;padding:20px 22px;background:linear-gradient(180deg,rgba(59,130,246,0.18),rgba(37,99,235,0.1));border:1px solid rgba(255,255,255,0.18);border-radius:20px;box-shadow:0 20px 55px rgba(0,0,0,0.18);}}
+.sticky-cta-copy strong{{display:block;font-size:17px;font-weight:900;color:#fff;}}
+.sticky-cta-copy p{{margin:8px 0 0;color:rgba(255,255,255,0.9);font-size:14px;line-height:1.6;}}
+.sticky-cta-button{{display:inline-flex;align-items:center;justify-content:center;padding:16px 34px;border-radius:999px;background:var(--p);color:#fff;font-weight:800;box-shadow:0 12px 24px rgba(37,99,235,0.2);}}
+.instructor-card{{display:flex;flex-wrap:wrap;gap:24px;align-items:center;max-width:980px;margin:0 auto;padding:40px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.14);border-radius:28px;}}
+.instructor-photo{{width:220px;min-width:220px;border-radius:24px;overflow:hidden;box-shadow:0 16px 40px rgba(0,0,0,0.16);}}
+.instructor-photo img{{width:100%;height:100%;object-fit:cover;display:block;}}
+.instructor-copy{{max-width:680px;}}
+.instructor-label{{font-size:13px;font-weight:800;color:#7dd3fc;text-transform:uppercase;letter-spacing:.2em;display:block;margin-bottom:12px;}}
+.instructor-title{{font-size:17px;font-weight:700;color:#cbd5e1;margin:12px 0 0;}}
+.instructor-description{{font-size:16px;line-height:1.9;color:#e2e8f0;}}
 .cta-bottom{{background:linear-gradient(135deg,var(--p),#7c3aed);padding:64px 0;text-align:center;}}
 .cta-bottom h2{{font-size:clamp(24px,3vw,36px);font-weight:900;color:#fff;margin-bottom:28px;}}
 .cta-bottom a{{background:#fff;color:var(--p);padding:16px 48px;border-radius:999px;font-size:17px;font-weight:800;display:inline-block;}}
@@ -490,6 +541,8 @@ img{{max-width:100%;height:auto;display:block;}}
 {"<section class='section'><div class='inner'><h2 class='sec-title' style='color:#fff'>커리큘럼</h2><div class='curr-wrap'><div class='curr-tabs'>" + curr_tabs + "</div><div class='curr-panels'>" + curr_panels + "</div></div></div></section>" if curr_tabs else ""}
 {"<section class='section alt'><div class='inner'><h2 class='sec-title'>자주 묻는 질문</h2><div class='faq-list'>" + faqs_html + "</div></div></section>" if faqs_html else ""}
 <section class="cta-bottom"><div class="inner"><h2>지금 바로 시작하세요</h2><a href="{ctx["cta_url"]}">{ctx["cta_text"]}</a></div></section>
+{_build_instructor_section_html(ctx)}
+{_build_sticky_cta_html(ctx)}
 <footer class="footer"><div class="inner">© 2026 All Rights Reserved.</div></footer>
 <script>{_SHARED_JS}</script>
 </body></html>"""
@@ -571,6 +624,17 @@ img{{max-width:100%;height:auto;display:block;}}
 .faq-item summary::after{{content:'+';width:28px;height:28px;background:#f1f5f9;border:2px solid #0f172a;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;}}
 .faq-item[open] summary::after{{content:'−';background:#0f172a;color:#fff;}}
 .faq-ans{{padding:14px 24px 24px;color:#64748b;font-size:14px;line-height:1.8;border-top:2px solid #e5e7eb;margin:0 10px;}}
+.sticky-cta-bar{{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:16px;padding:24px 26px;background:linear-gradient(180deg,rgba(15,23,42,0.06),rgba(15,23,42,0.15));border:1px solid rgba(15,23,42,0.14);border-radius:22px;}}
+.sticky-cta-copy strong{{display:block;font-size:18px;font-weight:900;color:#fff;}}
+.sticky-cta-copy p{{margin:8px 0 0;color:#cbd5e1;font-size:15px;line-height:1.7;}}
+.sticky-cta-button{{display:inline-flex;align-items:center;justify-content:center;padding:16px 34px;border-radius:999px;background:#fbbf24;color:#0f172a;font-weight:800;box-shadow:0 12px 30px rgba(251,191,36,0.18);}}
+.instructor-card{{display:flex;flex-wrap:wrap;gap:24px;align-items:center;max-width:980px;margin:0 auto;padding:40px;background:#fff;border:1px solid rgba(15,23,42,0.08);border-radius:28px;}}
+.instructor-photo{{width:220px;min-width:220px;border-radius:24px;overflow:hidden;box-shadow:0 16px 40px rgba(15,23,42,0.08);}}
+.instructor-photo img{{width:100%;height:100%;object-fit:cover;display:block;}}
+.instructor-copy{{max-width:680px;}}
+.instructor-label{{font-size:13px;font-weight:800;color:#0f172a;text-transform:uppercase;letter-spacing:.2em;display:block;margin-bottom:12px;}}
+.instructor-title{{font-size:17px;font-weight:700;color:#64748b;margin:12px 0 0;}}
+.instructor-description{{font-size:16px;line-height:1.9;color:#475569;}}
 .cta-bottom{{background:#0f172a;padding:64px 0;text-align:center;}}
 .cta-bottom h2{{font-size:clamp(24px,3vw,36px);font-weight:900;color:#fff;margin-bottom:28px;}}
 .cta-bottom a{{background:#fbbf24;color:#0f172a;padding:16px 48px;border-radius:14px;font-size:17px;font-weight:800;display:inline-block;box-shadow:4px 4px 0 rgba(255,255,255,0.3);}}
@@ -595,6 +659,8 @@ img{{max-width:100%;height:auto;display:block;}}
 {"<section class='section warm'><div class='inner'><h2 class='sec-title'>커리큘럼</h2><div class='curr-wrap'><div class='curr-tabs'>" + curr_tabs + "</div><div class='curr-panels'>" + curr_panels + "</div></div></div></section>" if curr_tabs else ""}
 {"<section class='section cool'><div class='inner'><h2 class='sec-title'>자주 묻는 질문</h2><div class='faq-list'>" + faqs_html + "</div></div></section>" if faqs_html else ""}
 <section class="cta-bottom"><div class="inner"><h2>지금 바로 시작하세요</h2><a href="{ctx["cta_url"]}">{ctx["cta_text"]}</a></div></section>
+{_build_instructor_section_html(ctx)}
+{_build_sticky_cta_html(ctx)}
 <footer class="footer"><div class="inner">© 2026 All Rights Reserved.</div></footer>
 <script>{_SHARED_JS}</script>
 </body></html>"""
@@ -750,6 +816,18 @@ img{{max-width:100%;height:auto;display:block;}}
 .cta-bottom h2{{font-size:clamp(28px,4vw,44px);font-weight:900;color:#fff;margin-bottom:32px;}}
 .cta-bottom a{{background:#fff;color:var(--p);padding:20px 56px;border-radius:60px;font-size:18px;font-weight:800;display:inline-block;transition:transform .3s;box-shadow:0 8px 30px rgba(0,0,0,0.2);}}
 .cta-bottom a:hover{{transform:translateY(-3px);}}
+.sticky-cta-modal{{position:fixed;bottom:24px;left:24px;right:24px;z-index:999;max-width:420px;min-width:320px;width:calc(100% - 48px);}}
+.sticky-cta-bar{{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:12px;padding:20px 22px;background:linear-gradient(180deg,rgba(255,255,255,0.95),rgba(248,250,252,0.95));border:1px solid rgba(15,23,42,0.08);border-radius:22px;box-shadow:0 16px 40px rgba(15,23,42,0.12);}}
+.sticky-cta-copy strong{{display:block;font-size:17px;font-weight:900;color:#0f172a;}}
+.sticky-cta-copy p{{margin:8px 0 0;color:#475569;font-size:14px;line-height:1.6;}}
+.sticky-cta-button{{display:inline-flex;align-items:center;justify-content:center;padding:16px 34px;border-radius:999px;background:var(--p);color:#fff;font-weight:800;box-shadow:0 12px 24px rgba(37,99,235,0.18);}}
+.instructor-card{{display:flex;flex-wrap:wrap;gap:24px;align-items:center;max-width:980px;margin:0 auto;padding:40px;background:#fff;border:1px solid rgba(15,23,42,0.08);border-radius:28px;}}
+.instructor-photo{{width:220px;min-width:220px;border-radius:24px;overflow:hidden;box-shadow:0 16px 40px rgba(15,23,42,0.08);}}
+.instructor-photo img{{width:100%;height:100%;object-fit:cover;display:block;}}
+.instructor-copy{{max-width:680px;}}
+.instructor-label{{font-size:13px;font-weight:800;color:#0f172a;text-transform:uppercase;letter-spacing:.2em;display:block;margin-bottom:12px;}}
+.instructor-title{{font-size:17px;font-weight:700;color:#64748b;margin:12px 0 0;}}
+.instructor-description{{font-size:16px;line-height:1.9;color:#475569;}}
 
 /* ── FOOTER ── */
 .footer{{background:#0f172a;color:rgba(255,255,255,0.4);padding:48px 0;text-align:center;font-size:13px;font-weight:600;letter-spacing:.1em;}}
@@ -851,9 +929,9 @@ if(statsEl&&'IntersectionObserver' in window){{
 
 
 def _render_landing_html(
-    template_id: str, request: DeployRequest, hero_image_url: str | None, expires_at: datetime
+    template_id: str, request: DeployRequest, hero_image_url: str | None, instructor_image_url: str | None, expires_at: datetime
 ) -> str:
-    ctx = _build_landing_context(request, hero_image_url, expires_at)
+    ctx = _build_landing_context(request, hero_image_url, instructor_image_url, expires_at)
     if template_id == "clean-campaign":
         return _render_clean_campaign(ctx)
     if template_id == "dark-product":
@@ -906,6 +984,15 @@ def get_template_detail(db: Session, template_id: str) -> LandingTemplateDetail:
         subtitle=payload.get("subtitle") or "",
         body=payload.get("body") or "",
         cta_text=payload.get("cta_text") or "",
+        cta_url=payload.get("cta_url") or "",
+        hero_image_url=payload.get("hero_image_url"),
+        sticky_cta_text=payload.get("sticky_cta_text"),
+        sticky_cta_url=payload.get("sticky_cta_url"),
+        sticky_cta_note=payload.get("sticky_cta_note"),
+        instructor_name=payload.get("instructor_name"),
+        instructor_title=payload.get("instructor_title"),
+        instructor_description=payload.get("instructor_description"),
+        instructor_image_url=payload.get("instructor_image_url"),
         cta_text_color=payload.get("cta_text_color") or "#ffffff",
         cta_bg_color=payload.get("cta_bg_color") or "#2563eb",
         background_color=payload.get("background_color") or "#f8fafc",
@@ -943,10 +1030,21 @@ def create_landing_page(db: Session, request: DeployRequest) -> DeployResponse:
             c.image_url = _upload_item_image_if_needed(request, clean_topic, c.image_base64, i, "curriculum")
             c.image_base64 = None
 
+    hero_image_url = None
+    if request.content.hero_image_base64:
+        hero_image_url = _upload_item_image_if_needed(request, clean_topic, request.content.hero_image_base64, 0, "hero")
+        request.content.hero_image_base64 = None
+
+    instructor_image_url = None
+    if request.content.instructor_image_base64:
+        instructor_image_url = _upload_item_image_if_needed(request, clean_topic, request.content.instructor_image_base64, 0, "instructor")
+        request.content.instructor_image_base64 = None
+
     html = _render_landing_html(
         request.template_id,
         request,
-        None,
+        hero_image_url,
+        instructor_image_url,
         expires_at,
     )
     object_path = f"landings/{clean_topic}/{request.slug}/index.html"

@@ -48,6 +48,15 @@ class LandingTemplateDetail(BaseModel):
     subtitle: str
     body: str
     cta_text: str
+    cta_url: str = ""
+    hero_image_url: Optional[str] = None
+    sticky_cta_text: Optional[str] = None
+    sticky_cta_url: Optional[str] = None
+    sticky_cta_note: Optional[str] = None
+    instructor_name: Optional[str] = None
+    instructor_title: Optional[str] = None
+    instructor_description: Optional[str] = None
+    instructor_image_url: Optional[str] = None
     features: list[dict] = Field(default_factory=list)
     curriculum: list[dict] = Field(default_factory=list)
     target_audience: list[dict] = Field(default_factory=list)
@@ -63,8 +72,16 @@ class LandingContent(BaseModel):
     title: str = Field(..., min_length=1, max_length=120)
     subtitle: str = Field(..., min_length=1, max_length=240)
     body: str = Field(..., min_length=1, max_length=1000)
+    hero_image_base64: Optional[str] = None
     cta_text: str = Field(..., min_length=1, max_length=60)
     cta_url: str = Field(..., min_length=1, max_length=240)
+    sticky_cta_text: Optional[str] = Field(default="신청하기", max_length=60)
+    sticky_cta_url: Optional[str] = Field(default=None, max_length=240)
+    sticky_cta_note: Optional[str] = Field(default=None, max_length=300)
+    instructor_name: Optional[str] = Field(default=None, max_length=120)
+    instructor_title: Optional[str] = Field(default=None, max_length=120)
+    instructor_description: Optional[str] = Field(default=None, max_length=1000)
+    instructor_image_base64: Optional[str] = None
     features: list[FeatureItem] = Field(default_factory=list)
     curriculum: list[CurriculumItem] = Field(default_factory=list)
     target_audience: list[TargetAudienceItem] = Field(default_factory=list)
