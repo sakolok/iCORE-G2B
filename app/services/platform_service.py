@@ -89,8 +89,6 @@ def _load_template_payload_from_gcs(template_id: str) -> dict:
     }
 
     candidate_paths: list[str] = []
-    if template_id in alias_object_path_by_template:
-        candidate_paths.append("templates/template4-premium-bootcamp.json")
     candidate_paths.extend(
         [f"templates/{template_id}.json", alias_object_path_by_template.get(template_id)]
     )
@@ -856,7 +854,12 @@ def _render_landing_html(
     template_id: str, request: DeployRequest, hero_image_url: str | None, expires_at: datetime
 ) -> str:
     ctx = _build_landing_context(request, hero_image_url, expires_at)
-    return _render_premium_bootcamp(ctx)
+    if template_id == "clean-campaign":
+        return _render_clean_campaign(ctx)
+    if template_id == "dark-product":
+        return _render_dark_product(ctx)
+    if template_id == "event-highlight":
+        return _render_event_highlight(ctx)
 
 
 def _list_templates_from_db(db: Session) -> list[LandingTemplate]:
