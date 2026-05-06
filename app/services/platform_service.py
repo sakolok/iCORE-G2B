@@ -332,7 +332,7 @@ def _render_clean_campaign(ctx: dict) -> str:
 body{{font-family:"Noto Sans KR",system-ui,sans-serif;color:#1e293b;line-height:1.7;background:#fff;}}
 a{{text-decoration:none;color:inherit;}}
 img{{max-width:100%;height:auto;display:block;}}
-.inner{{max-width:1100px;margin:0 auto;padding:0 32px;}}
+.inner{{max-width:1400px;margin:0 auto;padding:0 32px;}}
 .hero{{padding:120px 0 80px;background:#fff;}}
 .hero .inner{{display:grid;grid-template-columns:1fr 1fr;gap:48px;align-items:center;}}
 .hero-title{{font-size:clamp(32px,4.5vw,56px);font-weight:900;line-height:1.1;margin-bottom:20px;color:#0f172a;}}
@@ -386,7 +386,7 @@ img{{max-width:100%;height:auto;display:block;}}
 .faq-item summary::after{{content:'+';width:28px;height:28px;background:#f1f5f9;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;}}
 .faq-item[open] summary::after{{content:'−';background:var(--p);color:#fff;}}
 .faq-ans{{padding:14px 24px 24px;color:#64748b;font-size:14px;line-height:1.8;border-top:1px solid #e5e7eb;margin:0 10px;}}
-.sticky-cta-modal{{position:fixed;bottom:24px;left:24px;right:24px;z-index:999;max-width:420px;width:calc(100% - 48px);}}
+.sticky-cta-modal{{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:999;max-width:600px;width:calc(100% - 48px);}}
 .sticky-cta-bar{{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:12px;padding:20px 22px;background:linear-gradient(180deg,rgba(59,130,246,0.18),rgba(37,99,235,0.1));border:1px solid rgba(37,99,235,0.18);border-radius:20px;box-shadow:0 20px 55px rgba(15,23,42,0.14);}}
 .sticky-cta-copy strong{{display:block;font-size:17px;font-weight:900;color:#fff;}}
 .sticky-cta-copy p{{margin:8px 0 0;color:rgba(255,255,255,0.9);font-size:14px;line-height:1.6;}}
@@ -419,10 +419,10 @@ img{{max-width:100%;height:auto;display:block;}}
 {"<section class='section alt'><div class='inner'><h2 class='sec-title'>모집 정보</h2><div class='infos-grid'>" + infos_html + "</div></div></section>" if infos_html else ""}
 {"<section class='section'><div class='inner'><h2 class='sec-title'>이런 분들에게 추천합니다</h2><ul class='target-list'>" + target_html + "</ul></div></section>" if target_html else ""}
 {"<section class='section alt'><div class='inner'><h2 class='sec-title'>과정 특징</h2><div class='feat-grid " + feat_cls + "'>" + features_html + "</div></div></section>" if features_html else ""}
+{_build_instructor_section_html(ctx)}
 {"<section class='section'><div class='inner'><h2 class='sec-title'>커리큘럼</h2><div class='curr-wrap'><div class='curr-tabs'>" + curr_tabs + "</div><div class='curr-panels'>" + curr_panels + "</div></div></div></section>" if curr_tabs else ""}
 {"<section class='section alt'><div class='inner'><h2 class='sec-title'>자주 묻는 질문</h2><div class='faq-list'>" + faqs_html + "</div></div></section>" if faqs_html else ""}
 <section class="cta-bottom"><div class="inner"><h2>지금 바로 시작하세요</h2><a href="{ctx["cta_url"]}">{ctx["cta_text"]}</a></div></section>
-{_build_instructor_section_html(ctx)}
 {_build_sticky_cta_html(ctx)}
 <footer class="footer"><div class="inner">© 2026 All Rights Reserved.</div></footer>
 <script>{_SHARED_JS}</script>
@@ -450,7 +450,7 @@ def _render_dark_product(ctx: dict) -> str:
 body{{font-family:"Noto Sans KR",system-ui,sans-serif;color:#e2e8f0;line-height:1.7;background:#030712;}}
 a{{text-decoration:none;color:inherit;}}
 img{{max-width:100%;height:auto;display:block;}}
-.inner{{max-width:1100px;margin:0 auto;padding:0 32px;}}
+.inner{{max-width:1400px;margin:0 auto;padding:0 32px;}}
 .hero{{padding:120px 0 80px;background:radial-gradient(circle at 20% 50%,rgba(59,130,246,0.15),transparent 50%),radial-gradient(circle at 80% 50%,rgba(139,92,246,0.1),transparent 50%),#030712;}}
 .hero .inner{{display:grid;grid-template-columns:1fr 1fr;gap:48px;align-items:center;}}
 .hero-title{{font-size:clamp(32px,4.5vw,56px);font-weight:900;line-height:1.1;margin-bottom:20px;color:#fff;}}
@@ -505,7 +505,7 @@ img{{max-width:100%;height:auto;display:block;}}
 .faq-item summary::after{{content:'+';width:28px;height:28px;background:rgba(255,255,255,0.06);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;}}
 .faq-item[open] summary::after{{content:'−';background:var(--p);color:#fff;}}
 .faq-ans{{padding:14px 24px 24px;color:#94a3b8;font-size:14px;line-height:1.8;border-top:1px solid rgba(255,255,255,0.06);margin:0 10px;}}
-.sticky-cta-modal{{position:fixed;bottom:24px;left:24px;right:24px;z-index:999;max-width:420px;min-width:320px;width:calc(100% - 48px);}}
+.sticky-cta-modal{{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:999;max-width:600px;width:calc(100% - 48px);}}
 .sticky-cta-bar{{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:12px;padding:20px 22px;background:linear-gradient(180deg,rgba(59,130,246,0.18),rgba(37,99,235,0.1));border:1px solid rgba(255,255,255,0.18);border-radius:20px;box-shadow:0 20px 55px rgba(0,0,0,0.18);}}
 .sticky-cta-copy strong{{display:block;font-size:17px;font-weight:900;color:#fff;}}
 .sticky-cta-copy p{{margin:8px 0 0;color:rgba(255,255,255,0.9);font-size:14px;line-height:1.6;}}
@@ -538,10 +538,10 @@ img{{max-width:100%;height:auto;display:block;}}
 {"<section class='section alt'><div class='inner'><h2 class='sec-title'>모집 정보</h2><div class='infos-grid'>" + infos_html + "</div></div></section>" if infos_html else ""}
 {"<section class='section'><div class='inner'><h2 class='sec-title'>이런 분들에게 추천합니다</h2><ul class='target-list'>" + target_html + "</ul></div></section>" if target_html else ""}
 {"<section class='section alt'><div class='inner'><h2 class='sec-title'>과정 특징</h2><div class='feat-grid " + feat_cls + "'>" + features_html + "</div></div></section>" if features_html else ""}
+{_build_instructor_section_html(ctx)}
 {"<section class='section'><div class='inner'><h2 class='sec-title' style='color:#fff'>커리큘럼</h2><div class='curr-wrap'><div class='curr-tabs'>" + curr_tabs + "</div><div class='curr-panels'>" + curr_panels + "</div></div></div></section>" if curr_tabs else ""}
 {"<section class='section alt'><div class='inner'><h2 class='sec-title'>자주 묻는 질문</h2><div class='faq-list'>" + faqs_html + "</div></div></section>" if faqs_html else ""}
 <section class="cta-bottom"><div class="inner"><h2>지금 바로 시작하세요</h2><a href="{ctx["cta_url"]}">{ctx["cta_text"]}</a></div></section>
-{_build_instructor_section_html(ctx)}
 {_build_sticky_cta_html(ctx)}
 <footer class="footer"><div class="inner">© 2026 All Rights Reserved.</div></footer>
 <script>{_SHARED_JS}</script>
@@ -569,7 +569,7 @@ def _render_event_highlight(ctx: dict) -> str:
 body{{font-family:"Noto Sans KR",system-ui,sans-serif;color:#1e293b;line-height:1.7;background:#fffbeb;}}
 a{{text-decoration:none;color:inherit;}}
 img{{max-width:100%;height:auto;display:block;}}
-.inner{{max-width:1100px;margin:0 auto;padding:0 32px;}}
+.inner{{max-width:1400px;margin:0 auto;padding:0 32px;}}
 .hero{{padding:120px 0 80px;background:linear-gradient(135deg,#fef3c7,#fce7f3 50%,#e0e7ff);}}
 .hero .inner{{display:grid;grid-template-columns:1fr 1fr;gap:48px;align-items:center;}}
 .hero-title{{font-size:clamp(32px,4.5vw,56px);font-weight:900;line-height:1.1;margin-bottom:20px;color:#0f172a;}}
@@ -624,6 +624,7 @@ img{{max-width:100%;height:auto;display:block;}}
 .faq-item summary::after{{content:'+';width:28px;height:28px;background:#f1f5f9;border:2px solid #0f172a;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;}}
 .faq-item[open] summary::after{{content:'−';background:#0f172a;color:#fff;}}
 .faq-ans{{padding:14px 24px 24px;color:#64748b;font-size:14px;line-height:1.8;border-top:2px solid #e5e7eb;margin:0 10px;}}
+.sticky-cta-modal{{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:999;max-width:600px;width:calc(100% - 48px);}}
 .sticky-cta-bar{{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:16px;padding:24px 26px;background:linear-gradient(180deg,rgba(15,23,42,0.06),rgba(15,23,42,0.15));border:1px solid rgba(15,23,42,0.14);border-radius:22px;}}
 .sticky-cta-copy strong{{display:block;font-size:18px;font-weight:900;color:#fff;}}
 .sticky-cta-copy p{{margin:8px 0 0;color:#cbd5e1;font-size:15px;line-height:1.7;}}
@@ -656,10 +657,10 @@ img{{max-width:100%;height:auto;display:block;}}
 {"<section class='section cool'><div class='inner'><h2 class='sec-title'>모집 정보</h2><div class='infos-grid'>" + infos_html + "</div></div></section>" if infos_html else ""}
 {"<section class='section warm'><div class='inner'><h2 class='sec-title'>이런 분들에게 추천합니다</h2><ul class='target-list'>" + target_html + "</ul></div></section>" if target_html else ""}
 {"<section class='section peach'><div class='inner'><h2 class='sec-title'>과정 특징</h2><div class='feat-grid " + feat_cls + "'>" + features_html + "</div></div></section>" if features_html else ""}
+{_build_instructor_section_html(ctx)}
 {"<section class='section warm'><div class='inner'><h2 class='sec-title'>커리큘럼</h2><div class='curr-wrap'><div class='curr-tabs'>" + curr_tabs + "</div><div class='curr-panels'>" + curr_panels + "</div></div></div></section>" if curr_tabs else ""}
 {"<section class='section cool'><div class='inner'><h2 class='sec-title'>자주 묻는 질문</h2><div class='faq-list'>" + faqs_html + "</div></div></section>" if faqs_html else ""}
 <section class="cta-bottom"><div class="inner"><h2>지금 바로 시작하세요</h2><a href="{ctx["cta_url"]}">{ctx["cta_text"]}</a></div></section>
-{_build_instructor_section_html(ctx)}
 {_build_sticky_cta_html(ctx)}
 <footer class="footer"><div class="inner">© 2026 All Rights Reserved.</div></footer>
 <script>{_SHARED_JS}</script>
