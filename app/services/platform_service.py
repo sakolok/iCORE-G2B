@@ -236,7 +236,7 @@ def _build_sticky_cta_html(ctx: dict) -> str:
     if not ctx.get("sticky_cta_text") or not ctx.get("sticky_cta_url"):
         return ""
     note = ctx.get("sticky_cta_note") or ""
-    return f"""<div class='sticky-cta-modal'><div class='sticky-cta-bar'><div class='sticky-cta-copy'><strong>{ctx['sticky_cta_text']}</strong><p>{note}</p></div><a class='sticky-cta-button' href='{ctx['sticky_cta_url']}'>{ctx['sticky_cta_text']}</a></div></div>"""
+    return f"""<div class='sticky-cta-modal'><div class='sticky-cta-bar'><div class='sticky-cta-copy'><p>{note}</p></div><a class='sticky-cta-button' href='{ctx['sticky_cta_url']}'>{ctx['sticky_cta_text']}</a></div></div>"""
 
 
 def _build_shared_sections(content):
@@ -334,7 +334,7 @@ a{{text-decoration:none;color:inherit;}}
 img{{max-width:100%;height:auto;display:block;}}
 .inner{{max-width:1400px;margin:0 auto;padding:0 32px;}}
 .hero{{padding:120px 0 80px;background:#fff;}}
-.hero .inner{{display:grid;grid-template-columns:1fr 1fr;gap:48px;align-items:center;}}
+.hero .inner{{display:grid;grid-template-columns:0.9fr 1.1fr;gap:80px;align-items:center;}}
 .hero-title{{font-size:clamp(32px,4.5vw,56px);font-weight:900;line-height:1.1;margin-bottom:20px;color:#0f172a;}}
 .hero-desc{{font-size:17px;color:#64748b;margin-bottom:36px;}}
 .hero-cta{{background:var(--p);color:#fff;padding:16px 40px;border-radius:12px;font-size:16px;font-weight:800;display:inline-block;transition:transform .3s;box-shadow:0 6px 20px rgba(37,99,235,0.3);}}
@@ -387,9 +387,8 @@ img{{max-width:100%;height:auto;display:block;}}
 .faq-item[open] summary::after{{content:'−';background:var(--p);color:#fff;}}
 .faq-ans{{padding:14px 24px 24px;color:#64748b;font-size:14px;line-height:1.8;border-top:1px solid #e5e7eb;margin:0 10px;}}
 .sticky-cta-modal{{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:999;max-width:600px;width:calc(100% - 48px);}}
-.sticky-cta-bar{{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:12px;padding:20px 22px;background:linear-gradient(180deg,rgba(59,130,246,0.18),rgba(37,99,235,0.1));border:1px solid rgba(37,99,235,0.18);border-radius:20px;box-shadow:0 20px 55px rgba(15,23,42,0.14);}}
-.sticky-cta-copy strong{{display:block;font-size:17px;font-weight:900;color:#fff;}}
-.sticky-cta-copy p{{margin:8px 0 0;color:rgba(255,255,255,0.9);font-size:14px;line-height:1.6;}}
+.sticky-cta-bar{{display:flex;flex-wrap:wrap;justify-content:center;align-items:center;gap:12px;padding:20px 22px;background:#fff;border:1px solid #e2e8f0;border-radius:20px;box-shadow:0 20px 55px rgba(0,0,0,0.14);}}
+.sticky-cta-copy p{{margin:0;color:#0f172a;font-size:15px;line-height:1.6;}}
 .sticky-cta-button{{display:inline-flex;align-items:center;justify-content:center;padding:16px 34px;border-radius:999px;background:var(--p);color:#fff;font-weight:800;box-shadow:0 12px 24px rgba(37,99,235,0.2);}}
 .instructor-card{{display:flex;gap:24px;align-items:center;max-width:980px;margin:0 auto;padding:40px;background:#fff;border:1px solid #e2e8f0;border-radius:28px;}}
 .instructor-photo{{width:220px;min-width:220px;border-radius:24px;overflow:hidden;box-shadow:0 16px 40px rgba(15,23,42,0.08);}}
@@ -398,7 +397,7 @@ img{{max-width:100%;height:auto;display:block;}}
 .instructor-label{{font-size:13px;font-weight:800;color:var(--p);text-transform:uppercase;letter-spacing:.2em;display:block;margin-bottom:12px;}}
 .instructor-title{{font-size:17px;font-weight:700;color:#64748b;margin:12px 0 0;}}
 .instructor-description{{font-size:16px;line-height:1.9;color:#475569;}}
-.cta-bottom{{background:var(--p);padding:64px 0;text-align:center;}}
+.cta-bottom{{background:var(--p);padding:64px 0 0;text-align:center;}}
 .cta-bottom h2{{font-size:clamp(24px,3vw,36px);font-weight:900;color:#fff;margin-bottom:28px;}}
 .cta-bottom a{{background:#fff;color:var(--p);padding:16px 48px;border-radius:12px;font-size:17px;font-weight:800;display:inline-block;}}
 .footer{{background:#f8fafc;border-top:1px solid #e2e8f0;padding:40px 0;text-align:center;font-size:12px;color:#94a3b8;font-weight:600;}}
@@ -452,7 +451,7 @@ a{{text-decoration:none;color:inherit;}}
 img{{max-width:100%;height:auto;display:block;}}
 .inner{{max-width:1400px;margin:0 auto;padding:0 32px;}}
 .hero{{padding:120px 0 80px;background:radial-gradient(circle at 20% 50%,rgba(59,130,246,0.15),transparent 50%),radial-gradient(circle at 80% 50%,rgba(139,92,246,0.1),transparent 50%),#030712;}}
-.hero .inner{{display:grid;grid-template-columns:1fr 1fr;gap:48px;align-items:center;}}
+.hero .inner{{display:grid;grid-template-columns:0.9fr 1.1fr;gap:80px;align-items:center;}}
 .hero-title{{font-size:clamp(32px,4.5vw,56px);font-weight:900;line-height:1.1;margin-bottom:20px;color:#fff;}}
 .hero-desc{{font-size:17px;color:#94a3b8;margin-bottom:36px;}}
 .hero-cta{{background:var(--p);color:#fff;padding:16px 40px;border-radius:999px;font-size:16px;font-weight:800;display:inline-block;transition:all .3s;box-shadow:0 0 30px rgba(59,130,246,0.4);}}
@@ -506,9 +505,8 @@ img{{max-width:100%;height:auto;display:block;}}
 .faq-item[open] summary::after{{content:'−';background:var(--p);color:#fff;}}
 .faq-ans{{padding:14px 24px 24px;color:#94a3b8;font-size:14px;line-height:1.8;border-top:1px solid rgba(255,255,255,0.06);margin:0 10px;}}
 .sticky-cta-modal{{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:999;max-width:600px;width:calc(100% - 48px);}}
-.sticky-cta-bar{{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:12px;padding:20px 22px;background:linear-gradient(180deg,rgba(59,130,246,0.18),rgba(37,99,235,0.1));border:1px solid rgba(255,255,255,0.18);border-radius:20px;box-shadow:0 20px 55px rgba(0,0,0,0.18);}}
-.sticky-cta-copy strong{{display:block;font-size:17px;font-weight:900;color:#fff;}}
-.sticky-cta-copy p{{margin:8px 0 0;color:rgba(255,255,255,0.9);font-size:14px;line-height:1.6;}}
+.sticky-cta-bar{{display:flex;flex-wrap:wrap;justify-content:center;align-items:center;gap:12px;padding:20px 22px;background:#1e293b;border:1px solid rgba(255,255,255,0.18);border-radius:20px;box-shadow:0 20px 55px rgba(0,0,0,0.18);}}
+.sticky-cta-copy p{{margin:0;color:#e2e8f0;font-size:15px;line-height:1.6;}}
 .sticky-cta-button{{display:inline-flex;align-items:center;justify-content:center;padding:16px 34px;border-radius:999px;background:var(--p);color:#fff;font-weight:800;box-shadow:0 12px 24px rgba(37,99,235,0.2);}}
 .instructor-card{{display:flex;flex-wrap:wrap;gap:24px;align-items:center;max-width:980px;margin:0 auto;padding:40px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.14);border-radius:28px;}}
 .instructor-photo{{width:220px;min-width:220px;border-radius:24px;overflow:hidden;box-shadow:0 16px 40px rgba(0,0,0,0.16);}}
@@ -517,7 +515,7 @@ img{{max-width:100%;height:auto;display:block;}}
 .instructor-label{{font-size:13px;font-weight:800;color:#7dd3fc;text-transform:uppercase;letter-spacing:.2em;display:block;margin-bottom:12px;}}
 .instructor-title{{font-size:17px;font-weight:700;color:#cbd5e1;margin:12px 0 0;}}
 .instructor-description{{font-size:16px;line-height:1.9;color:#e2e8f0;}}
-.cta-bottom{{background:linear-gradient(135deg,var(--p),#7c3aed);padding:64px 0;text-align:center;}}
+.cta-bottom{{background:linear-gradient(135deg,var(--p),#7c3aed);padding:64px 0 0;text-align:center;}}
 .cta-bottom h2{{font-size:clamp(24px,3vw,36px);font-weight:900;color:#fff;margin-bottom:28px;}}
 .cta-bottom a{{background:#fff;color:var(--p);padding:16px 48px;border-radius:999px;font-size:17px;font-weight:800;display:inline-block;}}
 .footer{{background:#030712;border-top:1px solid rgba(255,255,255,0.06);padding:40px 0;text-align:center;font-size:12px;color:#475569;font-weight:600;}}
@@ -571,7 +569,7 @@ a{{text-decoration:none;color:inherit;}}
 img{{max-width:100%;height:auto;display:block;}}
 .inner{{max-width:1400px;margin:0 auto;padding:0 32px;}}
 .hero{{padding:120px 0 80px;background:linear-gradient(135deg,#fef3c7,#fce7f3 50%,#e0e7ff);}}
-.hero .inner{{display:grid;grid-template-columns:1fr 1fr;gap:48px;align-items:center;}}
+.hero .inner{{display:grid;grid-template-columns:0.9fr 1.1fr;gap:80px;align-items:center;}}
 .hero-title{{font-size:clamp(32px,4.5vw,56px);font-weight:900;line-height:1.1;margin-bottom:20px;color:#0f172a;}}
 .hero-desc{{font-size:17px;color:#64748b;margin-bottom:36px;}}
 .hero-cta{{background:#0f172a;color:#fff;padding:16px 40px;border-radius:14px;font-size:16px;font-weight:800;display:inline-block;transition:all .3s;box-shadow:6px 6px 0 var(--p);}}
@@ -625,9 +623,8 @@ img{{max-width:100%;height:auto;display:block;}}
 .faq-item[open] summary::after{{content:'−';background:#0f172a;color:#fff;}}
 .faq-ans{{padding:14px 24px 24px;color:#64748b;font-size:14px;line-height:1.8;border-top:2px solid #e5e7eb;margin:0 10px;}}
 .sticky-cta-modal{{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:999;max-width:600px;width:calc(100% - 48px);}}
-.sticky-cta-bar{{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:16px;padding:24px 26px;background:linear-gradient(180deg,rgba(15,23,42,0.06),rgba(15,23,42,0.15));border:1px solid rgba(15,23,42,0.14);border-radius:22px;}}
-.sticky-cta-copy strong{{display:block;font-size:18px;font-weight:900;color:#fff;}}
-.sticky-cta-copy p{{margin:8px 0 0;color:#cbd5e1;font-size:15px;line-height:1.7;}}
+.sticky-cta-bar{{display:flex;flex-wrap:wrap;justify-content:center;align-items:center;gap:12px;padding:20px 22px;background:#fff;border:1px solid #e2e8f0;border-radius:20px;box-shadow:0 20px 55px rgba(0,0,0,0.14);}}
+.sticky-cta-copy p{{margin:0;color:#0f172a;font-size:15px;line-height:1.6;}}
 .sticky-cta-button{{display:inline-flex;align-items:center;justify-content:center;padding:16px 34px;border-radius:999px;background:#fbbf24;color:#0f172a;font-weight:800;box-shadow:0 12px 30px rgba(251,191,36,0.18);}}
 .instructor-card{{display:flex;flex-wrap:wrap;gap:24px;align-items:center;max-width:980px;margin:0 auto;padding:40px;background:#fff;border:1px solid rgba(15,23,42,0.08);border-radius:28px;}}
 .instructor-photo{{width:220px;min-width:220px;border-radius:24px;overflow:hidden;box-shadow:0 16px 40px rgba(15,23,42,0.08);}}
@@ -636,7 +633,7 @@ img{{max-width:100%;height:auto;display:block;}}
 .instructor-label{{font-size:13px;font-weight:800;color:#0f172a;text-transform:uppercase;letter-spacing:.2em;display:block;margin-bottom:12px;}}
 .instructor-title{{font-size:17px;font-weight:700;color:#64748b;margin:12px 0 0;}}
 .instructor-description{{font-size:16px;line-height:1.9;color:#475569;}}
-.cta-bottom{{background:#0f172a;padding:64px 0;text-align:center;}}
+.cta-bottom{{background:#0f172a;padding:64px 0 0;text-align:center;}}
 .cta-bottom h2{{font-size:clamp(24px,3vw,36px);font-weight:900;color:#fff;margin-bottom:28px;}}
 .cta-bottom a{{background:#fbbf24;color:#0f172a;padding:16px 48px;border-radius:14px;font-size:17px;font-weight:800;display:inline-block;box-shadow:4px 4px 0 rgba(255,255,255,0.3);}}
 .footer{{background:#fffbeb;border-top:2px solid #0f172a;padding:40px 0;text-align:center;font-size:12px;color:#64748b;font-weight:600;}}
