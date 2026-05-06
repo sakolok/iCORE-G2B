@@ -260,7 +260,11 @@ def _build_shared_sections(content):
         curr_tabs += f"<button class='curr-tab{active_cls}' data-idx='{idx}'>{escape(c.step)}</button>"
         bullets = "".join([f"<li>{escape(b.strip())}</li>" for b in c.description.split(chr(10)) if b.strip()])
         display = "block" if idx == 0 else "none"
-        curr_panels += f"<div class='curr-panel' data-idx='{idx}' style='display:{display}'><h3>{escape(c.title)}</h3><ul>{bullets}</ul></div>"
+        curr_image = ""
+        raw_curr_image = getattr(c, "image_url", "") or ""
+        if raw_curr_image:
+            curr_image = f"<div class='curr-image'><img src='{escape(raw_curr_image)}' alt='Curriculum'/></div>"
+        curr_panels += f"<div class='curr-panel' data-idx='{idx}' style='display:{display}'>{curr_image}<h3>{escape(c.title)}</h3><ul>{bullets}</ul></div>"
     target_html = ""
     for t in getattr(content, "target_audience", []):
         target_html += f"<li><span class='chk-icon'>✓</span>{escape(t.description)}</li>"
@@ -336,6 +340,7 @@ img{{max-width:100%;height:auto;display:block;}}
 .hero{{padding:120px 0 80px;background:#fff;}}
 .hero .inner{{display:grid;grid-template-columns:0.9fr 1.1fr;gap:80px;align-items:center;}}
 .hero-title{{font-size:clamp(32px,4.5vw,56px);font-weight:900;line-height:1.1;margin-bottom:20px;color:#0f172a;}}
+.hero-subtitle{{font-size:20px;font-weight:700;color:var(--p);margin-bottom:12px;}}
 .hero-desc{{font-size:17px;color:#64748b;margin-bottom:36px;}}
 .hero-cta{{background:var(--p);color:#fff;padding:16px 40px;border-radius:12px;font-size:16px;font-weight:800;display:inline-block;transition:transform .3s;box-shadow:0 6px 20px rgba(37,99,235,0.3);}}
 .hero-cta:hover{{transform:translateY(-2px);}}
@@ -351,7 +356,7 @@ img{{max-width:100%;height:auto;display:block;}}
 .stat-card p{{font-size:12px;font-weight:700;color:#94a3b8;text-transform:uppercase;}}
 .infos-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;}}
 .info-card{{background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:24px;border-left:4px solid var(--p);}}
-.info-label{{font-size:10px;font-weight:900;color:var(--p);text-transform:uppercase;letter-spacing:.15em;margin-bottom:8px;display:block;}}
+.info-label{{font-size:13px;font-weight:900;color:var(--p);text-transform:uppercase;letter-spacing:.15em;margin-bottom:8px;display:block;}}
 .info-val{{font-size:16px;font-weight:800;color:#0f172a;}}
 .target-list{{list-style:none;max-width:640px;margin:0 auto;display:grid;gap:12px;}}
 .target-list li{{background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:16px 22px;font-size:15px;font-weight:700;display:flex;align-items:center;gap:12px;}}
@@ -374,6 +379,8 @@ img{{max-width:100%;height:auto;display:block;}}
 .curr-tab{{background:#f1f5f9;border:1px solid #e2e8f0;color:#64748b;padding:14px 20px;border-radius:12px;font-size:15px;font-weight:700;cursor:pointer;text-align:left;transition:all .3s;}}
 .curr-tab.active{{background:var(--p);color:#fff;border-color:var(--p);}}
 .curr-panel{{background:#f8fafc;border:1px solid #e2e8f0;border-radius:20px;padding:40px;}}
+.curr-image{{margin-bottom:24px;border-radius:16px;overflow:hidden;}}
+.curr-image img{{width:100%;height:auto;display:block;}}
 .curr-panel h3{{font-size:24px;font-weight:900;margin-bottom:24px;color:#0f172a;}}
 .curr-panel ul{{list-style:none;display:grid;gap:14px;}}
 .curr-panel li{{font-size:15px;color:#475569;font-weight:500;padding-left:20px;position:relative;}}
@@ -400,7 +407,7 @@ img{{max-width:100%;height:auto;display:block;}}
 .cta-bottom{{background:var(--p);padding:64px 0 0;text-align:center;}}
 .cta-bottom h2{{font-size:clamp(24px,3vw,36px);font-weight:900;color:#fff;margin-bottom:28px;}}
 .cta-bottom a{{background:#fff;color:var(--p);padding:16px 48px;border-radius:12px;font-size:17px;font-weight:800;display:inline-block;}}
-.footer{{background:#f8fafc;border-top:1px solid #e2e8f0;padding:40px 0;text-align:center;font-size:12px;color:#94a3b8;font-weight:600;}}
+.footer{{background:transparent;border:none;padding:0;text-align:center;font-size:12px;color:#94a3b8;font-weight:600;}}
 @media(max-width:768px){{
   .hero .inner,.curr-wrap{{grid-template-columns:1fr;}}
   .feat-grid,.feat-grid.feat-five{{grid-template-columns:1fr;}}
@@ -411,7 +418,7 @@ img{{max-width:100%;height:auto;display:block;}}
 </head>
 <body>
 <section class="hero"><div class="inner">
-  <div><h1 class="hero-title">{ctx["title"]}</h1><p class="hero-desc">{ctx["subtitle"]}<br/>{ctx["body"]}</p><a href="{ctx["cta_url"]}" class="hero-cta">{ctx["cta_text"]}</a></div>
+  <div><h1 class="hero-title">{ctx["title"]}</h1><p class="hero-subtitle">{ctx["subtitle"]}</p><p class="hero-desc">{ctx["body"]}</p><a href="{ctx["cta_url"]}" class="hero-cta">{ctx["cta_text"]}</a></div>
   {hero_img if hero_img else "<div></div>"}
 </div></section>
 {"<section class='section'><div class='inner'><div class='stats-grid'>" + stats_html + "</div></div></section>" if stats_html else ""}
@@ -468,7 +475,7 @@ img{{max-width:100%;height:auto;display:block;}}
 .stat-card p{{font-size:12px;font-weight:700;color:#64748b;text-transform:uppercase;}}
 .infos-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;}}
 .info-card{{background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:14px;padding:24px;border-left:4px solid var(--p);}}
-.info-label{{font-size:10px;font-weight:900;color:var(--p);text-transform:uppercase;letter-spacing:.15em;margin-bottom:8px;display:block;}}
+.info-label{{font-size:13px;font-weight:900;color:var(--p);text-transform:uppercase;letter-spacing:.15em;margin-bottom:8px;display:block;}}
 .info-val{{font-size:16px;font-weight:800;color:#e2e8f0;}}
 .target-list{{list-style:none;max-width:640px;margin:0 auto;display:grid;gap:12px;}}
 .target-list li{{background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:14px;padding:16px 22px;font-size:15px;font-weight:700;display:flex;gap:12px;}}
@@ -492,6 +499,8 @@ img{{max-width:100%;height:auto;display:block;}}
 .curr-tab:hover{{color:#fff;}}
 .curr-tab.active{{background:var(--p);color:#fff;border-color:var(--p);box-shadow:0 0 24px rgba(59,130,246,0.3);}}
 .curr-panel{{background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:20px;padding:40px;}}
+.curr-image{{margin-bottom:24px;border-radius:16px;overflow:hidden;}}
+.curr-image img{{width:100%;height:auto;display:block;}}
 .curr-panel h3{{font-size:24px;font-weight:900;margin-bottom:24px;color:#fff;}}
 .curr-panel ul{{list-style:none;display:grid;gap:14px;}}
 .curr-panel li{{font-size:15px;color:#94a3b8;font-weight:500;padding-left:20px;position:relative;}}
@@ -508,7 +517,7 @@ img{{max-width:100%;height:auto;display:block;}}
 .sticky-cta-bar{{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:12px;padding:12px 22px;background:#1e293b;border:1px solid rgba(255,255,255,0.18);border-radius:20px;box-shadow:0 20px 55px rgba(0,0,0,0.3);}}
 .sticky-cta-copy p{{margin:0;color:#e2e8f0;font-size:16px;line-height:1.6;}}
 .sticky-cta-button{{display:inline-flex;align-items:center;justify-content:center;padding:16px 34px;border-radius:999px;background:var(--p);color:#fff;font-weight:800;box-shadow:0 12px 24px rgba(37,99,235,0.2);}}
-.instructor-card{{display:flex;flex-wrap:wrap;gap:24px;align-items:center;max-width:980px;margin:0 auto;padding:40px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.14);border-radius:28px;}}
+.instructor-card{{display:flex;gap:24px;align-items:center;max-width:980px;margin:0 auto;padding:40px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.14);border-radius:28px;}}
 .instructor-photo{{width:220px;min-width:220px;border-radius:24px;overflow:hidden;box-shadow:0 16px 40px rgba(0,0,0,0.16);}}
 .instructor-photo img{{width:100%;height:100%;object-fit:cover;display:block;}}
 .instructor-copy{{max-width:680px;}}
@@ -529,7 +538,7 @@ img{{max-width:100%;height:auto;display:block;}}
 </head>
 <body>
 <section class="hero"><div class="inner">
-  <div><h1 class="hero-title">{ctx["title"]}</h1><p class="hero-desc">{ctx["subtitle"]}<br/>{ctx["body"]}</p><a href="{ctx["cta_url"]}" class="hero-cta">{ctx["cta_text"]}</a></div>
+  <div><h1 class="hero-title">{ctx["title"]}</h1><p class="hero-subtitle">{ctx["subtitle"]}</p><p class="hero-desc">{ctx["body"]}</p><a href="{ctx["cta_url"]}" class="hero-cta">{ctx["cta_text"]}</a></div>
   {hero_img if hero_img else "<div></div>"}
 </div></section>
 {"<section class='section'><div class='inner'><div class='stats-grid'>" + stats_html + "</div></div></section>" if stats_html else ""}
@@ -571,6 +580,7 @@ img{{max-width:100%;height:auto;display:block;}}
 .hero{{padding:120px 0 80px;background:linear-gradient(135deg,#fef3c7,#fce7f3 50%,#e0e7ff);}}
 .hero .inner{{display:grid;grid-template-columns:0.9fr 1.1fr;gap:80px;align-items:center;}}
 .hero-title{{font-size:clamp(32px,4.5vw,56px);font-weight:900;line-height:1.1;margin-bottom:20px;color:#0f172a;}}
+.hero-subtitle{{font-size:20px;font-weight:700;color:var(--p);margin-bottom:12px;}}
 .hero-desc{{font-size:17px;color:#64748b;margin-bottom:36px;}}
 .hero-cta{{background:#0f172a;color:#fff;padding:16px 40px;border-radius:14px;font-size:16px;font-weight:800;display:inline-block;transition:all .3s;box-shadow:6px 6px 0 var(--p);}}
 .hero-cta:hover{{box-shadow:8px 8px 0 var(--p);transform:translate(-2px,-2px);}}
@@ -588,7 +598,7 @@ img{{max-width:100%;height:auto;display:block;}}
 .stat-card p{{font-size:12px;font-weight:700;color:#64748b;text-transform:uppercase;}}
 .infos-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;}}
 .info-card{{background:#fff;border:2px solid #0f172a;border-radius:14px;padding:24px;box-shadow:3px 3px 0 #0f172a;}}
-.info-label{{font-size:10px;font-weight:900;color:var(--p);text-transform:uppercase;letter-spacing:.15em;margin-bottom:8px;display:block;}}
+.info-label{{font-size:13px;font-weight:900;color:var(--p);text-transform:uppercase;letter-spacing:.15em;margin-bottom:8px;display:block;}}
 .info-val{{font-size:16px;font-weight:800;color:#0f172a;}}
 .target-list{{list-style:none;max-width:640px;margin:0 auto;display:grid;gap:12px;}}
 .target-list li{{background:#fff;border:2px solid #0f172a;border-radius:14px;padding:16px 22px;font-size:15px;font-weight:700;display:flex;gap:12px;box-shadow:3px 3px 0 #0f172a;}}
@@ -610,6 +620,8 @@ img{{max-width:100%;height:auto;display:block;}}
 .curr-tab{{background:#fff;border:2px solid #0f172a;color:#0f172a;padding:14px 20px;border-radius:12px;font-size:15px;font-weight:700;cursor:pointer;text-align:left;transition:all .3s;box-shadow:3px 3px 0 #0f172a;}}
 .curr-tab.active{{background:#0f172a;color:#fff;box-shadow:3px 3px 0 var(--p);}}
 .curr-panel{{background:#fff;border:2px solid #0f172a;border-radius:20px;padding:40px;box-shadow:4px 4px 0 #0f172a;}}
+.curr-image{{margin-bottom:24px;border-radius:16px;overflow:hidden;}}
+.curr-image img{{width:100%;height:auto;display:block;}}
 .curr-panel h3{{font-size:24px;font-weight:900;margin-bottom:24px;color:#0f172a;}}
 .curr-panel ul{{list-style:none;display:grid;gap:14px;}}
 .curr-panel li{{font-size:15px;color:#475569;font-weight:500;padding-left:20px;position:relative;}}
@@ -626,7 +638,7 @@ img{{max-width:100%;height:auto;display:block;}}
 .sticky-cta-bar{{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:12px;padding:12px 22px;background:#fff;border:1px solid #e2e8f0;border-radius:20px;box-shadow:0 20px 55px rgba(0,0,0,0.25);}}
 .sticky-cta-copy p{{margin:0;color:#0f172a;font-size:16px;line-height:1.6;}}
 .sticky-cta-button{{display:inline-flex;align-items:center;justify-content:center;padding:16px 34px;border-radius:999px;background:#fbbf24;color:#0f172a;font-weight:800;box-shadow:0 12px 30px rgba(251,191,36,0.18);}}
-.instructor-card{{display:flex;flex-wrap:wrap;gap:24px;align-items:center;max-width:980px;margin:0 auto;padding:40px;background:#fff;border:1px solid rgba(15,23,42,0.08);border-radius:28px;}}
+.instructor-card{{display:flex;gap:24px;align-items:center;max-width:980px;margin:0 auto;padding:40px;background:#fff;border:1px solid rgba(15,23,42,0.08);border-radius:28px;}}
 .instructor-photo{{width:220px;min-width:220px;border-radius:24px;overflow:hidden;box-shadow:0 16px 40px rgba(15,23,42,0.08);}}
 .instructor-photo img{{width:100%;height:100%;object-fit:cover;display:block;}}
 .instructor-copy{{max-width:680px;}}
@@ -647,7 +659,7 @@ img{{max-width:100%;height:auto;display:block;}}
 </head>
 <body>
 <section class="hero"><div class="inner">
-  <div><h1 class="hero-title">{ctx["title"]}</h1><p class="hero-desc">{ctx["subtitle"]}<br/>{ctx["body"]}</p><a href="{ctx["cta_url"]}" class="hero-cta">{ctx["cta_text"]}</a></div>
+  <div><h1 class="hero-title">{ctx["title"]}</h1><p class="hero-subtitle">{ctx["subtitle"]}</p><p class="hero-desc">{ctx["body"]}</p><a href="{ctx["cta_url"]}" class="hero-cta">{ctx["cta_text"]}</a></div>
   {hero_img if hero_img else "<div></div>"}
 </div></section>
 {"<section class='section warm'><div class='inner'><div class='stats-grid'>" + stats_html + "</div></div></section>" if stats_html else ""}
@@ -695,7 +707,11 @@ def _render_premium_bootcamp(ctx: dict) -> str:
         curr_tabs += f"<button class='curr-tab{active_cls}' data-idx='{idx}'>{escape(c.step)}</button>"
         bullets = "".join([f"<li>{escape(b.strip())}</li>" for b in c.description.split(chr(10)) if b.strip()])
         display = "block" if idx == 0 else "none"
-        curr_panels += f"<div class='curr-panel' data-idx='{idx}' style='display:{display}'><h3>{escape(c.title)}</h3><ul>{bullets}</ul></div>"
+        curr_image = ""
+        raw_curr_image = getattr(c, "image_url", "") or ""
+        if raw_curr_image:
+            curr_image = f"<div class='curr-image'><img src='{escape(raw_curr_image)}' alt='Curriculum'/></div>"
+        curr_panels += f"<div class='curr-panel' data-idx='{idx}' style='display:{display}'>{curr_image}<h3>{escape(c.title)}</h3><ul>{bullets}</ul></div>"
 
     # ── Target audience ──
     target_html = ""
