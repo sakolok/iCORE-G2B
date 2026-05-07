@@ -239,6 +239,40 @@ def _build_sticky_cta_html(ctx: dict) -> str:
     return f"""<div class='sticky-cta-modal'><div class='sticky-cta-bar'><div class='sticky-cta-copy'><p>{note}</p></div><a class='sticky-cta-button' href='{ctx['sticky_cta_url']}'>{ctx['sticky_cta_text']}</a></div></div>"""
 
 
+def _build_footer_html(ctx: dict) -> str:
+    """Build a footer with course info, operator, consortium, and contact details."""
+    primary = ctx.get("primary", "#2563eb")
+    return f"""<footer class='site-footer'>
+  <div class='inner'>
+    <div class='footer-content'>
+      <div class='footer-info'>
+        <p class='footer-course-name'>과정명: GCP와 바이브코딩으로 완성하는 풀스택 AI 에이전트 개발자</p>
+        <p class='footer-org'>운영사: ㈜아이코어이앤씨 &nbsp;|&nbsp; 컨소시엄: 구글클라우드코리아 &nbsp;|&nbsp; 주관: SBA 서울경제진흥원</p>
+      </div>
+      <div class='footer-contact'>
+        <p class='footer-contact-title'>[문의사항]</p>
+        <p>담당: 아이코어이앤씨 이상현 팀장</p>
+        <p>전화: <a href='tel:02-573-3836'>02-573-3836</a></p>
+        <p>이메일: <a href='mailto:shlee@aicore.co.kr'>shlee@aicore.co.kr</a></p>
+      </div>
+    </div>
+    <div class='footer-bottom'>
+      <p>© 2026 iCoreE&C INC. ALL RIGHTS RESERVED.</p>
+    </div>
+  </div>
+</footer>"""
+
+
+def _build_navbar_html() -> str:
+    """Build a fixed top-right navigation with 4 section tabs."""
+    return """<nav class='section-nav' id='sectionNav'>
+  <a href='#section-info' class='section-nav-item' data-target='section-info'>모집정보</a>
+  <a href='#section-features' class='section-nav-item' data-target='section-features'>과정 특징</a>
+  <a href='#section-curriculum' class='section-nav-item' data-target='section-curriculum'>커리큘럼</a>
+  <a href='#section-faq' class='section-nav-item' data-target='section-faq'>FAQ</a>
+</nav>"""
+
+
 def _build_shared_sections(content):
     """Build HTML fragments for stats/infos/features/curriculum/target/faqs."""
     stats_html = ""
@@ -276,6 +310,7 @@ def _build_shared_sections(content):
 
 
 _SHARED_JS = """
+/* Curriculum tab switching */
 document.querySelectorAll('.curr-tab').forEach(function(tab){
   tab.addEventListener('click',function(){
     document.querySelectorAll('.curr-tab').forEach(function(t){t.classList.remove('active')});
@@ -286,6 +321,7 @@ document.querySelectorAll('.curr-tab').forEach(function(tab){
     if(panel)panel.style.display='block';
   });
 });
+/* Stats counter animation */
 function animateCounters(){
   document.querySelectorAll('.stat-card h3[data-target]').forEach(function(el){
     if(el.dataset.done)return;
@@ -312,6 +348,116 @@ if(statsEl&&'IntersectionObserver' in window){
     });
   },{threshold:0.3}).observe(statsEl);
 }else{animateCounters();}
+
+/* Scroll reveal animation */
+(function(){
+  var revealEls=document.querySelectorAll('.scroll-reveal');
+  if(!revealEls.length)return;
+  if('IntersectionObserver' in window){
+    var obs=new IntersectionObserver(function(entries){
+      entries.forEach(function(e){
+        if(e.isIntersecting){
+          e.target.classList.add('revealed');
+          obs.unobserve(e.target);
+        }
+      });
+    },{threshold:0.12,rootMargin:'0px 0px -40px 0px'});
+    revealEls.forEach(function(el){obs.observe(el);});
+  }else{
+    revealEls.forEach(function(el){el.classList.add('revealed');});
+  }
+})();
+
+/* Section navbar smooth scroll + active highlight */
+(function(){
+  var navItems=document.querySelectorAll('.section-nav-item');
+  if(!navItems.length)return;
+  navItems.forEach(function(a){
+    a.addEventListener('click',function(e){
+      e.preventDefault();
+      var target=document.getElementById(a.getAttribute('data-target'));
+      if(target)target.scrollIntoView({behavior:'smooth',block:'start'});
+    });
+  });
+  var sectionIds=['section-info','section-features','section-curriculum','section-faq'];
+  var sections=sectionIds.map(function(id){return document.getElementById(id);}).filter(Boolean);
+  function updateActiveNav(){
+    var scrollY=window.scrollY+120;
+    var activeId='';
+    sections.forEach(function(sec){
+      if(sec.offsetTop<=scrollY)activeId=sec.id;
+    });
+    navItems.forEach(function(a){
+      if(a.getAttribute('data-target')===activeId)a.classList.add('active');
+      else a.classList.remove('active');
+    });
+  }
+  window.addEventListener('scroll',updateActiveNav,{passive:true});
+  updateActiveNav();
+  /* Show/hide navbar after hero */
+  var nav=document.getElementById('sectionNav');
+  if(nav){
+    window.addEventListener('scroll',function(){
+      if(window.scrollY>300)nav.classList.add('visible');
+      else nav.classList.remove('visible');
+    },{passive:true});
+  }
+})();
+"""
+
+
+def _shared_extra_css(dark: bool = False) -> str:
+    """Shared CSS for scroll-reveal, section-nav, footer, and updated sticky CTA."""
+    nav_bg = "rgba(15,23,42,0.85)" if dark else "rgba(255,255,255,0.92)"
+    nav_text = "#e2e8f0" if dark else "#334155"
+    nav_active_bg = "#fff" if dark else "var(--p)"
+    nav_active_text = "var(--p)" if dark else "#fff"
+    nav_border = "rgba(255,255,255,0.1)" if dark else "rgba(0,0,0,0.08)"
+    footer_bg = "#0f172a" if dark else "#f8fafc"
+    footer_text = "rgba(255,255,255,0.7)" if dark else "#475569"
+    footer_head = "#fff" if dark else "#0f172a"
+    footer_link = "#93c5fd" if dark else "var(--p)"
+    footer_border = "rgba(255,255,255,0.08)" if dark else "#e2e8f0"
+    footer_contact_bg = "rgba(255,255,255,0.06)" if dark else "#fff"
+    footer_bottom_text = "rgba(255,255,255,0.3)" if dark else "#94a3b8"
+    return f"""
+/* ── Scroll Reveal ── */
+.scroll-reveal{{opacity:0;transform:translateY(40px);transition:opacity .7s cubic-bezier(.22,1,.36,1),transform .7s cubic-bezier(.22,1,.36,1);}}
+.scroll-reveal.revealed{{opacity:1;transform:translateY(0);}}
+.scroll-reveal.reveal-scale{{transform:scale(0.92);}}
+.scroll-reveal.reveal-scale.revealed{{transform:scale(1);}}
+.scroll-reveal.reveal-left{{transform:translateX(-40px);}}
+.scroll-reveal.reveal-left.revealed{{transform:translateX(0);}}
+/* ── Section Nav ── */
+html{{scroll-behavior:smooth;}}
+.section-nav{{position:fixed;top:24px;right:24px;z-index:1000;display:flex;gap:4px;padding:6px;background:{nav_bg};backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border:1px solid {nav_border};border-radius:14px;box-shadow:0 8px 32px rgba(0,0,0,0.12);opacity:0;transform:translateY(-16px);transition:opacity .4s,transform .4s;pointer-events:none;}}
+.section-nav.visible{{opacity:1;transform:translateY(0);pointer-events:auto;}}
+.section-nav-item{{padding:8px 16px;font-size:13px;font-weight:700;color:{nav_text};border-radius:10px;transition:all .25s;white-space:nowrap;}}
+.section-nav-item:hover{{background:rgba(0,0,0,0.06);}}
+.section-nav-item.active{{background:{nav_active_bg};color:{nav_active_text};box-shadow:0 2px 8px rgba(0,0,0,0.1);}}
+/* ── Site Footer ── */
+.site-footer{{background:{footer_bg};border-top:1px solid {footer_border};padding:48px 0 32px;}}
+.footer-content{{display:flex;gap:40px;flex-wrap:wrap;}}
+.footer-info{{flex:1;min-width:280px;}}
+.footer-course-name{{font-weight:800;color:{footer_head};font-size:15px;margin-bottom:6px;}}
+.footer-org{{color:{footer_text};font-size:13px;line-height:1.8;}}
+.footer-contact{{background:{footer_contact_bg};border:1px solid {footer_border};border-radius:14px;padding:20px 24px;min-width:260px;}}
+.footer-contact-title{{font-weight:800;color:{footer_head};font-size:14px;margin-bottom:8px;}}
+.footer-contact p{{color:{footer_text};font-size:13px;margin:3px 0;line-height:1.7;}}
+.footer-contact a{{color:{footer_link};transition:opacity .2s;}}
+.footer-contact a:hover{{opacity:0.7;}}
+.footer-bottom{{margin-top:32px;padding-top:20px;border-top:1px solid {footer_border};}}
+.footer-bottom p{{font-size:11px;font-weight:700;color:{footer_bottom_text};text-transform:uppercase;letter-spacing:.15em;}}
+/* ── Updated Sticky CTA (compact) ── */
+.sticky-cta-bar{{padding:10px 20px;gap:16px;}}
+.sticky-cta-copy{{flex:1;min-width:0;}}
+.sticky-cta-copy p{{font-size:14px;line-height:1.5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}}
+.sticky-cta-button{{flex-shrink:0;padding:10px 28px;font-size:15px;}}
+@media(max-width:768px){{
+  .section-nav{{top:auto;bottom:80px;right:12px;left:12px;justify-content:center;}}
+  .footer-content{{flex-direction:column;gap:24px;}}
+  .sticky-cta-copy p{{white-space:normal;}}
+}}
 """
 
 
@@ -414,23 +560,25 @@ img{{max-width:100%;height:auto;display:block;}}
   .feat-grid.feat-five .feat-card{{grid-column:auto;}}
   .curr-tabs{{flex-direction:row;overflow-x:auto;}}
 }}
+{_shared_extra_css(dark=False)}
 </style>
 </head>
 <body>
+{_build_navbar_html()}
 <section class="hero"><div class="inner">
   <div><h1 class="hero-title">{ctx["title"]}</h1><p class="hero-subtitle">{ctx["subtitle"]}</p><p class="hero-desc">{ctx["body"]}</p><a href="{ctx["cta_url"]}" class="hero-cta">{ctx["cta_text"]}</a></div>
   {hero_img if hero_img else "<div></div>"}
 </div></section>
 {"<section class='section'><div class='inner'><div class='stats-grid'>" + stats_html + "</div></div></section>" if stats_html else ""}
-{"<section class='section alt'><div class='inner'><h2 class='sec-title'>모집 정보</h2><div class='infos-grid'>" + infos_html + "</div></div></section>" if infos_html else ""}
-{"<section class='section'><div class='inner'><h2 class='sec-title'>이런 분들에게 추천합니다</h2><ul class='target-list'>" + target_html + "</ul></div></section>" if target_html else ""}
-{"<section class='section alt'><div class='inner'><h2 class='sec-title'>과정 특징</h2><div class='feat-grid " + feat_cls + "'>" + features_html + "</div></div></section>" if features_html else ""}
+{"<section class='section alt scroll-reveal' id='section-info'><div class='inner'><h2 class='sec-title'>모집 정보</h2><div class='infos-grid'>" + infos_html + "</div></div></section>" if infos_html else ""}
+{"<section class='section scroll-reveal'><div class='inner'><h2 class='sec-title'>이런 분들에게 추천합니다</h2><ul class='target-list'>" + target_html + "</ul></div></section>" if target_html else ""}
+{"<section class='section alt scroll-reveal' id='section-features'><div class='inner'><h2 class='sec-title'>과정 특징</h2><div class='feat-grid " + feat_cls + "'>" + features_html + "</div></div></section>" if features_html else ""}
 {_build_instructor_section_html(ctx)}
-{"<section class='section'><div class='inner'><h2 class='sec-title'>커리큘럼</h2><div class='curr-wrap'><div class='curr-tabs'>" + curr_tabs + "</div><div class='curr-panels'>" + curr_panels + "</div></div></div></section>" if curr_tabs else ""}
-{"<section class='section alt'><div class='inner'><h2 class='sec-title'>자주 묻는 질문</h2><div class='faq-list'>" + faqs_html + "</div></div></section>" if faqs_html else ""}
+{"<section class='section scroll-reveal' id='section-curriculum'><div class='inner'><h2 class='sec-title'>커리큘럼</h2><div class='curr-wrap'><div class='curr-tabs'>" + curr_tabs + "</div><div class='curr-panels'>" + curr_panels + "</div></div></div></section>" if curr_tabs else ""}
+{"<section class='section alt scroll-reveal' id='section-faq'><div class='inner'><h2 class='sec-title'>자주 묻는 질문</h2><div class='faq-list'>" + faqs_html + "</div></div></section>" if faqs_html else ""}
 <section class="cta-bottom"><div class="inner"><h2>지금 바로 시작하세요</h2><a href="{ctx["cta_url"]}">{ctx["cta_text"]}</a></div></section>
 {_build_sticky_cta_html(ctx)}
-<footer class="footer"><div class="inner">© 2026 All Rights Reserved.</div></footer>
+{_build_footer_html(ctx)}
 <script>{_SHARED_JS}</script>
 </body></html>"""
 
@@ -534,23 +682,25 @@ img{{max-width:100%;height:auto;display:block;}}
   .feat-grid.feat-five .feat-card{{grid-column:auto;}}
   .curr-tabs{{flex-direction:row;overflow-x:auto;}}
 }}
+{_shared_extra_css(dark=True)}
 </style>
 </head>
 <body>
+{_build_navbar_html()}
 <section class="hero"><div class="inner">
   <div><h1 class="hero-title">{ctx["title"]}</h1><p class="hero-subtitle">{ctx["subtitle"]}</p><p class="hero-desc">{ctx["body"]}</p><a href="{ctx["cta_url"]}" class="hero-cta">{ctx["cta_text"]}</a></div>
   {hero_img if hero_img else "<div></div>"}
 </div></section>
 {"<section class='section'><div class='inner'><div class='stats-grid'>" + stats_html + "</div></div></section>" if stats_html else ""}
-{"<section class='section alt'><div class='inner'><h2 class='sec-title'>모집 정보</h2><div class='infos-grid'>" + infos_html + "</div></div></section>" if infos_html else ""}
-{"<section class='section'><div class='inner'><h2 class='sec-title'>이런 분들에게 추천합니다</h2><ul class='target-list'>" + target_html + "</ul></div></section>" if target_html else ""}
-{"<section class='section alt'><div class='inner'><h2 class='sec-title'>과정 특징</h2><div class='feat-grid " + feat_cls + "'>" + features_html + "</div></div></section>" if features_html else ""}
+{"<section class='section alt scroll-reveal' id='section-info'><div class='inner'><h2 class='sec-title'>모집 정보</h2><div class='infos-grid'>" + infos_html + "</div></div></section>" if infos_html else ""}
+{"<section class='section scroll-reveal'><div class='inner'><h2 class='sec-title'>이런 분들에게 추천합니다</h2><ul class='target-list'>" + target_html + "</ul></div></section>" if target_html else ""}
+{"<section class='section alt scroll-reveal' id='section-features'><div class='inner'><h2 class='sec-title'>과정 특징</h2><div class='feat-grid " + feat_cls + "'>" + features_html + "</div></div></section>" if features_html else ""}
 {_build_instructor_section_html(ctx)}
-{"<section class='section'><div class='inner'><h2 class='sec-title' style='color:#fff'>커리큘럼</h2><div class='curr-wrap'><div class='curr-tabs'>" + curr_tabs + "</div><div class='curr-panels'>" + curr_panels + "</div></div></div></section>" if curr_tabs else ""}
-{"<section class='section alt'><div class='inner'><h2 class='sec-title'>자주 묻는 질문</h2><div class='faq-list'>" + faqs_html + "</div></div></section>" if faqs_html else ""}
+{"<section class='section scroll-reveal' id='section-curriculum'><div class='inner'><h2 class='sec-title' style='color:#fff'>커리큘럼</h2><div class='curr-wrap'><div class='curr-tabs'>" + curr_tabs + "</div><div class='curr-panels'>" + curr_panels + "</div></div></div></section>" if curr_tabs else ""}
+{"<section class='section alt scroll-reveal' id='section-faq'><div class='inner'><h2 class='sec-title'>자주 묻는 질문</h2><div class='faq-list'>" + faqs_html + "</div></div></section>" if faqs_html else ""}
 <section class="cta-bottom"><div class="inner"><h2>지금 바로 시작하세요</h2><a href="{ctx["cta_url"]}">{ctx["cta_text"]}</a></div></section>
 {_build_sticky_cta_html(ctx)}
-<footer class="footer"><div class="inner">© 2026 All Rights Reserved.</div></footer>
+{_build_footer_html(ctx)}
 <script>{_SHARED_JS}</script>
 </body></html>"""
 
@@ -655,23 +805,25 @@ img{{max-width:100%;height:auto;display:block;}}
   .feat-grid.feat-five .feat-card{{grid-column:auto;}}
   .curr-tabs{{flex-direction:row;overflow-x:auto;}}
 }}
+{_shared_extra_css(dark=False)}
 </style>
 </head>
 <body>
+{_build_navbar_html()}
 <section class="hero"><div class="inner">
   <div><h1 class="hero-title">{ctx["title"]}</h1><p class="hero-subtitle">{ctx["subtitle"]}</p><p class="hero-desc">{ctx["body"]}</p><a href="{ctx["cta_url"]}" class="hero-cta">{ctx["cta_text"]}</a></div>
   {hero_img if hero_img else "<div></div>"}
 </div></section>
 {"<section class='section warm'><div class='inner'><div class='stats-grid'>" + stats_html + "</div></div></section>" if stats_html else ""}
-{"<section class='section cool'><div class='inner'><h2 class='sec-title'>모집 정보</h2><div class='infos-grid'>" + infos_html + "</div></div></section>" if infos_html else ""}
-{"<section class='section warm'><div class='inner'><h2 class='sec-title'>이런 분들에게 추천합니다</h2><ul class='target-list'>" + target_html + "</ul></div></section>" if target_html else ""}
-{"<section class='section peach'><div class='inner'><h2 class='sec-title'>과정 특징</h2><div class='feat-grid " + feat_cls + "'>" + features_html + "</div></div></section>" if features_html else ""}
+{"<section class='section cool scroll-reveal' id='section-info'><div class='inner'><h2 class='sec-title'>모집 정보</h2><div class='infos-grid'>" + infos_html + "</div></div></section>" if infos_html else ""}
+{"<section class='section warm scroll-reveal'><div class='inner'><h2 class='sec-title'>이런 분들에게 추천합니다</h2><ul class='target-list'>" + target_html + "</ul></div></section>" if target_html else ""}
+{"<section class='section peach scroll-reveal' id='section-features'><div class='inner'><h2 class='sec-title'>과정 특징</h2><div class='feat-grid " + feat_cls + "'>" + features_html + "</div></div></section>" if features_html else ""}
 {_build_instructor_section_html(ctx)}
-{"<section class='section warm'><div class='inner'><h2 class='sec-title'>커리큘럼</h2><div class='curr-wrap'><div class='curr-tabs'>" + curr_tabs + "</div><div class='curr-panels'>" + curr_panels + "</div></div></div></section>" if curr_tabs else ""}
-{"<section class='section cool'><div class='inner'><h2 class='sec-title'>자주 묻는 질문</h2><div class='faq-list'>" + faqs_html + "</div></div></section>" if faqs_html else ""}
+{"<section class='section warm scroll-reveal' id='section-curriculum'><div class='inner'><h2 class='sec-title'>커리큘럼</h2><div class='curr-wrap'><div class='curr-tabs'>" + curr_tabs + "</div><div class='curr-panels'>" + curr_panels + "</div></div></div></section>" if curr_tabs else ""}
+{"<section class='section cool scroll-reveal' id='section-faq'><div class='inner'><h2 class='sec-title'>자주 묻는 질문</h2><div class='faq-list'>" + faqs_html + "</div></div></section>" if faqs_html else ""}
 <section class="cta-bottom"><div class="inner"><h2>지금 바로 시작하세요</h2><a href="{ctx["cta_url"]}">{ctx["cta_text"]}</a></div></section>
 {_build_sticky_cta_html(ctx)}
-<footer class="footer"><div class="inner">© 2026 All Rights Reserved.</div></footer>
+{_build_footer_html(ctx)}
 <script>{_SHARED_JS}</script>
 </body></html>"""
 
@@ -856,9 +1008,11 @@ img{{max-width:100%;height:auto;display:block;}}
   .feat-grid.feat-five .feat-card{{grid-column:auto;}}
   .inner{{padding:0 20px;}}
 }}
+{_shared_extra_css(dark=False)}
 </style>
 </head>
 <body>
+{_build_navbar_html()}
 
 <section class="hero">
   <div class="inner">
@@ -873,15 +1027,15 @@ img{{max-width:100%;height:auto;display:block;}}
 
 {"<section class='stats'><div class='inner'><div class='stats-grid'>" + stats_html + "</div></div></section>" if stats_html else ""}
 
-{"<section class='infos'><div class='inner'><h2 class='infos-title'>모집 정보</h2><div class='infos-grid'>" + infos_html + "</div></div></section>" if infos_html else ""}
+{"<section class='infos scroll-reveal' id='section-info'><div class='inner'><h2 class='infos-title'>모집 정보</h2><div class='infos-grid'>" + infos_html + "</div></div></section>" if infos_html else ""}
 
-{"<section class='targets'><div class='inner'><h2 class='sec-title'>이런 분들에게 추천합니다</h2><ul class='target-list'>" + target_html + "</ul></div></section>" if target_html else ""}
+{"<section class='targets scroll-reveal'><div class='inner'><h2 class='sec-title'>이런 분들에게 추천합니다</h2><ul class='target-list'>" + target_html + "</ul></div></section>" if target_html else ""}
 
-{"<section class='features'><div class='inner'><h2 class='sec-title'>과정 특징</h2><div class='feat-grid " + feat_cls + "'>" + features_html + "</div></div></section>" if features_html else ""}
+{"<section class='features scroll-reveal' id='section-features'><div class='inner'><h2 class='sec-title'>과정 특징</h2><div class='feat-grid " + feat_cls + "'>" + features_html + "</div></div></section>" if features_html else ""}
 
-{"<section class='curriculum'><div class='inner'><h2 class='sec-title' style='color:#fff'>커리큘럼</h2><p class='sec-sub' style='color:rgba(255,255,255,0.6)'>단계별로 설계된 실무 중심 교육 과정</p><div class='curr-wrap'><div class='curr-tabs'>" + curr_tabs + "</div><div class='curr-panels'>" + curr_panels + "</div></div></div></section>" if curr_tabs else ""}
+{"<section class='curriculum scroll-reveal' id='section-curriculum'><div class='inner'><h2 class='sec-title' style='color:#fff'>커리큘럼</h2><p class='sec-sub' style='color:rgba(255,255,255,0.6)'>단계별로 설계된 실무 중심 교육 과정</p><div class='curr-wrap'><div class='curr-tabs'>" + curr_tabs + "</div><div class='curr-panels'>" + curr_panels + "</div></div></div></section>" if curr_tabs else ""}
 
-{"<section class='faqs'><div class='inner'><h2 class='sec-title'>자주 묻는 질문</h2><p class='sec-sub'>궁금한 점을 빠르게 확인하세요</p><div class='faq-list'>" + faqs_html + "</div></div></section>" if faqs_html else ""}
+{"<section class='faqs scroll-reveal' id='section-faq'><div class='inner'><h2 class='sec-title'>자주 묻는 질문</h2><p class='sec-sub'>궁금한 점을 빠르게 확인하세요</p><div class='faq-list'>" + faqs_html + "</div></div></section>" if faqs_html else ""}
 
 <section class="cta-bottom">
   <div class="inner">
@@ -890,54 +1044,10 @@ img{{max-width:100%;height:auto;display:block;}}
   </div>
 </section>
 
-<footer class="footer">
-  <div class="inner">© 2026 All Rights Reserved.</div>
-</footer>
+{_build_sticky_cta_html(ctx)}
+{_build_footer_html(ctx)}
 
-<script>
-/* Curriculum tab switching */
-document.querySelectorAll('.curr-tab').forEach(function(tab){{
-  tab.addEventListener('click',function(){{
-    document.querySelectorAll('.curr-tab').forEach(function(t){{t.classList.remove('active')}});
-    document.querySelectorAll('.curr-panel').forEach(function(p){{p.style.display='none'}});
-    tab.classList.add('active');
-    var idx=tab.getAttribute('data-idx');
-    var panel=document.querySelector('.curr-panel[data-idx="'+idx+'"]');
-    if(panel)panel.style.display='block';
-  }});
-}});
-
-/* Stats counter animation */
-function animateCounters(){{
-  document.querySelectorAll('.stat-card h3[data-target]').forEach(function(el){{
-    if(el.dataset.done)return;
-    var raw=el.getAttribute('data-target');
-    // Parse: extract leading number and surrounding text
-    // e.g. "92%" -> prefix="", num=92, suffix="%"
-    // e.g. "75/100" -> prefix="", num=75, suffix="/100"
-    var m=raw.match(/^([^0-9]*?)(\\d+)(.*?)$/);
-    if(!m){{el.textContent=raw;el.dataset.done='1';return;}}
-    var prefix=m[1],target=parseInt(m[2],10),suffix=m[3];
-    var duration=1200,start=performance.now();
-    function tick(now){{
-      var p=Math.min((now-start)/duration,1);
-      var ease=1-Math.pow(1-p,3);
-      el.textContent=prefix+Math.round(target*ease)+suffix;
-      if(p<1)requestAnimationFrame(tick);
-      else el.dataset.done='1';
-    }}
-    requestAnimationFrame(tick);
-  }});
-}}
-var statsEl=document.querySelector('.stats');
-if(statsEl&&'IntersectionObserver' in window){{
-  new IntersectionObserver(function(entries,obs){{
-    entries.forEach(function(e){{
-      if(e.isIntersecting){{animateCounters();obs.unobserve(e.target);}}
-    }});
-  }},{{threshold:0.3}}).observe(statsEl);
-}}else if(statsEl){{animateCounters();}}
-</script>
+<script>{_SHARED_JS}</script>
 </body>
 </html>"""
 
