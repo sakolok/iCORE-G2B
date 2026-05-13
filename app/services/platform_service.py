@@ -85,7 +85,7 @@ def _load_template_payload_from_gcs(template_id: str) -> dict:
     template_backgrounds = {
         "clean-campaign": "#eff6ff",
         "dark-product": "#020617",
-        "event-highlight": "#fef3c7",
+        "event-highlight": "#0D1117",
     }
 
     candidate_paths: list[str] = []
@@ -695,125 +695,266 @@ img{{max-width:100%;height:auto;display:block;}}
 
 def _render_event_highlight(ctx: dict) -> str:
     content = ctx["content_obj"]
-    stats_html, infos_html, features_html, curr_tabs, curr_panels, target_html, faqs_html = _build_shared_sections(content)
-    feat_cls = "feat-five" if len(getattr(content, "features", [])) == 5 else ""
+    
+    # Hero image
     hero_img = ""
     raw_hero = ctx.get("hero_image_url_raw") or ""
     if raw_hero:
-        hero_img = f"<div class='hero-visual'><img src='{escape(raw_hero)}' alt='hero'/></div>"
+        hero_img = f"<div class='hero-visual'><img src='{escape(raw_hero)}' alt='hero' /></div>"
+
+    # Stats cards
+    stats_html = ""
+    for s in getattr(content, "stats", []):
+        raw = s.value.strip()
+        stats_html += f"<div class='stat-item fade-in-up'><h3><span class='num counter' data-target='{escape(raw)}'>0</span></h3><p>{escape(s.title)}</p></div>"
+
+    # Info cards
+    infos_html = ""
+    for i in getattr(content, "infos", []):
+        infos_html += f"<div class='info-item'><div><span>{escape(i.label)}</span><strong>{escape(i.val)}</strong></div></div>"
+
+    # Features
+    features_html = ""
+    for f in getattr(content, "features", []):
+        features_html += f"<div class='solution-card gradient-border-card fade-in-up'><h3>{escape(f.title)}</h3><p>{escape(f.description)}</p></div>"
+
+    # Curriculum
+    curr_html = ""
+    for idx, c in enumerate(getattr(content, "curriculum", [])):
+        bullets = "".join([f"<li>{escape(b.strip())}</li>" for b in c.description.split(chr(10)) if b.strip()])
+        curr_html += f"""<div class='timeline-item fade-in-up'>
+            <span class='step-label'>STEP {idx+1}</span>
+            <h3>{escape(c.step)}</h3>
+            <div class='curriculum-accordion'>
+                <div class='timeline-result accordion-btn'>
+                    <span>▶ {escape(c.title)}</span>
+                    <i style="font-size: 12px;">▼</i>
+                </div>
+                <div class='accordion-content'>
+                    <div class='accordion-inner'>
+                        <div class='edu-section'>
+                            <ul>{bullets}</ul>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>"""
+
+    # Target audience
+    target_html = ""
+    for t in getattr(content, "target_audience", []):
+        target_html += f"<li>{escape(t.description)}</li>"
+
+    # FAQs
+    faqs_html = ""
+    for q in getattr(content, "faqs", []):
+        answer = escape(q.a).replace(chr(10), "<br>")
+        faqs_html += f"<div class='faq-item'><button class='faq-question'>{escape(q.q)} <span class='faq-icon'>+</span></button><div class='faq-answer'><p>{answer}</p></div></div>"
+
     return f"""<!doctype html>
 <html lang="ko">
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
 <title>{ctx["title"]}</title>
-<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;600;800;900&display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Noto+Sans+KR:wght@300;400;500;700;900&display=swap" rel="stylesheet"/>
 <style>
-:root{{--p:{ctx["primary"]};--s:{ctx["secondary"]};}}
-*{{box-sizing:border-box;margin:0;padding:0;}}
-body{{font-family:"Noto Sans KR",system-ui,sans-serif;color:#1e293b;line-height:1.7;background:#fffbeb;}}
-a{{text-decoration:none;color:inherit;}}
-img{{max-width:100%;height:auto;display:block;}}
-.inner{{max-width:1400px;margin:0 auto;padding:0 32px;}}
-.hero{{padding:120px 0 80px;background:linear-gradient(135deg,#fef3c7,#fce7f3 50%,#e0e7ff);}}
-.hero .inner{{display:grid;grid-template-columns:0.9fr 1.1fr;gap:80px;align-items:center;}}
-.hero-title{{font-size:clamp(32px,4.5vw,56px);font-weight:900;line-height:1.1;margin-bottom:20px;color:#0f172a;}}
-.hero-subtitle{{font-size:20px;font-weight:700;color:var(--p);margin-bottom:12px;}}
-.hero-desc{{font-size:17px;color:#64748b;margin-bottom:36px;}}
-.hero-cta{{background:#0f172a;color:#fff;padding:16px 40px;border-radius:14px;font-size:16px;font-weight:800;display:inline-block;transition:all .3s;box-shadow:6px 6px 0 var(--p);}}
-.hero-cta:hover{{box-shadow:8px 8px 0 var(--p);transform:translate(-2px,-2px);}}
-@keyframes heroFloat{{0%,100%{{transform:translateY(0)}}50%{{transform:translateY(-12px)}}}}
-.hero-visual img{{border-radius:20px;border:3px solid #0f172a;box-shadow:8px 8px 0 #0f172a;animation:heroFloat 4s ease-in-out infinite;}}
-.section{{padding:80px 0;}}
-.section.warm{{background:#fff;}}
-.section.cool{{background:#f0f9ff;}}
-.section.peach{{background:#fef7ee;}}
-.sec-title{{font-size:clamp(26px,3vw,36px);font-weight:900;text-align:center;margin-bottom:48px;color:#0f172a;}}
-.stats-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:20px;}}
-.stat-card{{background:#fff;border:3px solid #0f172a;border-radius:16px;padding:28px 20px;text-align:center;box-shadow:4px 4px 0 #0f172a;transition:all .3s;}}
-.stat-card:hover{{box-shadow:6px 6px 0 var(--p);transform:translate(-2px,-2px);}}
-.stat-card h3{{font-size:36px;font-weight:900;color:var(--p);margin-bottom:4px;}}
-.stat-card p{{font-size:12px;font-weight:700;color:#64748b;text-transform:uppercase;}}
-.infos-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;}}
-.info-card{{background:#fff;border:2px solid #0f172a;border-radius:14px;padding:24px;box-shadow:3px 3px 0 #0f172a;}}
-.info-label{{font-size:13px;font-weight:900;color:var(--p);text-transform:uppercase;letter-spacing:.15em;margin-bottom:8px;display:block;}}
-.info-val{{font-size:16px;font-weight:800;color:#0f172a;}}
-.target-list{{list-style:none;max-width:640px;margin:0 auto;display:grid;gap:12px;}}
-.target-list li{{background:#fff;border:2px solid #0f172a;border-radius:14px;padding:16px 22px;font-size:15px;font-weight:700;display:flex;gap:12px;box-shadow:3px 3px 0 #0f172a;}}
-.chk-icon{{color:var(--p);font-weight:900;font-size:18px;flex-shrink:0;}}
-.feat-grid{{display:grid;grid-template-columns:repeat(3,1fr);gap:24px;}}
-.feat-grid.feat-five{{grid-template-columns:repeat(6,1fr);}}
-.feat-grid.feat-five .feat-card:nth-child(-n+3){{grid-column:span 2;}}
-.feat-grid.feat-five .feat-card:nth-child(4){{grid-column:2/4;}}
-.feat-grid.feat-five .feat-card:nth-child(5){{grid-column:4/6;}}
-.feat-card{{background:#fff;border:2px solid #0f172a;border-radius:20px;overflow:hidden;box-shadow:4px 4px 0 #0f172a;transition:all .3s;}}
-.feat-card:hover{{box-shadow:6px 6px 0 var(--p);transform:translate(-2px,-2px);}}
-.feat-img{{height:200px;overflow:hidden;background:#f1f5f9;}}
-.feat-img img{{width:100%;height:100%;object-fit:cover;}}
-.feat-body{{padding:28px;}}
-.feat-body h3{{font-size:18px;font-weight:800;margin-bottom:10px;}}
-.feat-body p{{color:#64748b;font-size:14px;}}
-.curr-wrap{{display:grid;grid-template-columns:240px 1fr;gap:32px;}}
-.curr-tabs{{display:flex;flex-direction:column;gap:6px;}}
-.curr-tab{{background:#fff;border:2px solid #0f172a;color:#0f172a;padding:14px 20px;border-radius:12px;font-size:15px;font-weight:700;cursor:pointer;text-align:left;transition:all .3s;box-shadow:3px 3px 0 #0f172a;}}
-.curr-tab.active{{background:#0f172a;color:#fff;box-shadow:3px 3px 0 var(--p);}}
-.curr-panel{{background:#fff;border:2px solid #0f172a;border-radius:20px;padding:40px;box-shadow:4px 4px 0 #0f172a;}}
-.curr-image{{margin-bottom:24px;border-radius:16px;overflow:hidden;}}
-.curr-image img{{width:100%;height:auto;display:block;}}
-.curr-panel h3{{font-size:24px;font-weight:900;margin-bottom:24px;color:#0f172a;}}
-.curr-panel ul{{list-style:none;display:grid;gap:14px;}}
-.curr-panel li{{font-size:15px;color:#475569;font-weight:500;padding-left:20px;position:relative;}}
-.curr-panel li::before{{content:'→';position:absolute;left:0;color:var(--p);font-weight:900;}}
-.faq-list{{max-width:780px;margin:0 auto;}}
-.faq-item{{border:2px solid #0f172a;border-radius:16px;margin-bottom:12px;overflow:hidden;box-shadow:3px 3px 0 #0f172a;transition:all .3s;}}
-.faq-item[open]{{box-shadow:3px 3px 0 var(--p);}}
-.faq-item summary{{padding:20px 24px;font-weight:700;font-size:16px;cursor:pointer;list-style:none;display:flex;justify-content:space-between;align-items:center;}}
-.faq-item summary::-webkit-details-marker{{display:none;}}
-.faq-item summary::after{{content:'+';width:28px;height:28px;background:#f1f5f9;border:2px solid #0f172a;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;}}
-.faq-item[open] summary::after{{content:'−';background:#0f172a;color:#fff;}}
-.faq-ans{{padding:14px 24px 24px;color:#64748b;font-size:14px;line-height:1.8;border-top:2px solid #e5e7eb;margin:0 10px;}}
-.sticky-cta-modal{{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:999;max-width:600px;width:calc(100% - 48px);}}
-.sticky-cta-bar{{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:12px;padding:12px 22px;background:#fff;border:1px solid #e2e8f0;border-radius:20px;box-shadow:0 20px 55px rgba(0,0,0,0.25);}}
-.sticky-cta-copy p{{margin:0;color:#0f172a;font-size:16px;line-height:1.6;}}
-.sticky-cta-button{{display:inline-flex;align-items:center;justify-content:center;padding:16px 34px;border-radius:999px;background:#fbbf24;color:#0f172a;font-weight:800;box-shadow:0 12px 30px rgba(251,191,36,0.18);}}
-.instructor-card{{display:flex;gap:24px;align-items:center;max-width:980px;margin:0 auto;padding:40px;background:#fff;border:1px solid rgba(15,23,42,0.08);border-radius:28px;}}
-.instructor-photo{{width:220px;min-width:220px;border-radius:24px;overflow:hidden;box-shadow:0 16px 40px rgba(15,23,42,0.08);}}
-.instructor-photo img{{width:100%;height:100%;object-fit:cover;display:block;}}
-.instructor-copy{{max-width:680px;}}
-.instructor-label{{font-size:13px;font-weight:800;color:#0f172a;text-transform:uppercase;letter-spacing:.2em;display:block;margin-bottom:12px;}}
-.instructor-title{{font-size:17px;font-weight:700;color:#64748b;margin:12px 0 0;}}
-.instructor-description{{font-size:16px;line-height:1.9;color:#475569;}}
-.cta-bottom{{background:#0f172a;padding:64px 0 0;text-align:center;}}
-.cta-bottom h2{{font-size:clamp(24px,3vw,36px);font-weight:900;color:#fff;margin-bottom:28px;}}
-.cta-bottom a{{background:#fbbf24;color:#0f172a;padding:16px 48px;border-radius:14px;font-size:17px;font-weight:800;display:inline-block;box-shadow:4px 4px 0 rgba(255,255,255,0.3);}}
-.footer{{background:#fffbeb;border-top:2px solid #0f172a;padding:40px 0;text-align:center;font-size:12px;color:#64748b;font-weight:600;}}
-@media(max-width:768px){{
-  .hero .inner,.curr-wrap{{grid-template-columns:1fr;}}
-  .feat-grid,.feat-grid.feat-five{{grid-template-columns:1fr;}}
-  .feat-grid.feat-five .feat-card{{grid-column:auto;}}
-  .curr-tabs{{flex-direction:row;overflow-x:auto;}}
+:root {{
+    --google-blue: #4285F4;
+    --google-red: #EA4335;
+    --google-yellow: #FBBC04;
+    --google-green: #34A853;
+    --bg-dark: #0D1117;
+    --bg-alt: #13161D;
+    --text-primary: #FFFFFF;
+    --text-secondary: #B0B8C1;
+    --border: rgba(255, 255, 255, 0.1);
+    --gradient-google: linear-gradient(90deg, var(--google-blue), var(--google-red), var(--google-yellow), var(--google-green));
 }}
-{_shared_extra_css(dark=False)}
+* {{ margin: 0; padding: 0; box-sizing: border-box; }}
+html {{ scroll-behavior: smooth; }}
+body {{ font-family: 'Noto Sans KR', sans-serif; background-color: var(--bg-dark); color: var(--text-primary); line-height: 1.6; overflow-x: hidden; }}
+.num {{ font-family: 'Inter', sans-serif; }}
+h1, h2, h3, h4, h5, h6 {{ font-weight: 700; line-height: 1.3; }}
+h2 {{ font-size: 2.5rem; text-align: center; margin-bottom: 1rem; }}
+.section-sub {{ font-size: 1.2rem; color: var(--text-secondary); text-align: center; margin-bottom: 3rem; word-break: keep-all; }}
+.container {{ max-width: 1200px; margin: 0 auto; padding: 0 20px; }}
+section {{ padding: 100px 0; position: relative; scroll-margin-top: 15vh; }}
+section:nth-child(even) {{ background-color: var(--bg-alt); }}
+
+.btn {{ display: inline-flex; align-items: center; justify-content: center; padding: 16px 32px; border-radius: 8px; font-size: 1.1rem; font-weight: 700; text-decoration: none; transition: all 0.3s ease; cursor: pointer; border: none; }}
+.btn-primary {{ background-color: var(--google-blue); color: #fff; box-shadow: 0 4px 15px rgba(66, 133, 244, 0.4); }}
+.btn-primary:hover {{ transform: translateY(-2px); box-shadow: 0 6px 20px rgba(66, 133, 244, 0.6); background-color: #3b78e7; }}
+.btn-outline {{ background-color: transparent; color: #fff; border: 1px solid var(--border); }}
+.btn-outline:hover {{ background-color: rgba(255, 255, 255, 0.05); border-color: rgba(255, 255, 255, 0.2); }}
+
+.gradient-text {{ background: var(--gradient-google); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }}
+.gradient-border-card {{ position: relative; background: var(--bg-dark); border-radius: 16px; padding: 40px 30px; z-index: 1; transition: transform 0.3s ease; height: 100%; }}
+.gradient-border-card::before {{ content: ''; position: absolute; inset: -2px; border-radius: 18px; background: var(--gradient-google); z-index: -1; opacity: 0.5; transition: opacity 0.3s ease; }}
+.gradient-border-card:hover {{ transform: translateY(-5px); }}
+.gradient-border-card:hover::before {{ opacity: 1; }}
+
+.fade-in-up {{ opacity: 0; transform: translateY(50px); transition: opacity 1.3s cubic-bezier(0.16, 1, 0.3, 1), transform 1.3s cubic-bezier(0.16, 1, 0.3, 1); }}
+.fade-in-up.visible {{ opacity: 1; transform: translateY(0); }}
+
+.hero {{ min-height: 100vh; display: flex; align-items: center; justify-content: center; padding-top: 150px; background: var(--bg-dark); position: relative; overflow: hidden; text-align: center; }}
+.hero-particles {{ position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none; background-image: radial-gradient(circle at 20% 30%, rgba(66, 133, 244, 0.25) 0%, transparent 60%), radial-gradient(circle at 80% 20%, rgba(234, 67, 53, 0.2) 0%, transparent 60%), radial-gradient(circle at 30% 80%, rgba(251, 188, 4, 0.2) 0%, transparent 60%), radial-gradient(circle at 70% 80%, rgba(52, 168, 83, 0.2) 0%, transparent 60%); filter: blur(40px); }}
+.hero-content {{ position: relative; z-index: 1; max-width: 900px; display: flex; flex-direction: column; align-items: center; }}
+.hero h1 {{ font-size: 4rem; font-weight: 900; letter-spacing: -1.5px; margin-bottom: 24px; word-break: keep-all; }}
+.hero p.sub {{ font-size: 1.4rem; color: var(--text-secondary); margin-bottom: 40px; line-height: 1.6; word-break: keep-all; }}
+.hero-cta {{ display: flex; justify-content: center; gap: 20px; margin-bottom: 60px; }}
+.hero-visual img {{ max-width: 600px; width: 100%; border-radius: 20px; box-shadow: 0 10px 40px rgba(0,0,0,0.5); }}
+
+.stats-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 30px; text-align: center; }}
+.stat-item h3 {{ font-size: 3.5rem; color: var(--text-primary); margin-bottom: 10px; font-weight: 800; }}
+.stat-item h3 span {{ color: var(--google-blue); }}
+.stat-item p {{ color: var(--text-secondary); font-size: 1.1rem; }}
+
+.solution-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 30px; }}
+.solution-card h3 {{ font-size: 1.5rem; margin: 15px 0; color: #fff; }}
+.solution-card p {{ color: var(--text-secondary); line-height: 1.6; }}
+
+.recruit-box {{ background: linear-gradient(135deg, rgba(66, 133, 244, 0.1), rgba(13, 17, 23, 1)); border: 1px solid rgba(66, 133, 244, 0.3); border-radius: 20px; padding: 50px; text-align: center; max-width: 800px; margin: 0 auto; }}
+.recruit-info {{ display: grid; grid-template-columns: 1fr 1fr; gap: 20px; text-align: left; }}
+.info-item {{ background: rgba(255, 255, 255, 0.05); padding: 16px 20px; border-radius: 12px; display: flex; align-items: center; gap: 12px; }}
+.info-item div span {{ display: block; font-size: 0.9rem; color: var(--text-secondary); }}
+.info-item div strong {{ font-size: 1.1rem; color: #fff; }}
+
+.target-box {{ background: var(--bg-dark); border: 1px solid var(--border); border-radius: 16px; padding: 40px; max-width: 600px; margin: 0 auto; }}
+.target-box h3 {{ margin-bottom: 24px; font-size: 1.4rem; display: flex; align-items: center; gap: 10px; color: var(--google-blue); }}
+.target-list {{ list-style: none; }}
+.target-list li {{ margin-bottom: 16px; padding-left: 30px; position: relative; color: var(--text-secondary); }}
+.target-list li::before {{ content: '✓'; font-weight: 900; color: var(--google-blue); position: absolute; left: 0; top: 2px; }}
+
+.timeline {{ max-width: 800px; margin: 0 auto; position: relative; }}
+.timeline::before {{ content: ''; position: absolute; top: 0; bottom: 0; left: 20px; width: 2px; background: var(--border); }}
+.timeline-item {{ position: relative; padding-left: 60px; margin-bottom: 40px; }}
+.timeline-item:last-child {{ margin-bottom: 0; }}
+.timeline-item::before {{ content: ''; position: absolute; left: 12px; top: 5px; width: 18px; height: 18px; border-radius: 50%; background: var(--bg-alt); border: 4px solid var(--google-blue); z-index: 1; }}
+.step-label {{ display: inline-block; color: var(--google-blue); font-weight: 700; font-size: 0.9rem; margin-bottom: 8px; letter-spacing: 1px; }}
+.timeline-item h3 {{ font-size: 1.4rem; margin-bottom: 12px; color: #fff; }}
+.timeline-result {{ background: rgba(255, 255, 255, 0.05); padding: 14px 20px; border-radius: 8px; font-weight: 600; color: var(--google-green); display: flex; justify-content: space-between; align-items: center; cursor: pointer; width: 100%; transition: background 0.3s ease; position: relative; z-index: 2; }}
+.timeline-result:hover {{ background: rgba(255, 255, 255, 0.08); }}
+.accordion-content {{ max-height: 0; overflow: hidden; transition: max-height 0.4s ease-out, opacity 0.4s ease-out; opacity: 0; }}
+.curriculum-accordion.open .accordion-content {{ max-height: 600px; opacity: 1; transition: max-height 0.6s ease-in-out, opacity 0.4s ease-in; }}
+.accordion-inner {{ background: rgba(255, 255, 255, 0.02); border: 1px solid rgba(255, 255, 255, 0.05); border-top: none; border-radius: 0 0 8px 8px; padding: 20px; margin-top: -8px; padding-top: 28px; color: var(--text-secondary); font-size: 0.95rem; line-height: 1.6; }}
+.edu-section ul {{ padding-left: 20px; margin: 0; }}
+.edu-section ul li {{ margin-bottom: 8px; color: var(--text-secondary); }}
+
+.faq-list {{ max-width: 800px; margin: 0 auto; }}
+.faq-item {{ border-bottom: 1px solid var(--border); }}
+.faq-item:first-child {{ border-top: 1px solid var(--border); }}
+.faq-question {{ width: 100%; text-align: left; background: none; border: none; padding: 24px 20px; font-size: 1.1rem; font-weight: 600; color: var(--text-primary); cursor: pointer; display: flex; justify-content: space-between; align-items: center; font-family: inherit; }}
+.faq-icon {{ font-size: 1.5rem; color: var(--google-blue); transition: transform 0.3s; display: inline-block; }}
+.faq-item.active .faq-icon {{ transform: rotate(45deg); }}
+.faq-answer {{ padding: 0 20px; max-height: 0; overflow: hidden; transition: max-height 0.3s ease, padding 0.3s ease; color: var(--text-secondary); }}
+.faq-item.active .faq-answer {{ padding: 0 20px 24px; max-height: 300px; }}
+
+.final-cta {{ background: var(--bg-dark); position: relative; text-align: center; padding: 120px 20px; overflow: hidden; }}
+.final-cta::before {{ content: ''; position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: radial-gradient(circle at center, rgba(66, 133, 244, 0.15), transparent 70%); z-index: 0; }}
+.final-cta .container {{ position: relative; z-index: 1; }}
+.final-cta h2 {{ font-size: 3rem; margin-bottom: 20px; color: #fff; }}
+.final-cta .btn-primary {{ font-size: 1.4rem; padding: 24px 80px; border-radius: 50px; margin-bottom: 30px; box-shadow: 0 10px 30px rgba(66, 133, 244, 0.4); }}
+
+@media (max-width: 768px) {{
+    .hero h1 {{ font-size: 2.5rem; }}
+    .stats-grid, .solution-grid, .recruit-info {{ grid-template-columns: 1fr; }}
+}}
+{_shared_extra_css(dark=True)}
 </style>
 </head>
 <body>
 {_build_navbar_html()}
-<section class="hero"><div class="inner">
-  <div><h1 class="hero-title">{ctx["title"]}</h1><p class="hero-subtitle">{ctx["subtitle"]}</p><p class="hero-desc">{ctx["body"]}</p><a href="{ctx["cta_url"]}" class="hero-cta">{ctx["cta_text"]}</a></div>
-  {hero_img if hero_img else "<div></div>"}
-</div></section>
-{"<section class='section warm'><div class='inner'><div class='stats-grid'>" + stats_html + "</div></div></section>" if stats_html else ""}
-{"<section class='section cool scroll-reveal' id='section-info'><div class='inner'><h2 class='sec-title'>모집 정보</h2><div class='infos-grid'>" + infos_html + "</div></div></section>" if infos_html else ""}
-{"<section class='section warm scroll-reveal'><div class='inner'><h2 class='sec-title'>이런 분들에게 추천합니다</h2><ul class='target-list'>" + target_html + "</ul></div></section>" if target_html else ""}
-{"<section class='section peach scroll-reveal' id='section-features'><div class='inner'><h2 class='sec-title'>과정 특징</h2><div class='feat-grid " + feat_cls + "'>" + features_html + "</div></div></section>" if features_html else ""}
+
+<section class="hero">
+    <div class="hero-particles"></div>
+    <div class="container hero-content fade-in-up">
+        <h1>{ctx["title"]}</h1>
+        <p class="sub">{ctx["subtitle"]}<br>{ctx["body"]}</p>
+        <div class="hero-cta">
+            <a href="{ctx["cta_url"]}" class="btn btn-primary">{ctx["cta_text"]}</a>
+        </div>
+        {hero_img}
+    </div>
+</section>
+
+{"<section id='stats'><div class='container'><div class='stats-grid'>" + stats_html + "</div></div></section>" if stats_html else ""}
+{"<section id='infos'><div class='container'><div class='recruit-box fade-in-up'><div class='recruit-info'>" + infos_html + "</div></div></div></section>" if infos_html else ""}
+{"<section id='features'><div class='container'><h2 class='fade-in-up'>Features</h2><div class='solution-grid'>" + features_html + "</div></div></section>" if features_html else ""}
+{"<section id='target'><div class='container'><div class='target-box fade-in-up'><h3>Target Audience</h3><ul class='target-list'>" + target_html + "</ul></div></div></section>" if target_html else ""}
+{"<section id='curriculum'><div class='container'><h2 class='fade-in-up'>Curriculum</h2><div class='timeline'>" + curr_html + "</div></div></section>" if curr_html else ""}
 {_build_instructor_section_html(ctx)}
-{"<section class='section warm scroll-reveal' id='section-curriculum'><div class='inner'><h2 class='sec-title'>커리큘럼</h2><div class='curr-wrap'><div class='curr-tabs'>" + curr_tabs + "</div><div class='curr-panels'>" + curr_panels + "</div></div></div></section>" if curr_tabs else ""}
-{"<section class='section cool scroll-reveal' id='section-faq'><div class='inner'><h2 class='sec-title'>자주 묻는 질문</h2><div class='faq-list'>" + faqs_html + "</div></div></section>" if faqs_html else ""}
-<section class="cta-bottom"><div class="inner"><h2>지금 바로 시작하세요</h2><a href="{ctx["cta_url"]}">{ctx["cta_text"]}</a></div></section>
+{"<section id='faq'><div class='container'><h2 class='fade-in-up'>FAQ</h2><div class='faq-list fade-in-up'>" + faqs_html + "</div></div></section>" if faqs_html else ""}
+
+<section class="final-cta">
+    <div class="container fade-in-up">
+        <h2>Start Now</h2>
+        <a href="{ctx["cta_url"]}" class="btn btn-primary">{ctx["cta_text"]}</a>
+    </div>
+</section>
+
 {_build_sticky_cta_html(ctx)}
 {_build_footer_html(ctx)}
-<script>{_SHARED_JS}</script>
-</body></html>"""
+
+<script>
+// FAQ Accordion
+document.querySelectorAll('.faq-item').forEach(item => {{
+    const btn = item.querySelector('.faq-question');
+    btn.addEventListener('click', () => {{
+        const isActive = item.classList.contains('active');
+        document.querySelectorAll('.faq-item').forEach(i => i.classList.remove('active'));
+        if (!isActive) item.classList.add('active');
+    }});
+}});
+
+// Curriculum Accordion
+document.querySelectorAll('.accordion-btn').forEach(btn => {{
+    btn.addEventListener('click', () => {{
+        const parent = btn.closest('.curriculum-accordion');
+        parent.classList.toggle('open');
+    }});
+}});
+
+// Intersection Observer for animations
+const observer = new IntersectionObserver((entries) => {{
+    entries.forEach(entry => {{
+        if (entry.isIntersecting) {{
+            entry.target.classList.add('visible');
+            // Counter Animation
+            if (entry.target.querySelector('.counter')) {{
+                const counters = entry.target.querySelectorAll('.counter');
+                counters.forEach(counter => {{
+                    if (counter.dataset.done) return;
+                    const raw = counter.getAttribute('data-target');
+                    const match = raw.match(/^([^0-9]*?)(\\d+)(.*?)$/);
+                    if (!match) {{
+                        counter.textContent = raw;
+                        counter.dataset.done = '1';
+                        return;
+                    }}
+                    const prefix = match[1], target = parseInt(match[2], 10), suffix = match[3];
+                    const duration = 1200;
+                    const start = performance.now();
+                    function update(time) {{
+                        const progress = Math.min((time - start) / duration, 1);
+                        const current = Math.floor(progress * target);
+                        counter.textContent = prefix + current + suffix;
+                        if (progress < 1) requestAnimationFrame(update);
+                        else counter.textContent = raw;
+                    }}
+                    requestAnimationFrame(update);
+                    counter.dataset.done = '1';
+                }});
+            }}
+            observer.unobserve(entry.target);
+        }}
+    }});
+}});
+
+document.querySelectorAll('.fade-in-up, .stat-item').forEach(el => observer.observe(el));
+</script>
+</body>
+</html>"""
 
 
 def _render_premium_bootcamp(ctx: dict) -> str:
