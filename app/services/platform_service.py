@@ -244,18 +244,6 @@ def _build_footer_html(ctx: dict) -> str:
     primary = ctx.get("primary", "#2563eb")
     return f"""<footer class='site-footer'>
   <div class='inner'>
-    <div class='footer-content'>
-      <div class='footer-info'>
-        <p class='footer-course-name'>과정명: GCP와 바이브코딩으로 완성하는 풀스택 AI 에이전트 개발자</p>
-        <p class='footer-org'>운영사: ㈜아이코어이앤씨 &nbsp;|&nbsp; 컨소시엄: 구글클라우드코리아 &nbsp;|&nbsp; 주관: SBA 서울경제진흥원</p>
-      </div>
-      <div class='footer-contact'>
-        <p class='footer-contact-title'>[문의사항]</p>
-        <p>담당: 아이코어이앤씨 이상현 팀장</p>
-        <p>전화: <a href='tel:02-573-3836'>02-573-3836</a></p>
-        <p>이메일: <a href='mailto:shlee@aicore.co.kr'>shlee@aicore.co.kr</a></p>
-      </div>
-    </div>
     <div class='footer-bottom'>
       <p>© 2026 iCoreE&C INC. ALL RIGHTS RESERVED.</p>
     </div>
