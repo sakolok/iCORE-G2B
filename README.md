@@ -35,6 +35,23 @@ cp .env.example .env
 .venv/bin/uvicorn main:app --reload --env-file .env
 ```
 
+### 사전규격 API 로컬 확인
+
+사전규격 모듈은 공통 원본을 `bfSpecRgstNo` 기준으로 보관하고, 사용자별 Sheet 반영 상태는 별도로 저장합니다. 원본을 삭제하지 않으므로 다음 수집에서도 동일한 등록번호는 갱신됩니다.
+
+```bash
+cp .env.example .env
+# .env: DATABASE_URL=sqlite:///./icore-local.db
+# .env: G2B_PRE_SPEC_SERVICE_KEY=<발급받은 키>  # 저장소에 커밋하지 않음
+.venv/bin/uvicorn main:app --reload --env-file .env
+```
+
+- `POST /api/v1/pre-specifications/collect`: 관리자 수동 수집
+- `GET /api/v1/pre-specifications`: 등록기간, 포함/제외 키워드 AND/OR, 기관, 예산, 첨부, 마감 상태 필터
+- `GET /api/v1/pre-specifications/{bf_spec_rgst_no}`: 상세 조회
+- `POST /api/v1/pre-specifications/export/sheet`: Sheet 반영 미리보기 및 확정 반영
+- `POST /api/v1/pre-specifications/sheet/reconcile`: 기존 Sheet 등록번호를 사용자 검토 상태와 동기화
+
 예제는 로컬 전용 단일 사용자 인증을 사용하며 프론트의
 `VITE_SINGLE_USER_MODE_ENABLED=true`와 함께 실행합니다. 운영에서는 단일 사용자 모드를 끄고
 동일한 Google OAuth Client ID를 프론트와 백엔드에 설정합니다. 비밀값과 서비스계정 JSON은

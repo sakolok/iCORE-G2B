@@ -68,6 +68,15 @@ class Settings(BaseModel):
     g2b_award_scheduler_oidc_audience: str = os.getenv(
         "G2B_AWARD_SCHEDULER_OIDC_AUDIENCE", ""
     )
+    g2b_pre_spec_service_key: str = os.getenv(
+        "G2B_PRE_SPEC_SERVICE_KEY", os.getenv("G2B_SERVICE_KEY", "")
+    )
+    g2b_pre_spec_scheduler_target_url: str = os.getenv(
+        "G2B_PRE_SPEC_SCHEDULER_TARGET_URL", ""
+    )
+    g2b_pre_spec_scheduler_oidc_audience: str = os.getenv(
+        "G2B_PRE_SPEC_SCHEDULER_OIDC_AUDIENCE", ""
+    )
     apps_script_webhook_url: str = os.getenv("APPS_SCRIPT_WEBHOOK_URL", "")
     scraper_result_callback_url: str = os.getenv("SCRAPER_RESULT_CALLBACK_URL", "")
     gsheet_id: str = os.getenv("GSHEET_ID", "")

@@ -356,3 +356,37 @@ def verify_cloud_scheduler_oidc_token(
         or not str(payload.get("sub") or "").strip()
     ):
         raise HTTPException(status_code=401, detail="유효하지 않은 Scheduler 인증입니다.")
+
+
+def verify_pre_spec_scheduler_oidc_token(
+    authorization: str | None = Header(default=None),
+) -> None:
+    """Verify the independently configured pre-specification scheduler job."""
+    if settings.environment.strip().lower() in {"local", "test"}:
+        return
+
+    expected_audience = (
+        settings.g2b_pre_spec_scheduler_oidc_audience.strip()
+        or settings.g2b_pre_spec_scheduler_target_url.strip()
+    )
+    expected_email = settings.cloud_scheduler_invoker_service_account.strip().lower()
+    if not expected_audience or not expected_email:
+        raise HTTPException(status_code=503, detail="사전규격 Scheduler OIDC 설정이 없습니다.")
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="유효하지 않은 Scheduler 인증입니다.")
+
+    token = authorization.removeprefix("Bearer ").strip()
+    try:
+        payload = google_id_token.verify_oauth2_token(token, GoogleRequest(), expected_audience)
+    except Exception as error:
+        raise HTTPException(status_code=401, detail="유효하지 않은 Scheduler 인증입니다.") from error
+
+    if (
+        str(payload.get("iss") or "")
+        not in {"accounts.google.com", "https://accounts.google.com"}
+        or str(payload.get("aud") or "") != expected_audience
+        or str(payload.get("email") or "").strip().lower() != expected_email
+        or payload.get("email_verified") is not True
+        or not str(payload.get("sub") or "").strip()
+    ):
+        raise HTTPException(status_code=401, detail="유효하지 않은 Scheduler 인증입니다.")

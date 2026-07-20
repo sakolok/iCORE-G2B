@@ -1,0 +1,88 @@
+from dataclasses import dataclass
+from datetime import date
+from decimal import Decimal, InvalidOperation
+from typing import Any
+
+import requests
+
+from app.core.config import settings
+
+
+class PreSpecificationApiError(RuntimeError):
+    pass
+
+
+class PreSpecificationApiConfigurationError(PreSpecificationApiError):
+    pass
+
+
+@dataclass(frozen=True)
+class PreSpecificationApiConfig:
+    base_url: str
+    service_key: str
+    page_size: int = 100
+    timeout_seconds: int = 20
+
+    @classmethod
+    def from_env(cls):
+        if not settings.g2b_pre_spec_service_key.strip():
+            raise PreSpecificationApiConfigurationError("G2B_PRE_SPEC_SERVICE_KEY 또는 G2B_SERVICE_KEY가 필요합니다.")
+        return cls(
+            base_url="https://apis.data.go.kr/1230000/ao/HrcspSsstndrdInfoService",
+            service_key=settings.g2b_pre_spec_service_key.strip(),
+        )
+
+
+class PreSpecificationApiClient:
+    PATH = "/getPublicPrcureThngInfoServc"
+
+    def __init__(self, config: PreSpecificationApiConfig, session: requests.Session | None = None):
+        self.config = config
+        self.session = session or requests.Session()
+
+    @staticmethod
+    def _items(payload: Any) -> tuple[int, list[dict[str, Any]]]:
+        root = payload.get("response", payload) if isinstance(payload, dict) else {}
+        header, body = root.get("header", {}), root.get("body", {})
+        if str(header.get("resultCode") or "") != "00":
+            raise PreSpecificationApiError(str(header.get("resultMsg") or "사전규격 API 오류"))
+        items = body.get("items", {})
+        items = items.get("item", []) if isinstance(items, dict) else items
+        if isinstance(items, dict):
+            items = [items]
+        return int(str(body.get("totalCount") or 0)), [item for item in (items or []) if isinstance(item, dict)]
+
+    def collect(self, start_date: date, end_date: date) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        page = 1
+        total = None
+        while total is None or len(rows) < total:
+            try:
+                response = self.session.get(
+                    f"{self.config.base_url}{self.PATH}",
+                    params={"serviceKey": self.config.service_key, "type": "json", "inqryDiv": "1", "inqryBgnDt": start_date.strftime("%Y%m%d0000"), "inqryEndDt": end_date.strftime("%Y%m%d2359"), "pageNo": page, "numOfRows": self.config.page_size},
+                    headers={"Accept": "application/json"}, timeout=self.config.timeout_seconds,
+                )
+                response.raise_for_status()
+                current_total, page_rows = self._items(response.json())
+            except requests.RequestException as error:
+                raise PreSpecificationApiError("사전규격 API 호출에 실패했습니다.") from error
+            except ValueError as error:
+                raise PreSpecificationApiError("사전규격 API가 JSON 응답을 반환하지 않았습니다.") from error
+            total = current_total
+            rows.extend(page_rows)
+            if not page_rows:
+                break
+            page += 1
+        return rows
+
+
+def normalize_source_item(item: dict[str, Any]) -> dict[str, Any]:
+    def amount(value: Any) -> Decimal | None:
+        try:
+            return Decimal(str(value).replace(",", ""))
+        except (InvalidOperation, TypeError, ValueError):
+            return None
+    external_id = str(item.get("bfSpecRgstNo") or "").strip()
+    attachments = [{"key": f"{external_id}-{index}", "label": f"규격서 {index}", "url": str(item.get(f"specDocFileUrl{index}") or "").strip()} for index in range(1, 6) if str(item.get(f"specDocFileUrl{index}") or "").strip()]
+    return {"bf_spec_rgst_no": external_id, "reference_no": item.get("refNo"), "business_name": item.get("prdctClsfcNoNm"), "business_type": item.get("bsnsDivNm"), "demand_agency_name": item.get("rlDminsttNm") or item.get("orderInsttNm"), "ordering_agency_name": item.get("orderInsttNm"), "allocated_budget": amount(item.get("asignBdgtAmt")), "registered_at": item.get("rgstDt") or item.get("rcptDt"), "opinion_deadline": item.get("opninRgstClseDt"), "delivery_deadline": item.get("dlvrTmlmtDt"), "contact_name": item.get("ofclNm"), "contact_phone": item.get("ofclTelNo"), "attachments": attachments, "raw": item}

@@ -9,6 +9,7 @@ from app.routers.auth import router as auth_router
 from app.routers.health import router as health_router
 from app.routers.scraper import router as scraper_router
 from app.g2b.opening_results.router import router as opening_results_router
+from app.g2b.pre_specifications.router import router as pre_specifications_router
 
 app = FastAPI(title=settings.app_name, version="0.1.0")
 
@@ -24,6 +25,7 @@ app.include_router(health_router)
 app.include_router(auth_router)
 app.include_router(scraper_router)
 app.include_router(opening_results_router)
+app.include_router(pre_specifications_router)
 
 
 @app.on_event("startup")
