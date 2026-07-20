@@ -1,0 +1,6 @@
+.DS_Store
+.gstack/
+icore-front/
+icore-back/
+outputs/
+*.inspect.ndjson
