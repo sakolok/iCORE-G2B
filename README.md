@@ -47,3 +47,7 @@ PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m unittest discover -s tests -p 'tes
 docker build -t icore-back:local .
 docker build -f Dockerfile.cloudrun-scraper -t icore-scraper:local .
 ```
+
+GitHub Actions의 GCP 배포는 저장소 변수 `GCP_DEPLOY_ENABLED=true`와 필요한 GCP
+secrets를 모두 설정한 경우에만 실행됩니다. 변수가 없으면 테스트·이미지 빌드 검증까지만
+수행합니다.
