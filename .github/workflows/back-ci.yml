@@ -409,7 +409,7 @@ jobs:
           ID_TOKEN=$(gcloud auth print-identity-token --audiences="$WORKER_URL")
           for _ in $(seq 1 30); do
             if curl --fail --silent \
-              --header="Authorization: Bearer $ID_TOKEN" \
+              --header "Authorization: Bearer $ID_TOKEN" \
               "$CANDIDATE_URL/health" >/dev/null; then
               candidate_healthy=true
               break
@@ -432,7 +432,7 @@ jobs:
           ID_TOKEN=$(gcloud auth print-identity-token --audiences="$WORKER_URL")
           for _ in $(seq 1 15); do
             if curl --fail --silent \
-              --header="Authorization: Bearer $ID_TOKEN" \
+              --header "Authorization: Bearer $ID_TOKEN" \
               "$WORKER_URL/health" >/dev/null; then
               stable_healthy=true
               break
