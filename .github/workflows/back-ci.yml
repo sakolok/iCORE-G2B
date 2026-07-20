@@ -105,6 +105,13 @@ jobs:
             echo "GSHEET_SERVICE_ACCOUNT_JSON is not a service-account JSON object."
             exit 1
           fi
+          if ! jq -e \
+            --arg expected "github-deployer@${PROJECT_ID}.iam.gserviceaccount.com" \
+            '.type == "service_account" and .client_email == $expected' \
+            <<<"$GCP_SA_KEY" >/dev/null; then
+            echo "GCP_SA_KEY must belong to the github-deployer service account."
+            exit 1
+          fi
           for value in \
             "$AUTH_SECRET_KEY" "$DEFAULT_ADMIN_PASSWORD" \
             "$GOOGLE_OAUTH_CLIENT_ID" "$CORS_ALLOWED_ORIGINS" \
@@ -130,7 +137,13 @@ jobs:
 
       - name: Configure Docker for Artifact Registry
         if: vars.GCP_DEPLOY_ENABLED == 'true' && ((github.event_name == 'push' && github.ref == 'refs/heads/back') || github.event_name == 'workflow_dispatch')
-        run: gcloud auth configure-docker ${{ env.GAR_LOCATION }}-docker.pkg.dev --quiet
+        env:
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+        run: |
+          printf '%s' "$GCP_SA_KEY" | docker login \
+            -u _json_key \
+            --password-stdin \
+            "https://${{ env.GAR_LOCATION }}-docker.pkg.dev"
 
       - name: Push API and worker images
         if: vars.GCP_DEPLOY_ENABLED == 'true' && ((github.event_name == 'push' && github.ref == 'refs/heads/back') || github.event_name == 'workflow_dispatch')
