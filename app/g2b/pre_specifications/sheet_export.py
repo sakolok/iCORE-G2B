@@ -2,6 +2,7 @@ import json
 import os
 from datetime import datetime
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -53,9 +54,19 @@ class PreSpecificationSheetWriter:
         inline_json = os.getenv("GSHEET_SERVICE_ACCOUNT_JSON", "").strip()
         if inline_json:
             try:
-                credentials = service_account.Credentials.from_service_account_info(json.loads(inline_json), scopes=["https://www.googleapis.com/auth/spreadsheets"])
-            except (ValueError, KeyError) as error:
-                raise PreSpecificationSheetError("GSHEET_SERVICE_ACCOUNT_JSON 형식이 올바르지 않습니다.") from error
+                account = (
+                    json.loads(inline_json)
+                    if inline_json.startswith("{")
+                    else json.loads(Path(inline_json).expanduser().read_text(encoding="utf-8"))
+                )
+                credentials = service_account.Credentials.from_service_account_info(
+                    account,
+                    scopes=["https://www.googleapis.com/auth/spreadsheets"],
+                )
+            except (OSError, ValueError, KeyError) as error:
+                raise PreSpecificationSheetError(
+                    "GSHEET_SERVICE_ACCOUNT_JSON JSON 또는 파일 경로가 올바르지 않습니다."
+                ) from error
             return build("sheets", "v4", credentials=credentials, cache_discovery=False)
         try:
             import google.auth
