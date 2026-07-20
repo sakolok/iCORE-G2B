@@ -798,6 +798,40 @@ class AuthTenancyTests(unittest.TestCase):
         verifier.assert_called_once()
         self.assertEqual(verifier.call_args.args[2], audience)
 
+    def test_scheduler_oidc_uses_explicit_cloud_run_audience(self):
+        target_url = "https://api.iceu.kr/api/v1/results/internal/collect"
+        audience = "https://api.iceu.kr"
+        service_account = "scheduler@project.iam.gserviceaccount.com"
+        claims = {
+            "iss": "https://accounts.google.com",
+            "aud": audience,
+            "sub": "scheduler-service-account-subject",
+            "email": service_account,
+            "email_verified": True,
+        }
+        with (
+            patch.object(settings, "environment", "production"),
+            patch.object(settings, "g2b_award_scheduler_target_url", target_url),
+            patch.object(
+                settings,
+                "g2b_award_scheduler_oidc_audience",
+                audience,
+            ),
+            patch.object(
+                settings,
+                "cloud_scheduler_invoker_service_account",
+                service_account,
+            ),
+            patch(
+                "app.services.auth_service.google_id_token.verify_oauth2_token",
+                return_value=claims,
+            ) as verifier,
+        ):
+            verify_cloud_scheduler_oidc_token(authorization="Bearer signed-oidc-token")
+
+        verifier.assert_called_once()
+        self.assertEqual(verifier.call_args.args[2], audience)
+
     def test_scheduler_oidc_rejects_missing_or_wrong_identity(self):
         audience = "https://api.iceu.kr/api/v1/results/internal/collect"
         service_account = "scheduler@project.iam.gserviceaccount.com"

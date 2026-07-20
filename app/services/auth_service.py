@@ -315,7 +315,10 @@ def verify_cloud_scheduler_oidc_token(
     if settings.environment.strip().lower() in {"local", "test"}:
         return
 
-    expected_audience = settings.g2b_award_scheduler_target_url.strip()
+    expected_audience = (
+        settings.g2b_award_scheduler_oidc_audience.strip()
+        or settings.g2b_award_scheduler_target_url.strip()
+    )
     expected_email = settings.cloud_scheduler_invoker_service_account.strip().lower()
     if not expected_audience or not expected_email:
         raise HTTPException(

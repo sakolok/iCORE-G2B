@@ -9,16 +9,20 @@ on:
       - back
   workflow_dispatch:
 
+concurrency:
+  group: back-production
+  cancel-in-progress: false
+
 env:
   PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
-  GAR_LOCATION: asia-northeast3 
-  REPOSITORY: icore-docker-repo
-  IMAGE_NAME: icore-back
-  SCRAPER_IMAGE_NAME: icore-scraper
-  CLOUD_RUN_SCRAPER_SERVICE: icore-g2b-scraper
+  GAR_LOCATION: asia-northeast3
+  REPOSITORY: icore
+  API_IMAGE_NAME: icore-api
+  WORKER_IMAGE_NAME: icore-g2b-worker
+  CLOUD_RUN_API_SERVICE: icore-api
+  CLOUD_RUN_WORKER_SERVICE: icore-g2b-worker
   CLOUD_SCHEDULER_LOCATION: asia-northeast3
-  CLOUD_SCHEDULER_JOB_ID: icore-g2b-scraper-job
-  CLOUD_SCHEDULER_TIMEZONE: Asia/Seoul
+  OPENING_RESULTS_SCHEDULER_JOB_ID: icore-g2b-opening-results-12h
 
 jobs:
   test-and-build:
@@ -43,275 +47,242 @@ jobs:
         run: python -c "import main; print(main.app.title)"
 
       - name: Run backend tests
-        run: python -m unittest discover -s tests
+        run: python -m unittest discover -s tests -p 'test_*.py'
 
-      - name: Build backend image without publishing
-        run: docker build -t icore-back:ci .
+      - name: Build API image without publishing
+        run: docker build -t icore-api:ci .
 
-      - name: Build scraper image without publishing
-        run: docker build -f Dockerfile.cloudrun-scraper -t icore-scraper:ci .
+      - name: Build worker image without publishing
+        run: docker build -f Dockerfile.cloudrun-scraper -t icore-g2b-worker:ci .
 
-      - name: Authenticate to Google Cloud
-        if: github.event_name == 'push' && github.ref == 'refs/heads/back' && vars.GCP_DEPLOY_ENABLED == 'true'
-        uses: google-github-actions/auth@v2
-        with:
-          credentials_json: ${{ secrets.GCP_SA_KEY }}
-
-      - name: Setup gcloud
-        if: github.event_name == 'push' && github.ref == 'refs/heads/back' && vars.GCP_DEPLOY_ENABLED == 'true'
-        uses: google-github-actions/setup-gcloud@v2
-        with:
-          project_id: ${{ env.PROJECT_ID }}
-
-      - name: Configure Docker for Artifact Registry
-        if: github.event_name == 'push' && github.ref == 'refs/heads/back' && vars.GCP_DEPLOY_ENABLED == 'true'
-        run: |
-          gcloud auth configure-docker ${{ env.GAR_LOCATION }}-docker.pkg.dev --quiet
-
-      - name: Tag Docker image for Artifact Registry
-        if: github.event_name == 'push' && github.ref == 'refs/heads/back' && vars.GCP_DEPLOY_ENABLED == 'true'
-        run: |
-          IMAGE_PATH=${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}
-          docker tag icore-back:ci $IMAGE_PATH:${{ github.sha }}
-          docker tag $IMAGE_PATH:${{ github.sha }} $IMAGE_PATH:latest
-
-      - name: Push Docker image to Artifact Registry
-        if: github.event_name == 'push' && github.ref == 'refs/heads/back' && vars.GCP_DEPLOY_ENABLED == 'true'
-        run: |
-          IMAGE_PATH=${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}
-          docker push $IMAGE_PATH:${{ github.sha }}
-          docker push $IMAGE_PATH:latest
-
-  deploy-cloudrun-scraper:
-    needs: test-and-build
-    if: github.event_name == 'push' && github.ref == 'refs/heads/back' && vars.GCP_DEPLOY_ENABLED == 'true'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Authenticate to Google Cloud
-        uses: google-github-actions/auth@v2
-        with:
-          credentials_json: ${{ secrets.GCP_SA_KEY }}
-
-      - name: Setup gcloud
-        uses: google-github-actions/setup-gcloud@v2
-        with:
-          project_id: ${{ env.PROJECT_ID }}
-
-      - name: Configure Docker for Artifact Registry
-        run: |
-          gcloud auth configure-docker ${{ env.GAR_LOCATION }}-docker.pkg.dev --quiet
-
-      - name: Build and push scraper image
-        run: |
-          IMAGE_PATH=${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.SCRAPER_IMAGE_NAME }}
-          docker build -f Dockerfile.cloudrun-scraper -t $IMAGE_PATH:${{ github.sha }} .
-          docker tag $IMAGE_PATH:${{ github.sha }} $IMAGE_PATH:latest
-          docker push $IMAGE_PATH:${{ github.sha }}
-          docker push $IMAGE_PATH:latest
-
-      - name: Deploy scraper to Cloud Run
-        run: |
-          IMAGE_PATH=${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.SCRAPER_IMAGE_NAME }}
-          cat > scraper-env.yaml <<'EOF'
-          BACKEND_INTERNAL_BASE_URL: "${{ secrets.BACKEND_INTERNAL_BASE_URL }}"
-          SCRAPER_INTERNAL_TOKEN: "${{ secrets.SCRAPER_INTERNAL_TOKEN }}"
-          G2B_SOURCE_URL: "${{ secrets.G2B_SOURCE_URL }}"
-          G2B_SERVICE_KEY: "${{ secrets.G2B_SERVICE_KEY }}"
-          G2B_PRESTANDARD_SOURCE_URL: "${{ secrets.G2B_PRESTANDARD_SOURCE_URL }}"
-          G2B_PRESTANDARD_SERVICE_KEY: "${{ secrets.G2B_PRESTANDARD_SERVICE_KEY }}"
-          GSHEET_ID: "${{ secrets.GSHEET_ID }}"
-          GSHEET_SERVICE_ACCOUNT_JSON: '${{ secrets.GSHEET_SERVICE_ACCOUNT_JSON }}'
-          GSHEET_TAB_NAME: "나라장터 공고 수집 목록"
-          GSHEET_PRESTANDARD_TAB_NAME: "나라장터 사전 규격 수집 목록"
-          GMAIL_DELEGATED_USER: "${{ secrets.GMAIL_DELEGATED_USER }}"
-          GMAIL_SERVICE_ACCOUNT_JSON: '${{ secrets.GMAIL_SERVICE_ACCOUNT_JSON }}'
-          EOF
-
-          gcloud run deploy ${{ env.CLOUD_RUN_SCRAPER_SERVICE }} \
-            --project=${{ env.PROJECT_ID }} \
-            --region=${{ env.GAR_LOCATION }} \
-            --platform=managed \
-            --allow-unauthenticated \
-            --image=$IMAGE_PATH:${{ github.sha }} \
-            --service-account=cloud-run-call@${{ env.PROJECT_ID }}.iam.gserviceaccount.com \
-            --port=8080 \
-            --memory=512Mi \
-            --cpu=1 \
-            --timeout=300 \
-            --env-vars-file=scraper-env.yaml
-
-  deploy-vm:
-    needs: test-and-build
-    if: github.event_name == 'push' && github.ref == 'refs/heads/back' && vars.GCP_DEPLOY_ENABLED == 'true'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - name: Deploy on GCP VM via SSH
-        uses: appleboy/ssh-action@v1.0.3
+      - name: Validate production deploy configuration
+        if: vars.GCP_DEPLOY_ENABLED == 'true' && ((github.event_name == 'push' && github.ref == 'refs/heads/back') || github.event_name == 'workflow_dispatch')
         env:
-          DEPLOY_AUTH_SECRET_KEY: ${{ secrets.AUTH_SECRET_KEY }}
-          DEPLOY_DEFAULT_ADMIN_PASSWORD: ${{ secrets.DEFAULT_ADMIN_PASSWORD }}
-          DEPLOY_DEFAULT_ADMIN_EMAIL: ${{ secrets.DEFAULT_ADMIN_EMAIL }}
-          DEPLOY_GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
-          DEPLOY_GOOGLE_LOGIN_ALLOWED_EMAILS: ${{ secrets.GOOGLE_LOGIN_ALLOWED_EMAILS }}
-          DEPLOY_CORS_ALLOWED_ORIGINS: ${{ secrets.CORS_ALLOWED_ORIGINS }}
-        with:
-          host: ${{ secrets.GCP_VM_HOST }}
-          username: ${{ secrets.GCP_VM_USER }}
-          key: ${{ secrets.GCP_VM_SSH_KEY }}
-          envs: DEPLOY_AUTH_SECRET_KEY,DEPLOY_DEFAULT_ADMIN_PASSWORD,DEPLOY_DEFAULT_ADMIN_EMAIL,DEPLOY_GOOGLE_OAUTH_CLIENT_ID,DEPLOY_GOOGLE_LOGIN_ALLOWED_EMAILS,DEPLOY_CORS_ALLOWED_ORIGINS
-          script: |
-            set -euo pipefail
-
-            GAR_LOCATION="asia-northeast3"
-            PROJECT_ID="${{ secrets.GCP_PROJECT_ID }}"
-            REPOSITORY="icore-docker-repo"
-            IMAGE_NAME="icore-back"
-            IMAGE_PATH="${GAR_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/${IMAGE_NAME}"
-            DB_URL="${{ secrets.BACK_DATABASE_URL }}"
-
-            if [ "${#DEPLOY_AUTH_SECRET_KEY}" -lt 32 ]; then
-              echo "AUTH_SECRET_KEY secret must contain at least 32 characters."
-              exit 1
-            fi
-            if [ "${#DEPLOY_DEFAULT_ADMIN_PASSWORD}" -lt 12 ]; then
-              echo "DEFAULT_ADMIN_PASSWORD secret must contain at least 12 characters."
-              exit 1
-            fi
-            if [ -z "$DEPLOY_GOOGLE_OAUTH_CLIENT_ID" ]; then
-              echo "GOOGLE_OAUTH_CLIENT_ID secret must be configured."
-              exit 1
-            fi
-            if [ -z "$DEPLOY_CORS_ALLOWED_ORIGINS" ] || [ "$DEPLOY_CORS_ALLOWED_ORIGINS" = "*" ]; then
-              echo "CORS_ALLOWED_ORIGINS secret must contain the frontend origin."
-              exit 1
-            fi
-
-            # Container 내부 localhost는 컨테이너 자신을 가리키므로 VM Host로 치환
-            DB_URL="${DB_URL/@localhost:/@host.docker.internal:}"
-            DB_URL="${DB_URL/@127.0.0.1:/@host.docker.internal:}"
-
-            # Artifact Registry 인증 (VM에 gcloud가 설치되어 있어야 함)
-            gcloud auth configure-docker ${GAR_LOCATION}-docker.pkg.dev --quiet
-
-            # 기존 컨테이너를 보존한 상태에서 최신 이미지를 기동하고 health 확인
-            docker pull $IMAGE_PATH:${{ github.sha }}
-
-            set +H
-
-            docker network create icore-net || true
-
-            docker rm -f icore-back-previous || true
-            if docker inspect icore-back >/dev/null 2>&1; then
-              docker stop icore-back
-              docker rename icore-back icore-back-previous
-            fi
-
-            rollback_backend() {
-              docker rm -f icore-back || true
-              if docker inspect icore-back-previous >/dev/null 2>&1; then
-                docker rename icore-back-previous icore-back
-                docker start icore-back
-              fi
-            }
-
-            if ! docker run -d \
-              --name icore-back \
-              --restart unless-stopped \
-              --network icore-net \
-              --add-host=host.docker.internal:host-gateway \
-              -p 8000:8000 \
-              -e ENVIRONMENT=production \
-              -e DATABASE_URL="$DB_URL" \
-              -e AUTH_SECRET_KEY="$DEPLOY_AUTH_SECRET_KEY" \
-              -e DEFAULT_ADMIN_PASSWORD="$DEPLOY_DEFAULT_ADMIN_PASSWORD" \
-              -e LEGACY_PASSWORD_LOGIN_ENABLED="false" \
-              -e SINGLE_USER_MODE_ENABLED="false" \
-              -e CORS_ALLOWED_ORIGINS="$DEPLOY_CORS_ALLOWED_ORIGINS" \
-              -e DEFAULT_ADMIN_EMAIL="$DEPLOY_DEFAULT_ADMIN_EMAIL" \
-              -e GOOGLE_OAUTH_CLIENT_ID="$DEPLOY_GOOGLE_OAUTH_CLIENT_ID" \
-              -e ALLOWED_LOGIN_DOMAINS="iceu.kr,iceu.co.kr" \
-              -e GOOGLE_LOGIN_ALLOWED_EMAILS="$DEPLOY_GOOGLE_LOGIN_ALLOWED_EMAILS" \
-              -e CLOUD_SCHEDULER_ENABLED="true" \
-              -e CLOUD_SCHEDULER_PROJECT_ID="${{ secrets.GCP_PROJECT_ID }}" \
-              -e CLOUD_SCHEDULER_LOCATION="${{ env.CLOUD_SCHEDULER_LOCATION }}" \
-              -e CLOUD_SCHEDULER_JOB_ID="${{ env.CLOUD_SCHEDULER_JOB_ID }}" \
-              -e CLOUD_SCHEDULER_TIMEZONE="${{ env.CLOUD_SCHEDULER_TIMEZONE }}" \
-              -e CLOUD_SCHEDULER_TARGET_URL="${{ secrets.CLOUD_SCHEDULER_TARGET_URL }}" \
-              -e CLOUD_SCHEDULER_INVOKER_SERVICE_ACCOUNT="${{ secrets.CLOUD_SCHEDULER_INVOKER_SERVICE_ACCOUNT }}" \
-              -e G2B_AWARD_SCHEDULER_TARGET_URL="${{ secrets.G2B_AWARD_SCHEDULER_TARGET_URL }}" \
-              -e SCRAPER_INTERNAL_TOKEN="${{ secrets.SCRAPER_INTERNAL_TOKEN }}" \
-              -e APPS_SCRIPT_WEBHOOK_URL="${{ secrets.APPS_SCRIPT_WEBHOOK_URL }}" \
-              -e G2B_SERVICE_KEY="${{ secrets.G2B_SERVICE_KEY }}" \
-              -e GSHEET_ID="${{ secrets.GSHEET_ID }}" \
-              -e GSHEET_SERVICE_ACCOUNT_JSON='${{ secrets.GSHEET_SERVICE_ACCOUNT_JSON }}' \
-              -e GSHEET_SERVICE_ACCOUNT_EMAIL="${{ secrets.GSHEET_SERVICE_ACCOUNT_EMAIL }}" \
-              $IMAGE_PATH:${{ github.sha }}; then
-              rollback_backend
-              exit 1
-            fi
-
-            healthy=false
-            for _ in $(seq 1 30); do
-              if curl --fail --silent http://127.0.0.1:8000/api/health >/dev/null; then
-                healthy=true
-                break
-              fi
-              sleep 2
-            done
-            if [ "$healthy" != "true" ]; then
-              docker logs --tail 100 icore-back || true
-              rollback_backend
-              exit 1
-            fi
-
-            docker rm -f icore-back-previous || true
-
-      - name: Authenticate to Google Cloud for Scheduler
-        uses: google-github-actions/auth@v2
-        with:
-          credentials_json: ${{ secrets.GCP_SA_KEY }}
-
-      - name: Setup gcloud for Scheduler
-        uses: google-github-actions/setup-gcloud@v2
-        with:
-          project_id: ${{ env.PROJECT_ID }}
-
-      - name: Configure and verify 12-hour opening results scheduler
-        env:
-          TARGET_URL: ${{ secrets.G2B_AWARD_SCHEDULER_TARGET_URL }}
-          INTERNAL_TOKEN: ${{ secrets.SCRAPER_INTERNAL_TOKEN }}
-          INVOKER_SERVICE_ACCOUNT: ${{ secrets.CLOUD_SCHEDULER_INVOKER_SERVICE_ACCOUNT }}
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+          AUTH_SECRET_KEY: ${{ secrets.AUTH_SECRET_KEY }}
+          DEFAULT_ADMIN_PASSWORD: ${{ secrets.DEFAULT_ADMIN_PASSWORD }}
+          GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          CORS_ALLOWED_ORIGINS: ${{ secrets.CORS_ALLOWED_ORIGINS }}
+          SCRAPER_INTERNAL_TOKEN: ${{ secrets.SCRAPER_INTERNAL_TOKEN }}
+          G2B_AWARD_SERVICE_KEY: ${{ secrets.G2B_AWARD_SERVICE_KEY }}
+          GSHEET_SERVICE_ACCOUNT_JSON: ${{ secrets.GSHEET_SERVICE_ACCOUNT_JSON }}
+          GSHEET_SERVICE_ACCOUNT_EMAIL: ${{ secrets.GSHEET_SERVICE_ACCOUNT_EMAIL }}
         run: |
           set -euo pipefail
-
-          if [ -z "$TARGET_URL" ] || [ -z "$INTERNAL_TOKEN" ] || [ -z "$INVOKER_SERVICE_ACCOUNT" ]; then
-            echo "Opening results scheduler secrets must be configured."
+          required=(
+            PROJECT_ID GCP_SA_KEY AUTH_SECRET_KEY DEFAULT_ADMIN_PASSWORD
+            GOOGLE_OAUTH_CLIENT_ID CORS_ALLOWED_ORIGINS SCRAPER_INTERNAL_TOKEN
+            G2B_AWARD_SERVICE_KEY GSHEET_SERVICE_ACCOUNT_JSON
+            GSHEET_SERVICE_ACCOUNT_EMAIL
+          )
+          for name in "${required[@]}"; do
+            if [ -z "${!name:-}" ]; then
+              echo "$name must be configured before production deployment."
+              exit 1
+            fi
+          done
+          if [ "${#AUTH_SECRET_KEY}" -lt 32 ]; then
+            echo "AUTH_SECRET_KEY must contain at least 32 characters."
             exit 1
           fi
-          if [ "${#INTERNAL_TOKEN}" -lt 32 ]; then
+          if [ "${#DEFAULT_ADMIN_PASSWORD}" -lt 12 ]; then
+            echo "DEFAULT_ADMIN_PASSWORD must contain at least 12 characters."
+            exit 1
+          fi
+          if [ "${#SCRAPER_INTERNAL_TOKEN}" -lt 32 ]; then
             echo "SCRAPER_INTERNAL_TOKEN must contain at least 32 characters."
             exit 1
           fi
-          case "$TARGET_URL" in
-            https://*/api/v1/results/internal/collect|https://*/api/v1/results/internal/collect/)
-              ;;
+          case "$GOOGLE_OAUTH_CLIENT_ID" in
+            *.apps.googleusercontent.com) ;;
             *)
-              echo "G2B_AWARD_SCHEDULER_TARGET_URL must be the HTTPS internal collection endpoint."
+              echo "GOOGLE_OAUTH_CLIENT_ID is not a Google web client ID."
               exit 1
               ;;
           esac
+          if ! jq -e '.type == "service_account" and (.client_email | length > 0)' \
+            <<<"$GSHEET_SERVICE_ACCOUNT_JSON" >/dev/null; then
+            echo "GSHEET_SERVICE_ACCOUNT_JSON is not a service-account JSON object."
+            exit 1
+          fi
+          for value in \
+            "$AUTH_SECRET_KEY" "$DEFAULT_ADMIN_PASSWORD" \
+            "$GOOGLE_OAUTH_CLIENT_ID" "$CORS_ALLOWED_ORIGINS" \
+            "$SCRAPER_INTERNAL_TOKEN" "$G2B_AWARD_SERVICE_KEY" \
+            "$GSHEET_SERVICE_ACCOUNT_JSON" "$GSHEET_SERVICE_ACCOUNT_EMAIL"; do
+            if [[ "$value" == *"~"* ]]; then
+              echo "A deployment value contains the reserved '~' delimiter."
+              exit 1
+            fi
+          done
 
-          JOB_ID="icore-g2b-opening-results-12h"
+      - name: Authenticate to Google Cloud
+        if: vars.GCP_DEPLOY_ENABLED == 'true' && ((github.event_name == 'push' && github.ref == 'refs/heads/back') || github.event_name == 'workflow_dispatch')
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Setup gcloud
+        if: vars.GCP_DEPLOY_ENABLED == 'true' && ((github.event_name == 'push' && github.ref == 'refs/heads/back') || github.event_name == 'workflow_dispatch')
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Configure Docker for Artifact Registry
+        if: vars.GCP_DEPLOY_ENABLED == 'true' && ((github.event_name == 'push' && github.ref == 'refs/heads/back') || github.event_name == 'workflow_dispatch')
+        run: gcloud auth configure-docker ${{ env.GAR_LOCATION }}-docker.pkg.dev --quiet
+
+      - name: Push API and worker images
+        if: vars.GCP_DEPLOY_ENABLED == 'true' && ((github.event_name == 'push' && github.ref == 'refs/heads/back') || github.event_name == 'workflow_dispatch')
+        run: |
+          set -euo pipefail
+          API_IMAGE=${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.API_IMAGE_NAME }}
+          WORKER_IMAGE=${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.WORKER_IMAGE_NAME }}
+          docker tag icore-api:ci "$API_IMAGE:${{ github.sha }}"
+          docker tag icore-api:ci "$API_IMAGE:latest"
+          docker tag icore-g2b-worker:ci "$WORKER_IMAGE:${{ github.sha }}"
+          docker tag icore-g2b-worker:ci "$WORKER_IMAGE:latest"
+          docker push "$API_IMAGE:${{ github.sha }}"
+          docker push "$API_IMAGE:latest"
+          docker push "$WORKER_IMAGE:${{ github.sha }}"
+          docker push "$WORKER_IMAGE:latest"
+
+  deploy-api:
+    needs: test-and-build
+    if: vars.GCP_DEPLOY_ENABLED == 'true' && ((github.event_name == 'push' && github.ref == 'refs/heads/back') || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Deploy API to Cloud Run
+        env:
+          AUTH_SECRET_KEY: ${{ secrets.AUTH_SECRET_KEY }}
+          DEFAULT_ADMIN_PASSWORD: ${{ secrets.DEFAULT_ADMIN_PASSWORD }}
+          DEFAULT_ADMIN_EMAIL: ${{ secrets.DEFAULT_ADMIN_EMAIL }}
+          GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          GOOGLE_LOGIN_ALLOWED_EMAILS: ${{ secrets.GOOGLE_LOGIN_ALLOWED_EMAILS }}
+          CORS_ALLOWED_ORIGINS: ${{ secrets.CORS_ALLOWED_ORIGINS }}
+          SCRAPER_INTERNAL_TOKEN: ${{ secrets.SCRAPER_INTERNAL_TOKEN }}
+          G2B_AWARD_SERVICE_KEY: ${{ secrets.G2B_AWARD_SERVICE_KEY }}
+          G2B_AWARD_SOURCE_URL: ${{ secrets.G2B_AWARD_SOURCE_URL }}
+          GSHEET_ID: ${{ secrets.GSHEET_ID }}
+          GSHEET_SERVICE_ACCOUNT_JSON: ${{ secrets.GSHEET_SERVICE_ACCOUNT_JSON }}
+          GSHEET_SERVICE_ACCOUNT_EMAIL: ${{ secrets.GSHEET_SERVICE_ACCOUNT_EMAIL }}
+        run: |
+          set -euo pipefail
+          SHORT_SHA=${GITHUB_SHA::8}
+          CANDIDATE_TAG="api-candidate-$SHORT_SHA"
+          API_IMAGE=${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.API_IMAGE_NAME }}
+          SERVICE_JSON=$(gcloud run services describe "${{ env.CLOUD_RUN_API_SERVICE }}" \
+            --project="${{ env.PROJECT_ID }}" \
+            --region="${{ env.GAR_LOCATION }}" \
+            --format=json)
+          API_URL=$(jq -r '.status.url' <<<"$SERVICE_JSON")
+          PREVIOUS_REVISION=$(jq -r '.status.traffic[] | select(.percent == 100) | .revisionName' <<<"$SERVICE_JSON" | head -1)
+          if [ -z "$API_URL" ]; then
+            echo "Existing Cloud Run API URL could not be resolved."
+            exit 1
+          fi
+          OPENING_RESULTS_TARGET="$API_URL/api/v1/results/internal/collect"
+          SCHEDULER_SERVICE_ACCOUNT="icore-scheduler@${{ env.PROJECT_ID }}.iam.gserviceaccount.com"
+
+          gcloud run deploy "${{ env.CLOUD_RUN_API_SERVICE }}" \
+            --project="${{ env.PROJECT_ID }}" \
+            --region="${{ env.GAR_LOCATION }}" \
+            --platform=managed \
+            --allow-unauthenticated \
+            --image="$API_IMAGE:${{ github.sha }}" \
+            --service-account="icore-api@${{ env.PROJECT_ID }}.iam.gserviceaccount.com" \
+            --add-cloudsql-instances="${{ env.PROJECT_ID }}:${{ env.GAR_LOCATION }}:icore-mysql" \
+            --port=8000 \
+            --memory=512Mi \
+            --cpu=1 \
+            --timeout=1800 \
+            --no-traffic \
+            --tag="$CANDIDATE_TAG" \
+            --update-env-vars "^~^ENVIRONMENT=production~AUTH_SECRET_KEY=$AUTH_SECRET_KEY~DEFAULT_ADMIN_PASSWORD=$DEFAULT_ADMIN_PASSWORD~DEFAULT_ADMIN_EMAIL=$DEFAULT_ADMIN_EMAIL~LEGACY_PASSWORD_LOGIN_ENABLED=false~SINGLE_USER_MODE_ENABLED=false~GOOGLE_OAUTH_CLIENT_ID=$GOOGLE_OAUTH_CLIENT_ID~ALLOWED_LOGIN_DOMAINS=iceu.kr,iceu.co.kr~GOOGLE_LOGIN_ALLOWED_EMAILS=$GOOGLE_LOGIN_ALLOWED_EMAILS~CORS_ALLOWED_ORIGINS=$CORS_ALLOWED_ORIGINS~SCRAPER_INTERNAL_TOKEN=$SCRAPER_INTERNAL_TOKEN~G2B_AWARD_SERVICE_KEY=$G2B_AWARD_SERVICE_KEY~G2B_AWARD_SOURCE_URL=$G2B_AWARD_SOURCE_URL~G2B_AWARD_SCHEDULER_TARGET_URL=$OPENING_RESULTS_TARGET~G2B_AWARD_SCHEDULER_OIDC_AUDIENCE=$API_URL~CLOUD_SCHEDULER_INVOKER_SERVICE_ACCOUNT=$SCHEDULER_SERVICE_ACCOUNT~GSHEET_ID=$GSHEET_ID~GSHEET_OPENING_RESULT_ID=$GSHEET_ID~GSHEET_SERVICE_ACCOUNT_JSON=$GSHEET_SERVICE_ACCOUNT_JSON~GSHEET_SERVICE_ACCOUNT_EMAIL=$GSHEET_SERVICE_ACCOUNT_EMAIL" \
+            --quiet
+
+          CANDIDATE_JSON=$(gcloud run services describe "${{ env.CLOUD_RUN_API_SERVICE }}" \
+            --project="${{ env.PROJECT_ID }}" \
+            --region="${{ env.GAR_LOCATION }}" \
+            --format=json)
+          CANDIDATE_URL=$(jq -r --arg tag "$CANDIDATE_TAG" '.status.traffic[] | select(.tag == $tag) | .url' <<<"$CANDIDATE_JSON")
+          NEW_REVISION=$(jq -r --arg tag "$CANDIDATE_TAG" '.status.traffic[] | select(.tag == $tag) | .revisionName' <<<"$CANDIDATE_JSON")
+          if [ -z "$CANDIDATE_URL" ] || [ -z "$NEW_REVISION" ]; then
+            echo "Candidate API revision could not be resolved."
+            exit 1
+          fi
+          for _ in $(seq 1 30); do
+            if curl --fail --silent "$CANDIDATE_URL/api/health" >/dev/null; then
+              candidate_healthy=true
+              break
+            fi
+            sleep 2
+          done
+          if [ "${candidate_healthy:-false}" != "true" ]; then
+            gcloud run services logs read "${{ env.CLOUD_RUN_API_SERVICE }}" \
+              --project="${{ env.PROJECT_ID }}" \
+              --region="${{ env.GAR_LOCATION }}" \
+              --limit=50 || true
+            exit 1
+          fi
+
+          gcloud run services update-traffic "${{ env.CLOUD_RUN_API_SERVICE }}" \
+            --project="${{ env.PROJECT_ID }}" \
+            --region="${{ env.GAR_LOCATION }}" \
+            --to-revisions="$NEW_REVISION=100" \
+            --quiet
+          for _ in $(seq 1 15); do
+            if curl --fail --silent "$API_URL/api/health" >/dev/null; then
+              stable_healthy=true
+              break
+            fi
+            sleep 2
+          done
+          if [ "${stable_healthy:-false}" != "true" ]; then
+            if [ -n "$PREVIOUS_REVISION" ]; then
+              gcloud run services update-traffic "${{ env.CLOUD_RUN_API_SERVICE }}" \
+                --project="${{ env.PROJECT_ID }}" \
+                --region="${{ env.GAR_LOCATION }}" \
+                --to-revisions="$PREVIOUS_REVISION=100" \
+                --quiet
+            fi
+            exit 1
+          fi
+
+      - name: Configure and verify 12-hour opening results scheduler
+        env:
+          INTERNAL_TOKEN: ${{ secrets.SCRAPER_INTERNAL_TOKEN }}
+        run: |
+          set -euo pipefail
+          API_URL=$(gcloud run services describe "${{ env.CLOUD_RUN_API_SERVICE }}" \
+            --project="${{ env.PROJECT_ID }}" \
+            --region="${{ env.GAR_LOCATION }}" \
+            --format='value(status.url)')
+          TARGET_URL="$API_URL/api/v1/results/internal/collect"
+          INVOKER_SERVICE_ACCOUNT="icore-scheduler@${{ env.PROJECT_ID }}.iam.gserviceaccount.com"
           EXPECTED_SCHEDULE="17 0,12 * * *"
           EXPECTED_TIME_ZONE="Asia/Seoul"
-          COMMON_ARGS=(
+
+          gcloud run services add-iam-policy-binding "${{ env.CLOUD_RUN_API_SERVICE }}" \
+            --project="${{ env.PROJECT_ID }}" \
+            --region="${{ env.GAR_LOCATION }}" \
+            --member="serviceAccount:$INVOKER_SERVICE_ACCOUNT" \
+            --role="roles/run.invoker" \
+            --quiet
+
+          common_args=(
             --project="${{ env.PROJECT_ID }}"
             --location="${{ env.CLOUD_SCHEDULER_LOCATION }}"
             --schedule="$EXPECTED_SCHEDULE"
@@ -320,71 +291,175 @@ jobs:
             --http-method=POST
             --message-body='{}'
             --oidc-service-account-email="$INVOKER_SERVICE_ACCOUNT"
-            --oidc-token-audience="$TARGET_URL"
+            --oidc-token-audience="$API_URL"
             --attempt-deadline=30m
             --max-retry-attempts=3
             --min-backoff=60s
             --max-backoff=600s
             --max-doublings=3
           )
-          if gcloud scheduler jobs describe "$JOB_ID" \
+          if gcloud scheduler jobs describe "${{ env.OPENING_RESULTS_SCHEDULER_JOB_ID }}" \
             --project="${{ env.PROJECT_ID }}" \
             --location="${{ env.CLOUD_SCHEDULER_LOCATION }}" >/dev/null 2>&1; then
-            gcloud scheduler jobs update http "$JOB_ID" \
-              "${COMMON_ARGS[@]}" \
+            gcloud scheduler jobs pause "${{ env.OPENING_RESULTS_SCHEDULER_JOB_ID }}" \
+              --project="${{ env.PROJECT_ID }}" \
+              --location="${{ env.CLOUD_SCHEDULER_LOCATION }}" || true
+            gcloud scheduler jobs update http "${{ env.OPENING_RESULTS_SCHEDULER_JOB_ID }}" \
+              "${common_args[@]}" \
               --update-headers="Content-Type=application/json,X-Scraper-Internal-Token=$INTERNAL_TOKEN"
           else
-            gcloud scheduler jobs create http "$JOB_ID" \
-              "${COMMON_ARGS[@]}" \
+            gcloud scheduler jobs create http "${{ env.OPENING_RESULTS_SCHEDULER_JOB_ID }}" \
+              "${common_args[@]}" \
               --headers="Content-Type=application/json,X-Scraper-Internal-Token=$INTERNAL_TOKEN"
           fi
 
-          ACTUAL_SCHEDULE=$(gcloud scheduler jobs describe "$JOB_ID" \
+          gcloud scheduler jobs pause "${{ env.OPENING_RESULTS_SCHEDULER_JOB_ID }}" \
             --project="${{ env.PROJECT_ID }}" \
-            --location="${{ env.CLOUD_SCHEDULER_LOCATION }}" \
-            --format='value(schedule)')
-          ACTUAL_TIME_ZONE=$(gcloud scheduler jobs describe "$JOB_ID" \
-            --project="${{ env.PROJECT_ID }}" \
-            --location="${{ env.CLOUD_SCHEDULER_LOCATION }}" \
-            --format='value(timeZone)')
-          ACTUAL_URI=$(gcloud scheduler jobs describe "$JOB_ID" \
-            --project="${{ env.PROJECT_ID }}" \
-            --location="${{ env.CLOUD_SCHEDULER_LOCATION }}" \
-            --format='value(httpTarget.uri)')
-          ACTUAL_METHOD=$(gcloud scheduler jobs describe "$JOB_ID" \
-            --project="${{ env.PROJECT_ID }}" \
-            --location="${{ env.CLOUD_SCHEDULER_LOCATION }}" \
-            --format='value(httpTarget.httpMethod)')
-          ACTUAL_OIDC_EMAIL=$(gcloud scheduler jobs describe "$JOB_ID" \
-            --project="${{ env.PROJECT_ID }}" \
-            --location="${{ env.CLOUD_SCHEDULER_LOCATION }}" \
-            --format='value(httpTarget.oidcToken.serviceAccountEmail)')
-          ACTUAL_OIDC_AUDIENCE=$(gcloud scheduler jobs describe "$JOB_ID" \
-            --project="${{ env.PROJECT_ID }}" \
-            --location="${{ env.CLOUD_SCHEDULER_LOCATION }}" \
-            --format='value(httpTarget.oidcToken.audience)')
-          ACTUAL_STATE=$(gcloud scheduler jobs describe "$JOB_ID" \
-            --project="${{ env.PROJECT_ID }}" \
-            --location="${{ env.CLOUD_SCHEDULER_LOCATION }}" \
-            --format='value(state)')
-          ACTUAL_RETRY_COUNT=$(gcloud scheduler jobs describe "$JOB_ID" \
-            --project="${{ env.PROJECT_ID }}" \
-            --location="${{ env.CLOUD_SCHEDULER_LOCATION }}" \
-            --format='value(retryConfig.retryCount)')
+            --location="${{ env.CLOUD_SCHEDULER_LOCATION }}" || true
 
-          if [ "$ACTUAL_SCHEDULE" != "$EXPECTED_SCHEDULE" ] \
-            || [ "$ACTUAL_TIME_ZONE" != "$EXPECTED_TIME_ZONE" ] \
-            || [ "${ACTUAL_URI%/}" != "${TARGET_URL%/}" ] \
-            || [ "$ACTUAL_METHOD" != "POST" ] \
-            || [ "$ACTUAL_OIDC_EMAIL" != "$INVOKER_SERVICE_ACCOUNT" ] \
-            || [ "${ACTUAL_OIDC_AUDIENCE%/}" != "${TARGET_URL%/}" ] \
-            || [ "$ACTUAL_STATE" != "ENABLED" ] \
-            || [ "$ACTUAL_RETRY_COUNT" != "3" ]; then
+          actual=$(gcloud scheduler jobs describe "${{ env.OPENING_RESULTS_SCHEDULER_JOB_ID }}" \
+            --project="${{ env.PROJECT_ID }}" \
+            --location="${{ env.CLOUD_SCHEDULER_LOCATION }}" \
+            --format=json | jq -r '[.schedule, .timeZone, .state, .httpTarget.uri, .httpTarget.httpMethod, .httpTarget.oidcToken.serviceAccountEmail, .httpTarget.oidcToken.audience] | join(" ")')
+          expected="$EXPECTED_SCHEDULE $EXPECTED_TIME_ZONE PAUSED $TARGET_URL POST $INVOKER_SERVICE_ACCOUNT $API_URL"
+          if [ "$actual" != "$expected" ]; then
             echo "Opening results scheduler verification failed."
             exit 1
           fi
 
-          gcloud scheduler jobs describe "$JOB_ID" \
+  deploy-worker:
+    needs: test-and-build
+    if: vars.GCP_DEPLOY_ENABLED == 'true' && ((github.event_name == 'push' && github.ref == 'refs/heads/back') || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Deploy worker to Cloud Run
+        env:
+          SCRAPER_INTERNAL_TOKEN: ${{ secrets.SCRAPER_INTERNAL_TOKEN }}
+        run: |
+          set -euo pipefail
+          SHORT_SHA=${GITHUB_SHA::8}
+          CANDIDATE_TAG="worker-candidate-$SHORT_SHA"
+          WORKER_IMAGE=${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.WORKER_IMAGE_NAME }}
+          API_URL=$(gcloud run services describe "${{ env.CLOUD_RUN_API_SERVICE }}" \
             --project="${{ env.PROJECT_ID }}" \
-            --location="${{ env.CLOUD_SCHEDULER_LOCATION }}" \
-            --format='yaml(name,schedule,timeZone,state,httpTarget.uri,httpTarget.httpMethod,httpTarget.oidcToken.serviceAccountEmail,httpTarget.oidcToken.audience,retryConfig,attemptDeadline)'
+            --region="${{ env.GAR_LOCATION }}" \
+            --format='value(status.url)')
+          SERVICE_JSON=$(gcloud run services describe "${{ env.CLOUD_RUN_WORKER_SERVICE }}" \
+            --project="${{ env.PROJECT_ID }}" \
+            --region="${{ env.GAR_LOCATION }}" \
+            --format=json)
+          PREVIOUS_REVISION=$(jq -r '.status.traffic[] | select(.percent == 100) | .revisionName' <<<"$SERVICE_JSON" | head -1)
+          gcloud run services add-iam-policy-binding "${{ env.CLOUD_RUN_WORKER_SERVICE }}" \
+            --project="${{ env.PROJECT_ID }}" \
+            --region="${{ env.GAR_LOCATION }}" \
+            --member="serviceAccount:github-deployer@${{ env.PROJECT_ID }}.iam.gserviceaccount.com" \
+            --role="roles/run.invoker" \
+            --quiet
+          gcloud run deploy "${{ env.CLOUD_RUN_WORKER_SERVICE }}" \
+            --project="${{ env.PROJECT_ID }}" \
+            --region="${{ env.GAR_LOCATION }}" \
+            --platform=managed \
+            --image="$WORKER_IMAGE:${{ github.sha }}" \
+            --service-account="icore-worker@${{ env.PROJECT_ID }}.iam.gserviceaccount.com" \
+            --port=8080 \
+            --memory=512Mi \
+            --cpu=1 \
+            --timeout=300 \
+            --no-traffic \
+            --tag="$CANDIDATE_TAG" \
+            --update-env-vars "^~^BACKEND_INTERNAL_BASE_URL=$API_URL~SCRAPER_INTERNAL_TOKEN=$SCRAPER_INTERNAL_TOKEN" \
+            --quiet
+
+          CANDIDATE_JSON=$(gcloud run services describe "${{ env.CLOUD_RUN_WORKER_SERVICE }}" \
+            --project="${{ env.PROJECT_ID }}" \
+            --region="${{ env.GAR_LOCATION }}" \
+            --format=json)
+          WORKER_URL=$(jq -r '.status.url' <<<"$CANDIDATE_JSON")
+          CANDIDATE_URL=$(jq -r --arg tag "$CANDIDATE_TAG" '.status.traffic[] | select(.tag == $tag) | .url' <<<"$CANDIDATE_JSON")
+          NEW_REVISION=$(jq -r --arg tag "$CANDIDATE_TAG" '.status.traffic[] | select(.tag == $tag) | .revisionName' <<<"$CANDIDATE_JSON")
+          if [ -z "$CANDIDATE_URL" ] || [ -z "$NEW_REVISION" ]; then
+            echo "Candidate worker revision could not be resolved."
+            exit 1
+          fi
+          ID_TOKEN=$(gcloud auth print-identity-token --audiences="$WORKER_URL")
+          for _ in $(seq 1 30); do
+            if curl --fail --silent \
+              --header="Authorization: Bearer $ID_TOKEN" \
+              "$CANDIDATE_URL/health" >/dev/null; then
+              candidate_healthy=true
+              break
+            fi
+            sleep 2
+          done
+          if [ "${candidate_healthy:-false}" != "true" ]; then
+            gcloud run services logs read "${{ env.CLOUD_RUN_WORKER_SERVICE }}" \
+              --project="${{ env.PROJECT_ID }}" \
+              --region="${{ env.GAR_LOCATION }}" \
+              --limit=50 || true
+            exit 1
+          fi
+
+          gcloud run services update-traffic "${{ env.CLOUD_RUN_WORKER_SERVICE }}" \
+            --project="${{ env.PROJECT_ID }}" \
+            --region="${{ env.GAR_LOCATION }}" \
+            --to-revisions="$NEW_REVISION=100" \
+            --quiet
+          ID_TOKEN=$(gcloud auth print-identity-token --audiences="$WORKER_URL")
+          for _ in $(seq 1 15); do
+            if curl --fail --silent \
+              --header="Authorization: Bearer $ID_TOKEN" \
+              "$WORKER_URL/health" >/dev/null; then
+              stable_healthy=true
+              break
+            fi
+            sleep 2
+          done
+          if [ "${stable_healthy:-false}" != "true" ]; then
+            if [ -n "$PREVIOUS_REVISION" ]; then
+              gcloud run services update-traffic "${{ env.CLOUD_RUN_WORKER_SERVICE }}" \
+                --project="${{ env.PROJECT_ID }}" \
+                --region="${{ env.GAR_LOCATION }}" \
+                --to-revisions="$PREVIOUS_REVISION=100" \
+                --quiet
+            fi
+            exit 1
+          fi
+
+      - name: Repair existing worker scheduler authentication
+        run: |
+          set -euo pipefail
+          JOB_ID="icore-g2b-scraper-job-1"
+          WORKER_URL=$(gcloud run services describe "${{ env.CLOUD_RUN_WORKER_SERVICE }}" \
+            --project="${{ env.PROJECT_ID }}" \
+            --region="${{ env.GAR_LOCATION }}" \
+            --format='value(status.url)')
+          INVOKER_SERVICE_ACCOUNT="icore-scheduler@${{ env.PROJECT_ID }}.iam.gserviceaccount.com"
+          gcloud run services add-iam-policy-binding "${{ env.CLOUD_RUN_WORKER_SERVICE }}" \
+            --project="${{ env.PROJECT_ID }}" \
+            --region="${{ env.GAR_LOCATION }}" \
+            --member="serviceAccount:$INVOKER_SERVICE_ACCOUNT" \
+            --role="roles/run.invoker" \
+            --quiet
+          if gcloud scheduler jobs describe "$JOB_ID" \
+            --project="${{ env.PROJECT_ID }}" \
+            --location="${{ env.CLOUD_SCHEDULER_LOCATION }}" >/dev/null 2>&1; then
+            gcloud scheduler jobs update http "$JOB_ID" \
+              --project="${{ env.PROJECT_ID }}" \
+              --location="${{ env.CLOUD_SCHEDULER_LOCATION }}" \
+              --uri="$WORKER_URL/run" \
+              --http-method=POST \
+              --oidc-service-account-email="$INVOKER_SERVICE_ACCOUNT" \
+              --oidc-token-audience="$WORKER_URL"
+          fi
