@@ -6,9 +6,10 @@ import logging
 import re
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from typing import Any
 from email.message import EmailMessage
-from urllib.parse import parse_qsl, urlparse
+from urllib.parse import parse_qsl, urlparse, urlunparse
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
@@ -16,6 +17,16 @@ import requests
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 from requests.exceptions import JSONDecodeError as RequestsJSONDecodeError
+
+from app.g2b.bid_notice import (
+    canonical_bid_notice_identity,
+    clean_optional_text,
+    infer_two_stage_bid,
+    missing_bid_notice_context_fields,
+    parse_g2b_datetime,
+    parse_official_amount,
+)
+from app.g2b.keyword_policy import evaluate_keyword_title, normalize_keywords
 
 try:
     from google.oauth2 import service_account
@@ -45,6 +56,15 @@ class NoticeRow(BaseModel):
     published_at: datetime | None = None
     deadline_at: datetime | None = None
     notice_url: str = ""
+    bid_notice_no: str | None = None
+    bid_notice_ord: str | None = None
+    business_name: str | None = None
+    demand_agency_name: str | None = None
+    base_amount: Decimal | None = None
+    prearranged_price_decision_method: str | None = None
+    proposal_deadline: datetime | None = None
+    region_restriction: str | None = None
+    is_two_stage_bid: bool | None = None
 
 
 class ScraperJobPayload(BaseModel):
@@ -55,6 +75,7 @@ class ScraperJobPayload(BaseModel):
     gsheet_tab_name: str = DEFAULT_NOTICE_TAB_NAME
     receiver_emails: list[str] = Field(default_factory=list)
     keywords: list[str] = Field(default_factory=list)
+    excluded_keywords: list[str] = Field(default_factory=list)
 
 
 def _normalize_string_list(raw: Any) -> list[str]:
@@ -103,26 +124,7 @@ def _backend_base_url() -> str:
 
 
 def _parse_deadline(raw: Any) -> datetime | None:
-    if not raw:
-        return None
-    if isinstance(raw, datetime):
-        return raw if raw.tzinfo else raw.replace(tzinfo=timezone.utc)
-    text = str(raw).strip()
-    if text.isdigit():
-        try:
-            if len(text) == 12:
-                return datetime.strptime(text, "%Y%m%d%H%M").replace(tzinfo=timezone.utc)
-            if len(text) == 8:
-                return datetime.strptime(text, "%Y%m%d").replace(tzinfo=timezone.utc)
-        except Exception:
-            return None
-    try:
-        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
-        if parsed.tzinfo is None:
-            return parsed.replace(tzinfo=timezone.utc)
-        return parsed
-    except Exception:
-        return None
+    return parse_g2b_datetime(raw)
 
 
 def _extract_from_item(item: dict[str, Any]) -> NoticeRow | None:
@@ -139,6 +141,24 @@ def _extract_from_item(item: dict[str, Any]) -> NoticeRow | None:
         item.get("published_at") or item.get("created_at") or item.get("rgstDt") or item.get("bidNtceDt")
     )
 
+    bid_notice_no = clean_optional_text(
+        item.get("bid_notice_no") or item.get("bidNtceNo")
+    )
+    bid_notice_ord = clean_optional_text(
+        item.get("bid_notice_ord") or item.get("bidNtceOrd")
+    )
+    business_name = clean_optional_text(
+        item.get("business_name") or item.get("bidNtceNm")
+    )
+    demand_agency_name = clean_optional_text(
+        item.get("demand_agency_name") or item.get("dminsttNm")
+    )
+    raw_base_amount = (
+        item.get("base_amount")
+        if item.get("base_amount") is not None
+        else item.get("bssamt")
+    )
+
     return NoticeRow(
         notice_id=notice_id,
         title=title,
@@ -147,6 +167,41 @@ def _extract_from_item(item: dict[str, Any]) -> NoticeRow | None:
         published_at=published_at,
         deadline_at=deadline_at,
         notice_url=notice_url,
+        bid_notice_no=bid_notice_no,
+        bid_notice_ord=bid_notice_ord,
+        business_name=business_name,
+        demand_agency_name=demand_agency_name,
+        base_amount=parse_official_amount(raw_base_amount),
+        prearranged_price_decision_method=clean_optional_text(
+            item.get("prearranged_price_decision_method")
+            or item.get("prearngPrceDcsnMthdNm")
+        ),
+        proposal_deadline=parse_g2b_datetime(
+            item.get("proposal_deadline") or item.get("bidClseDt")
+        ),
+        region_restriction=clean_optional_text(
+            item.get("region_restriction") or item.get("prtcptPsblRgnNm")
+        ),
+        is_two_stage_bid=infer_two_stage_bid(
+            item.get("is_two_stage_bid"),
+            item.get("bidMethdNm"),
+            item.get("cntrctCnclsMthdNm"),
+            item.get("sucsfbidMthdNm"),
+        ),
+    )
+
+
+def _notice_identity(notice: NoticeRow) -> tuple[str, str, str]:
+    official_identity = canonical_bid_notice_identity(
+        notice.bid_notice_no,
+        notice.bid_notice_ord,
+    )
+    if official_identity is not None:
+        return "bid-notice", official_identity[0], official_identity[1]
+    return (
+        "legacy",
+        (notice.notice_id or "").strip(),
+        (notice.title or "").strip(),
     )
 
 
@@ -222,20 +277,24 @@ def _extract_from_prestandard_item(item: dict[str, Any]) -> NoticeRow | None:
 
 
 def _build_query_window() -> tuple[str, str]:
-    # 최근 실행 이력 이후 공고/사전규격만 조회하고, 이력이 없으면 1일 전부터 조회
+    # 마지막 완료 체크포인트부터 재조회하되, 프론트 노출 범위인 최근 14일을 넘기지 않는다.
     now = datetime.now(timezone.utc)
+    retry_floor = now - timedelta(days=14)
     last_run_at = _fetch_last_run_at()
     if last_run_at is None:
-        query_start = now - timedelta(days=1)
-        logger.info("No scraper run history found. Falling back to 1 day window.")
+        query_start = retry_floor
+        logger.info("No scraper run history found. Falling back to 14 day window.")
     else:
         query_start = last_run_at if last_run_at.tzinfo else last_run_at.replace(tzinfo=timezone.utc)
         if query_start > now:
-            logger.warning("Last run time is in the future. Falling back to 1 day window.")
-            query_start = now - timedelta(days=1)
+            logger.warning("Last run time is in the future. Falling back to 14 day window.")
+            query_start = retry_floor
+        else:
+            query_start = max(query_start, retry_floor)
 
-    inqry_bgn = query_start.strftime("%Y%m%d%H%M")
-    inqry_end = now.strftime("%Y%m%d%H%M")
+    kst = ZoneInfo("Asia/Seoul")
+    inqry_bgn = query_start.astimezone(kst).strftime("%Y%m%d%H%M")
+    inqry_end = now.astimezone(kst).strftime("%Y%m%d%H%M")
     return inqry_bgn, inqry_end
 
 
@@ -336,6 +395,7 @@ def _fetch_g2b_rows(
     service_key_env: str,
     keyword_param_name: str | list[str],
     keywords: list[str],
+    excluded_keywords: list[str] | None,
     row_extractor: Any,
     source_label: str,
     fallback_operation_paths: list[str] | None = None,
@@ -346,6 +406,8 @@ def _fetch_g2b_rows(
     if not source_url:
         logger.warning("%s is not set – skipping %s fetch", source_url_env, source_label)
         return []
+    keywords = normalize_keywords(keywords)
+    excluded_keywords = normalize_keywords(excluded_keywords)
     if not keywords:
         logger.warning("No keywords – skipping %s fetch", source_label)
         return []
@@ -391,7 +453,7 @@ def _fetch_g2b_rows(
 
     service_key = os.getenv(service_key_env, "").strip()
     notices: list[NoticeRow] = []
-    fetched_keys: set[tuple[str, str]] = set()
+    fetched_keys: set[tuple[str, str, str]] = set()
 
     for keyword in keywords:
         for keyword_param_name in keyword_param_names:
@@ -528,8 +590,15 @@ def _fetch_g2b_rows(
             for item in items:
                 parsed = row_extractor(item)
                 if parsed is not None:
-                    parsed.matched_keyword = keyword
-                    dedup_key = ((parsed.notice_id or "").strip(), (parsed.title or "").strip())
+                    decision = evaluate_keyword_title(
+                        parsed.title,
+                        keywords,
+                        excluded_keywords,
+                    )
+                    if not decision.keep:
+                        continue
+                    parsed.matched_keyword = decision.matched_keyword
+                    dedup_key = _notice_identity(parsed)
                     if dedup_key not in fetched_keys:
                         fetched_keys.add(dedup_key)
                         notices.append(parsed)
@@ -562,23 +631,198 @@ def _fetch_last_run_at() -> datetime | None:
     return None
 
 
-def _fetch_g2b_notices(keywords: list[str]) -> list[NoticeRow]:
-    return _fetch_g2b_rows(
+def _resolve_bid_notice_operation_url(env_name: str, operation_name: str) -> str:
+    explicit_url = os.getenv(env_name, "").strip()
+    if explicit_url:
+        return explicit_url
+
+    source_url = os.getenv("G2B_SOURCE_URL", "").strip()
+    if not source_url:
+        return ""
+    parsed = urlparse(source_url)
+    path = parsed.path.rstrip("/")
+    if path.lower().endswith("service"):
+        operation_path = f"{path}/{operation_name}"
+    elif "/" in path:
+        operation_path = f"{path.rsplit('/', 1)[0]}/{operation_name}"
+    else:
+        operation_path = f"/{operation_name}"
+    return urlunparse(parsed._replace(path=operation_path))
+
+
+def _fetch_bid_notice_detail_items(
+    *,
+    url: str,
+    params: dict[str, str],
+    source_label: str,
+) -> tuple[bool, list[dict[str, Any]]]:
+    if not url:
+        return False, []
+
+    existing_query_keys = {
+        key.lower()
+        for key, _ in parse_qsl(urlparse(url).query, keep_blank_values=True)
+    }
+    request_params = dict(params)
+    if "type" not in existing_query_keys and "_type" not in existing_query_keys:
+        request_params["type"] = "json"
+    if "servicekey" not in existing_query_keys:
+        service_key = os.getenv("G2B_SERVICE_KEY", "").strip()
+        if not service_key:
+            logger.warning("G2B_SERVICE_KEY is empty – skipping %s", source_label)
+            return False, []
+        request_params["serviceKey"] = service_key
+
+    try:
+        response = requests.get(
+            url,
+            params=request_params,
+            headers={"Accept": "application/json"},
+            timeout=int(os.getenv("G2B_HTTP_TIMEOUT_SECONDS", "20")),
+        )
+        response.raise_for_status()
+        raw_body = (response.text or "").strip()
+        if not raw_body:
+            logger.warning("%s returned an empty response", source_label)
+            return False, []
+        try:
+            payload = response.json()
+        except RequestsJSONDecodeError:
+            payload = _parse_xml_response(raw_body)
+            if payload is None:
+                logger.warning("%s returned an unreadable response", source_label)
+                return False, []
+
+        result_code, result_message = _extract_result_error(payload, raw_body)
+        if result_code and result_code != "00":
+            if result_code == "06":
+                return True, []
+            logger.warning(
+                "%s API returned resultCode=%s resultMsg=%r",
+                source_label,
+                result_code,
+                result_message,
+            )
+            return False, []
+        return True, _normalize_items(payload)
+    except Exception:
+        logger.exception("%s fetch failed", source_label)
+        return False, []
+
+
+def _matching_bid_notice_items(
+    items: list[dict[str, Any]],
+    identity: tuple[str, str],
+) -> list[dict[str, Any]]:
+    return [
+        item
+        for item in items
+        if canonical_bid_notice_identity(
+            item.get("bidNtceNo") or item.get("bid_notice_no"),
+            item.get("bidNtceOrd") or item.get("bid_notice_ord"),
+        )
+        == identity
+    ]
+
+
+def _enrich_bid_notice_contexts(notices: list[NoticeRow]) -> list[NoticeRow]:
+    if not notices:
+        return notices
+
+    base_amount_url = _resolve_bid_notice_operation_url(
+        "G2B_BASE_AMOUNT_SOURCE_URL",
+        "getBidPblancListInfoServcBsisAmount",
+    )
+    region_url = _resolve_bid_notice_operation_url(
+        "G2B_REGION_SOURCE_URL",
+        "getBidPblancListInfoPrtcptPsblRgn",
+    )
+    now = datetime.now(ZoneInfo("Asia/Seoul"))
+    window_start = (now - timedelta(days=14)).strftime("%Y%m%d%H%M")
+    window_end = now.strftime("%Y%m%d%H%M")
+
+    for notice in notices:
+        identity = canonical_bid_notice_identity(
+            notice.bid_notice_no,
+            notice.bid_notice_ord,
+        )
+        if identity is None:
+            continue
+        notice_no, _ = identity
+        notice_ord = (notice.bid_notice_ord or "00").strip() or "00"
+
+        if (
+            notice.base_amount is None
+            and notice.prearranged_price_decision_method != "비예가"
+        ):
+            succeeded, items = _fetch_bid_notice_detail_items(
+                url=base_amount_url,
+                params={
+                    "pageNo": "1",
+                    "numOfRows": "100",
+                    "inqryDiv": "2",
+                    "inqryBgnDt": window_start,
+                    "inqryEndDt": window_end,
+                    "bidNtceNo": notice_no,
+                },
+                source_label=f"G2B base amount {notice_no}|{notice_ord}",
+            )
+            if succeeded:
+                for item in _matching_bid_notice_items(items, identity):
+                    amount = parse_official_amount(item.get("bssamt"))
+                    if amount is not None:
+                        notice.base_amount = amount
+                        break
+
+        if notice.region_restriction is None:
+            succeeded, items = _fetch_bid_notice_detail_items(
+                url=region_url,
+                params={
+                    "pageNo": "1",
+                    "numOfRows": "100",
+                    "inqryDiv": "2",
+                    "bidNtceNo": notice_no,
+                    "bidNtceOrd": notice_ord,
+                },
+                source_label=f"G2B participant region {notice_no}|{notice_ord}",
+            )
+            if succeeded:
+                region_names: list[str] = []
+                for item in _matching_bid_notice_items(items, identity):
+                    region_name = clean_optional_text(item.get("prtcptPsblRgnNm"))
+                    if region_name and region_name not in region_names:
+                        region_names.append(region_name)
+                notice.region_restriction = ", ".join(region_names) or "없음"
+
+    return notices
+
+
+def _fetch_g2b_notices(
+    keywords: list[str],
+    excluded_keywords: list[str] | None = None,
+) -> list[NoticeRow]:
+    notices = _fetch_g2b_rows(
         source_url_env="G2B_SOURCE_URL",
         service_key_env="G2B_SERVICE_KEY",
         keyword_param_name="bidNtceNm",
         keywords=keywords,
+        excluded_keywords=excluded_keywords,
         row_extractor=_extract_from_item,
         source_label="G2B notice",
     )
+    return _enrich_bid_notice_contexts(notices)
 
 
-def _fetch_g2b_prestandards(keywords: list[str]) -> list[NoticeRow]:
+def _fetch_g2b_prestandards(
+    keywords: list[str],
+    excluded_keywords: list[str] | None = None,
+) -> list[NoticeRow]:
     return _fetch_g2b_rows(
         source_url_env="G2B_PRESTANDARD_SOURCE_URL",
         service_key_env="G2B_PRESTANDARD_SERVICE_KEY",
         keyword_param_name="prdctClsfcNoNm",
         keywords=keywords,
+        excluded_keywords=excluded_keywords,
         row_extractor=_extract_from_prestandard_item,
         source_label="G2B prestandard",
         fallback_operation_paths=[
@@ -1252,25 +1496,33 @@ def run_scraper(job: ScraperJobPayload) -> dict[str, Any]:
         return {"run_id": run_id, "status": "skipped", "message": "scraper disabled"}
 
     try:
-        job.keywords = _normalize_string_list(job.keywords)
+        job.keywords = normalize_keywords(job.keywords)
+        job.excluded_keywords = normalize_keywords(job.excluded_keywords)
         job.receiver_emails = _normalize_string_list(job.receiver_emails)
         job.gsheet_ids = _normalize_string_list(job.gsheet_ids)
         logger.info(
-            "Run %s: keywords=%s gsheet_id=%s gsheet_ids=%s",
+            "Run %s: keywords=%s excluded_keywords=%s gsheet_id=%s gsheet_ids=%s",
             run_id,
             job.keywords,
+            job.excluded_keywords,
             job.gsheet_id,
             job.gsheet_ids,
         )
 
         try:
-            notices = _fetch_g2b_notices(job.keywords)
-            prestandards = _fetch_g2b_prestandards(job.keywords)
+            notices = _fetch_g2b_notices(job.keywords, job.excluded_keywords)
+            prestandards = _fetch_g2b_prestandards(
+                job.keywords,
+                job.excluded_keywords,
+            )
         except Exception as error:
             raise RuntimeError(f"fetch failed: {error}") from error
 
         notice_count = len(notices)
         prestandard_count = len(prestandards)
+        incomplete_notice_count = sum(
+            1 for notice in notices if missing_bid_notice_context_fields(notice)
+        )
         logger.info(
             "Run %s: fetched notices=%d prestandards=%d",
             run_id,
@@ -1278,16 +1530,16 @@ def run_scraper(job: ScraperJobPayload) -> dict[str, Any]:
             prestandard_count,
         )
         try:
-            keyword_map: dict[tuple[str, str], str] = {}
+            keyword_map: dict[tuple[str, str, str], str] = {}
             all_fetched = notices + prestandards
             for notice in all_fetched:
-                key = ((notice.notice_id or "").strip(), (notice.title or "").strip())
-                if key != ("", "") and key not in keyword_map:
+                key = _notice_identity(notice)
+                if key not in keyword_map:
                     keyword_map[key] = (notice.matched_keyword or "").strip()
             deduped_all = _dedup_with_backend(run_id, job, all_fetched)
             # 백엔드 dedup 스키마에는 matched_keyword가 없어서 떨어질 수 있으므로 복원
             for notice in deduped_all:
-                key = ((notice.notice_id or "").strip(), (notice.title or "").strip())
+                key = _notice_identity(notice)
                 restored = keyword_map.get(key, "")
                 if restored:
                     notice.matched_keyword = restored
@@ -1296,12 +1548,9 @@ def run_scraper(job: ScraperJobPayload) -> dict[str, Any]:
 
         deduped_notices: list[NoticeRow] = []
         deduped_prestandards: list[NoticeRow] = []
-        notice_keys = {
-            ((item.notice_id or "").strip(), (item.title or "").strip())
-            for item in notices
-        }
+        notice_keys = {_notice_identity(item) for item in notices}
         for item in deduped_all:
-            key = ((item.notice_id or "").strip(), (item.title or "").strip())
+            key = _notice_identity(item)
             if key in notice_keys:
                 deduped_notices.append(item)
             else:
@@ -1337,6 +1586,12 @@ def run_scraper(job: ScraperJobPayload) -> dict[str, Any]:
         if (deduped_notices or deduped_prestandards) and (email_sent_count == 0 or sheet_written_count == 0):
             status = "partial"
             error_message = "At least one downstream sink was not written."
+        if incomplete_notice_count:
+            status = "failed"
+            error_message = (
+                f"{incomplete_notice_count} bid notices have incomplete official context; "
+                "the collection checkpoint was not advanced."
+            )
 
         _report_run_result(
             run_id=run_id,

@@ -1,7 +1,10 @@
 from datetime import datetime, time
+from decimal import Decimal
 from typing import Literal, Optional
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
+
+from app.g2b.keyword_policy import normalize_keywords
 
 # CSS hex: #rgb, #rrggbb, #rrggbbaa (브라우저/피커에서 3·8자리가 들어오는 경우 대비)
 HEX_COLOR_PATTERN = r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$"
@@ -149,11 +152,32 @@ class LoginRequest(BaseModel):
     password: str = Field(..., min_length=1, max_length=200)
 
 
+class GoogleLoginRequest(BaseModel):
+    credential: str = Field(..., min_length=1, max_length=10000)
+
+
 class LoginResponse(BaseModel):
     access_token: str
     token_type: str = "Bearer"
+    user_id: int
     username: str
+    email: str | None = None
+    display_name: str | None = None
     role: str
+    organization_id: int
+    organization_name: str
+    organization_role: str
+
+
+class SessionResponse(BaseModel):
+    user_id: int
+    username: str
+    email: str | None = None
+    display_name: str | None = None
+    role: str
+    organization_id: int
+    organization_name: str
+    organization_role: str
 
 
 class SchedulerStatus(BaseModel):
@@ -175,6 +199,18 @@ class ScraperNotice(BaseModel):
     published_at: Optional[datetime] = None
     deadline_at: Optional[datetime] = None
     notice_url: str = ""
+    bid_notice_no: Optional[str] = Field(default=None, max_length=160)
+    bid_notice_ord: Optional[str] = Field(default=None, max_length=20)
+    business_name: Optional[str] = Field(default=None, max_length=500)
+    demand_agency_name: Optional[str] = Field(default=None, max_length=240)
+    base_amount: Optional[Decimal] = None
+    prearranged_price_decision_method: Optional[str] = Field(
+        default=None,
+        max_length=120,
+    )
+    proposal_deadline: Optional[datetime] = None
+    region_restriction: Optional[str] = Field(default=None, max_length=240)
+    is_two_stage_bid: Optional[bool] = None
 
 
 class ScraperRunSummary(BaseModel):
@@ -195,8 +231,14 @@ class ScraperConfig(BaseModel):
     gsheet_ids: list[str] = Field(default_factory=list)
     receiver_emails: list[EmailStr]
     keywords: list[str] = Field(min_length=1)
+    excluded_keywords: list[str] = Field(default_factory=list)
     scheduler_status: Optional[SchedulerStatus] = None
     recent_runs: list[ScraperRunSummary] = Field(default_factory=list)
+
+    @field_validator("keywords", "excluded_keywords", mode="before")
+    @classmethod
+    def normalize_keyword_values(cls, values):
+        return normalize_keywords(values)
 
 
 class ScraperDedupFilterRequest(BaseModel):

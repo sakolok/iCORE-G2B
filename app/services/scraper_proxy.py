@@ -8,6 +8,7 @@ def build_scraper_config_payload(config: ScraperConfig) -> dict:
         "notify_times": [item.isoformat() for item in config.notify_times],
         "receiver_emails": config.receiver_emails,
         "keywords": config.keywords,
+        "excluded_keywords": config.excluded_keywords,
         "target_api": settings.scraper_private_api_base,
     }
 

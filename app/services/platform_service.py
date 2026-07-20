@@ -11,6 +11,15 @@ from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.g2b.bid_notice import (
+    canonical_bid_notice_identity,
+    clean_optional_text,
+    infer_two_stage_bid,
+    missing_bid_notice_context_fields,
+    parse_g2b_datetime,
+    parse_official_amount,
+)
+from app.g2b.keyword_policy import evaluate_keyword_title, normalize_keywords
 from app.data.models import (
     LandingPageModel,
     LandingTemplateModel,
@@ -1483,7 +1492,8 @@ def get_scraper_config(db: Session) -> ScraperConfig:
     row = db.execute(select(ScraperConfigModel).limit(1)).scalar_one()
 
     emails = [item.strip() for item in row.receiver_emails.split(",") if item.strip()]
-    keywords = [item.strip() for item in row.keywords.split(",") if item.strip()]
+    keywords = normalize_keywords(row.keywords)
+    excluded_keywords = normalize_keywords(row.excluded_keywords)
     gsheet_ids = [item.strip() for item in (row.gsheet_ids or "").split(",") if item.strip()]
 
     config = ScraperConfig(
@@ -1492,6 +1502,7 @@ def get_scraper_config(db: Session) -> ScraperConfig:
         gsheet_ids=gsheet_ids,
         receiver_emails=emails,
         keywords=keywords,
+        excluded_keywords=excluded_keywords,
         recent_runs=list_scraper_runs(db, limit=10),
     )
     config.scheduler_status = get_scheduler_status(config)
@@ -1509,7 +1520,8 @@ def upsert_scraper_config(db: Session, config: ScraperConfig) -> ScraperConfig:
             notify_times=serialized_notify_times,
             gsheet_ids=",".join(item.strip() for item in config.gsheet_ids if item.strip()),
             receiver_emails=",".join(str(email) for email in config.receiver_emails),
-            keywords=",".join(config.keywords),
+            keywords=",".join(normalize_keywords(config.keywords)),
+            excluded_keywords=",".join(normalize_keywords(config.excluded_keywords)),
             updated_at=datetime.now(timezone.utc)
         )
         db.add(row)
@@ -1536,7 +1548,8 @@ def upsert_scraper_config(db: Session, config: ScraperConfig) -> ScraperConfig:
                 row.notify_times = _parse_notify_times(serialized_notify_times)[0]
         row.gsheet_ids = ",".join(item.strip() for item in config.gsheet_ids if item.strip())
         row.receiver_emails = ",".join(str(email) for email in config.receiver_emails)
-        row.keywords = ",".join(config.keywords)
+        row.keywords = ",".join(normalize_keywords(config.keywords))
+        row.excluded_keywords = ",".join(normalize_keywords(config.excluded_keywords))
         row.updated_at = datetime.now(timezone.utc)
     db.commit()
     return get_scraper_config(db)
@@ -1564,18 +1577,13 @@ def create_scraper_task(config: ScraperConfig, reason: str | None) -> TriggerScr
 
 
 def _parse_deadline(raw: str) -> datetime | None:
-    if not raw:
-        return None
-    try:
-        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-        if parsed.tzinfo is None:
-            return parsed.replace(tzinfo=timezone.utc)
-        return parsed
-    except Exception:
-        return None
+    return parse_g2b_datetime(raw)
 
 
-def _fetch_g2b_notices(keywords: list[str]) -> list[ScraperNotice]:
+def _fetch_g2b_notices(
+    keywords: list[str],
+    excluded_keywords: list[str] | None = None,
+) -> list[ScraperNotice]:
     source_url = settings.scraper_private_api_base.strip()
     if not source_url:
         return []
@@ -1605,8 +1613,16 @@ def _fetch_g2b_notices(keywords: list[str]) -> list[ScraperNotice]:
                     break
 
         for item in items:
-            title = str(item.get("title") or item.get("noticeTitle") or "").strip()
+            title = str(
+                item.get("title")
+                or item.get("noticeTitle")
+                or item.get("bidNtceNm")
+                or ""
+            ).strip()
             if not title:
+                continue
+            decision = evaluate_keyword_title(title, keywords, excluded_keywords)
+            if not decision.keep:
                 continue
             notices.append(
                 ScraperNotice(
@@ -1626,7 +1642,47 @@ def _fetch_g2b_notices(keywords: list[str]) -> list[ScraperNotice]:
                     deadline_at=_parse_deadline(
                         str(item.get("deadline_at") or item.get("deadline") or item.get("bidClseDt") or "")
                     ),
-                    notice_url=str(item.get("notice_url") or item.get("url") or item.get("link") or "").strip(),
+                    notice_url=str(
+                        item.get("notice_url")
+                        or item.get("url")
+                        or item.get("link")
+                        or item.get("bidNtceDtlUrl")
+                        or ""
+                    ).strip(),
+                    bid_notice_no=clean_optional_text(
+                        item.get("bid_notice_no") or item.get("bidNtceNo")
+                    ),
+                    bid_notice_ord=clean_optional_text(
+                        item.get("bid_notice_ord") or item.get("bidNtceOrd")
+                    ),
+                    business_name=clean_optional_text(
+                        item.get("business_name") or item.get("bidNtceNm")
+                    ),
+                    demand_agency_name=clean_optional_text(
+                        item.get("demand_agency_name") or item.get("dminsttNm")
+                    ),
+                    base_amount=parse_official_amount(
+                        item.get("base_amount")
+                        if item.get("base_amount") is not None
+                        else item.get("bssamt")
+                    ),
+                    prearranged_price_decision_method=clean_optional_text(
+                        item.get("prearranged_price_decision_method")
+                        or item.get("prearngPrceDcsnMthdNm")
+                    ),
+                    proposal_deadline=parse_g2b_datetime(
+                        item.get("proposal_deadline") or item.get("bidClseDt")
+                    ),
+                    region_restriction=clean_optional_text(
+                        item.get("region_restriction")
+                        or item.get("prtcptPsblRgnNm")
+                    ),
+                    is_two_stage_bid=infer_two_stage_bid(
+                        item.get("is_two_stage_bid"),
+                        item.get("bidMethdNm"),
+                        item.get("cntrctCnclsMthdNm"),
+                        item.get("sucsfbidMthdNm"),
+                    ),
                 )
             )
     return notices
@@ -1734,7 +1790,7 @@ def run_scraper_pipeline(
         )
 
     run_id = str(uuid4())
-    notices = _fetch_g2b_notices(config.keywords)
+    notices = _fetch_g2b_notices(config.keywords, config.excluded_keywords)
     notice_count = len(notices)
     filtered = filter_new_scraper_notices(
         db,
@@ -1750,6 +1806,9 @@ def run_scraper_pipeline(
 
     status = "success"
     error_message = None
+    incomplete_notice_count = sum(
+        1 for notice in notices if missing_bid_notice_context_fields(notice)
+    )
     if kept_notices and sheet_written_count == 0:
         status = "partial"
         error_message = "Google Sheet 기록 실패"
@@ -1760,6 +1819,13 @@ def run_scraper_pipeline(
             error_message += ", Apps Script 메일 트리거 실패"
         else:
             error_message = "Apps Script 메일 트리거 실패"
+
+    if incomplete_notice_count:
+        status = "failed"
+        error_message = (
+            f"공식 필드가 미완성인 입찰공고가 {incomplete_notice_count}건 있어 "
+            "수집 체크포인트를 갱신하지 않았습니다."
+        )
 
     record_scraper_run_report(
         db,
@@ -1816,15 +1882,30 @@ def list_scraper_runs(db: Session, limit: int = 20) -> list[ScraperRunSummary]:
     return [_to_run_summary(row) for row in rows]
 
 
-def _make_dedup_key(notice: ScraperNotice) -> str:
+def _make_legacy_dedup_key(notice: ScraperNotice) -> str:
     notice_id = (notice.notice_id or "").strip().lower()
     title = (notice.title or "").strip().lower()
     raw = notice_id or title
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()
 
 
-def _notice_fields_for_db(notice: ScraperNotice) -> dict[str, str | None]:
+def _make_dedup_key(notice: ScraperNotice) -> str:
+    official_identity = canonical_bid_notice_identity(
+        notice.bid_notice_no,
+        notice.bid_notice_ord,
+    )
+    if official_identity is not None:
+        raw = "bid-notice:" + "|".join(official_identity)
+        return hashlib.sha1(raw.encode("utf-8")).hexdigest()
+    return _make_legacy_dedup_key(notice)
+
+
+def _notice_fields_for_db(notice: ScraperNotice) -> dict[str, object | None]:
     """DB 컬럼 길이에 맞춤. Pydantic 스키마에 max_length가 없는 필드가 길면 commit 시 DB 오류가 난다."""
+    bid_notice_no = clean_optional_text(notice.bid_notice_no, max_length=160)
+    bid_notice_ord = clean_optional_text(notice.bid_notice_ord, max_length=20)
+    if bid_notice_no and not bid_notice_ord:
+        bid_notice_ord = "00"
     return {
         "notice_id": (notice.notice_id or "")[:160],
         "title": (notice.title or "")[:500],
@@ -1833,7 +1914,70 @@ def _notice_fields_for_db(notice: ScraperNotice) -> dict[str, str | None]:
         "notice_url": ((notice.notice_url or "")[:600] or None),
         "published_at": notice.published_at,
         "deadline_at": notice.deadline_at,
+        "bid_notice_no": bid_notice_no,
+        "bid_notice_ord": bid_notice_ord,
+        "business_name": clean_optional_text(notice.business_name, max_length=500),
+        "demand_agency_name": clean_optional_text(
+            notice.demand_agency_name,
+            max_length=240,
+        ),
+        "base_amount": notice.base_amount,
+        "prearranged_price_decision_method": clean_optional_text(
+            notice.prearranged_price_decision_method,
+            max_length=120,
+        ),
+        "proposal_deadline": notice.proposal_deadline,
+        "region_restriction": clean_optional_text(
+            notice.region_restriction,
+            max_length=240,
+        ),
+        "is_two_stage_bid": notice.is_two_stage_bid,
     }
+
+
+def _apply_notice_fields(
+    row: ScraperNoticeModel,
+    fields: dict[str, object | None],
+) -> None:
+    for field_name, value in fields.items():
+        current_value = getattr(row, field_name, None)
+        if value is None and current_value is not None:
+            continue
+        if (
+            isinstance(value, str)
+            and not value.strip()
+            and isinstance(current_value, str)
+            and current_value.strip()
+        ):
+            continue
+        setattr(row, field_name, value)
+
+
+def _find_existing_scraper_notice(
+    db: Session,
+    notice: ScraperNotice,
+    dedup_key: str,
+) -> ScraperNoticeModel | None:
+    existing = db.execute(
+        select(ScraperNoticeModel).where(ScraperNoticeModel.dedup_key == dedup_key)
+    ).scalar_one_or_none()
+    if existing is not None:
+        return existing
+
+    if canonical_bid_notice_identity(notice.bid_notice_no, notice.bid_notice_ord) is None:
+        return None
+    legacy_key = _make_legacy_dedup_key(notice)
+    if legacy_key == dedup_key:
+        return None
+    legacy = db.execute(
+        select(ScraperNoticeModel).where(
+            ScraperNoticeModel.dedup_key == legacy_key,
+            ScraperNoticeModel.bid_notice_no.is_(None),
+        )
+    ).scalar_one_or_none()
+    if legacy is not None:
+        legacy.dedup_key = dedup_key
+    return legacy
 
 
 def get_last_scraper_run_time(db: Session) -> datetime | None:
@@ -1866,37 +2010,35 @@ def filter_new_scraper_notices(
         published = notice.published_at
         if published is not None and published.tzinfo is None:
             published = published.replace(tzinfo=kst)
-        if since_notified_at is not None and published is not None and published <= since_notified_at:
-            continue
+        is_stale_notice = bool(
+            since_notified_at is not None
+            and published is not None
+            and published <= since_notified_at
+        )
 
         dedup_key = _make_dedup_key(notice)
-        existing = db.execute(
-            select(ScraperNoticeModel).where(ScraperNoticeModel.dedup_key == dedup_key)
-        ).scalar_one_or_none()
+        existing = _find_existing_scraper_notice(db, notice, dedup_key)
 
         if existing is None:
+            if is_stale_notice:
+                continue
             fields = _notice_fields_for_db(notice)
-            db.add(
-                ScraperNoticeModel(
-                    dedup_key=dedup_key,
-                    notice_id=fields["notice_id"],
-                    title=fields["title"],
-                    agency=fields["agency"],
-                    estimated_price=fields["estimated_price"],
-                    published_at=fields["published_at"],
-                    deadline_at=fields["deadline_at"],
-                    notice_url=fields["notice_url"],
-                    first_seen_at=now,
-                    last_seen_at=now,
-                    last_run_id=payload.run_id,
-                )
+            row = ScraperNoticeModel(
+                dedup_key=dedup_key,
+                first_seen_at=now,
+                last_seen_at=now,
+                last_run_id=payload.run_id,
             )
+            _apply_notice_fields(row, fields)
+            db.add(row)
             # 같은 요청 payload 안에 동일 dedup_key가 두 번 오면, flush 전에는 DB/SELECT에 안 보여
             # 두 번째 행이 또 INSERT 되며 UNIQUE(dedup_key) 위반 → 500. 반드시 flush.
             db.flush()
             kept.append(notice)
             continue
 
+        fields = _notice_fields_for_db(notice)
+        _apply_notice_fields(existing, fields)
         existing.last_seen_at = now
         existing.last_run_id = payload.run_id
 
@@ -1948,36 +2090,21 @@ def record_scraper_run_report(db: Session, payload: ScraperRunReportRequest) -> 
 
     for notice in payload.notices:
         dedup_key = _make_dedup_key(notice)
-        existing = db.execute(
-            select(ScraperNoticeModel).where(ScraperNoticeModel.dedup_key == dedup_key)
-        ).scalar_one_or_none()
+        existing = _find_existing_scraper_notice(db, notice, dedup_key)
         if existing is None:
             fields = _notice_fields_for_db(notice)
-            db.add(
-                ScraperNoticeModel(
-                    dedup_key=dedup_key,
-                    notice_id=fields["notice_id"],
-                    title=fields["title"],
-                    agency=fields["agency"],
-                    estimated_price=fields["estimated_price"],
-                    published_at=fields["published_at"],
-                    deadline_at=fields["deadline_at"],
-                    notice_url=fields["notice_url"],
-                    first_seen_at=executed_at,
-                    last_seen_at=executed_at,
-                    last_run_id=payload.run_id,
-                )
+            notice_row = ScraperNoticeModel(
+                dedup_key=dedup_key,
+                first_seen_at=executed_at,
+                last_seen_at=executed_at,
+                last_run_id=payload.run_id,
             )
+            _apply_notice_fields(notice_row, fields)
+            db.add(notice_row)
             db.flush()
         else:
             fields = _notice_fields_for_db(notice)
-            existing.notice_id = fields["notice_id"]
-            existing.title = fields["title"]
-            existing.agency = fields["agency"]
-            existing.estimated_price = fields["estimated_price"]
-            existing.published_at = fields["published_at"]
-            existing.deadline_at = fields["deadline_at"]
-            existing.notice_url = fields["notice_url"]
+            _apply_notice_fields(existing, fields)
             existing.last_seen_at = executed_at
             existing.last_run_id = payload.run_id
 

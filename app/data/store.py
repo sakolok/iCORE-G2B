@@ -31,6 +31,7 @@ class InMemoryStore:
             notify_times=[time(hour=9, minute=0)],
             receiver_emails=["admin@icore.local"],
             keywords=["클라우드", "AI", "교육"],
+            excluded_keywords=[],
         )
 
 

@@ -52,6 +52,7 @@ def _build_body(config: ScraperConfig, notify_time: time) -> bytes:
         "gsheet_tab_name": settings.gsheet_tab_name,
         "receiver_emails": config.receiver_emails,
         "keywords": config.keywords,
+        "excluded_keywords": config.excluded_keywords,
     }
     return json.dumps(payload, ensure_ascii=False).encode("utf-8")
 
