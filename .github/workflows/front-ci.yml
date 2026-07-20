@@ -1,0 +1,103 @@
+name: front-ci-cd
+
+on:
+  push:
+    branches:
+      - front
+  pull_request:
+    paths:
+      - "**"
+  workflow_dispatch:
+
+concurrency:
+  group: front-production
+  cancel-in-progress: false
+
+env:
+  PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  GCS_BUCKET: ${{ secrets.BUCKET_ADMIN_WEB }}
+  GCP_CDN_URL_MAP: ${{ secrets.GCP_CDN_URL_MAP }}
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        env:
+          VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL || '/api' }}
+          VITE_GOOGLE_CLIENT_ID: ${{ vars.VITE_GOOGLE_CLIENT_ID || secrets.VITE_GOOGLE_CLIENT_ID }}
+          VITE_SINGLE_USER_MODE_ENABLED: "false"
+        run: npm run build
+
+      - name: Validate production deploy configuration
+        if: vars.GCP_DEPLOY_ENABLED == 'true' && ((github.event_name == 'push' && github.ref == 'refs/heads/front') || github.event_name == 'workflow_dispatch')
+        env:
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+          VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL }}
+          VITE_GOOGLE_CLIENT_ID: ${{ vars.VITE_GOOGLE_CLIENT_ID || secrets.VITE_GOOGLE_CLIENT_ID }}
+        run: |
+          set -euo pipefail
+          required=(PROJECT_ID GCS_BUCKET GCP_SA_KEY VITE_API_BASE_URL VITE_GOOGLE_CLIENT_ID)
+          for name in "${required[@]}"; do
+            if [ -z "${!name:-}" ]; then
+              echo "$name must be configured before production deployment."
+              exit 1
+            fi
+          done
+          case "$VITE_API_BASE_URL" in
+            https://*/api) ;;
+            *)
+              echo "VITE_API_BASE_URL must be the HTTPS production /api URL."
+              exit 1
+              ;;
+          esac
+          case "$VITE_GOOGLE_CLIENT_ID" in
+            *.apps.googleusercontent.com) ;;
+            *)
+              echo "VITE_GOOGLE_CLIENT_ID is not a Google web client ID."
+              exit 1
+              ;;
+          esac
+
+      - name: Authenticate to Google Cloud
+        if: vars.GCP_DEPLOY_ENABLED == 'true' && ((github.event_name == 'push' && github.ref == 'refs/heads/front') || github.event_name == 'workflow_dispatch')
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Setup gcloud
+        if: vars.GCP_DEPLOY_ENABLED == 'true' && ((github.event_name == 'push' && github.ref == 'refs/heads/front') || github.event_name == 'workflow_dispatch')
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Upload dist to GCS
+        if: vars.GCP_DEPLOY_ENABLED == 'true' && ((github.event_name == 'push' && github.ref == 'refs/heads/front') || github.event_name == 'workflow_dispatch')
+        run: |
+          gsutil -m rsync -r -d ./dist gs://${{ env.GCS_BUCKET }}/
+          gsutil -m setmeta -h "Cache-Control:no-cache, max-age=0" gs://${{ env.GCS_BUCKET }}/index.html
+          gsutil -m setmeta -h "Cache-Control:public, max-age=31536000, immutable" gs://${{ env.GCS_BUCKET }}/assets/**
+
+      - name: Verify uploaded frontend
+        if: vars.GCP_DEPLOY_ENABLED == 'true' && ((github.event_name == 'push' && github.ref == 'refs/heads/front') || github.event_name == 'workflow_dispatch')
+        run: |
+          set -euo pipefail
+          gcloud storage cat "gs://${{ env.GCS_BUCKET }}/index.html" | grep -q '<div id="root"></div>'
+
+      - name: Invalidate Cloud CDN cache
+        if: vars.GCP_DEPLOY_ENABLED == 'true' && ((github.event_name == 'push' && github.ref == 'refs/heads/front') || github.event_name == 'workflow_dispatch') && env.GCP_CDN_URL_MAP != ''
+        run: |
+          gcloud compute url-maps invalidate-cdn-cache ${{ env.GCP_CDN_URL_MAP }} --path "/*" --async

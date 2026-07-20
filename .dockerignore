@@ -1,0 +1,8 @@
+.git
+.gstack
+.DS_Store
+.env
+.env.*
+node_modules
+dist
+npm-debug.log*

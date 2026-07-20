@@ -1,0 +1,157 @@
+.layout-shell {
+  min-height: 100vh;
+  background: var(--icore-canvas);
+}
+
+.layout-shell-header {
+  position: sticky;
+  z-index: 30;
+  top: 0;
+  border-bottom: 1px solid rgba(229, 232, 235, 0.92);
+  background: rgba(255, 255, 255, 0.96);
+  backdrop-filter: blur(14px);
+}
+
+.layout-shell-header-inner {
+  display: flex;
+  width: min(1600px, 100%);
+  min-height: 66px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  margin: 0 auto;
+  padding: 10px 28px;
+}
+
+.layout-shell-brand-group,
+.layout-shell-brand,
+.layout-shell-user {
+  display: flex;
+  align-items: center;
+}
+
+.layout-shell-brand-group {
+  gap: 16px;
+}
+
+.layout-shell-brand {
+  gap: 10px;
+}
+
+.layout-shell-brand-mark,
+.layout-shell-avatar {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  font-weight: 750;
+}
+
+.layout-shell-brand-mark {
+  width: 34px;
+  height: 34px;
+  border-radius: 11px;
+  background: var(--icore-primary);
+  color: #ffffff;
+  font-size: 19px;
+  letter-spacing: -0.04em;
+}
+
+.layout-shell-brand strong {
+  color: var(--icore-text);
+  font-size: 18px;
+  letter-spacing: -0.025em;
+}
+
+.layout-shell-divider {
+  width: 1px;
+  height: 20px;
+  background: var(--icore-border);
+}
+
+.layout-shell-current {
+  color: var(--icore-text-secondary);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.layout-shell-user {
+  gap: 10px;
+}
+
+.layout-shell-avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  background: var(--icore-primary-soft);
+  color: var(--icore-primary);
+  font-size: 13px;
+}
+
+.layout-shell-user-copy {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+  margin-right: 2px;
+}
+
+.layout-shell-user-copy strong {
+  max-width: 260px;
+  overflow: hidden;
+  color: var(--icore-text);
+  font-size: 13px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.layout-shell-user-copy span {
+  color: var(--icore-text-muted);
+  font-size: 11px;
+}
+
+.layout-shell-logout {
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--icore-text-secondary);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.layout-shell-logout:hover {
+  background: var(--icore-surface-muted);
+  color: var(--icore-text);
+}
+
+.layout-shell-content {
+  width: min(1600px, 100%);
+  margin: 0 auto;
+  padding: 40px 28px 64px;
+}
+
+@media (max-width: 720px) {
+  .layout-shell-header-inner {
+    min-height: 60px;
+    padding: 9px 16px;
+  }
+
+  .layout-shell-brand-group {
+    gap: 10px;
+  }
+
+  .layout-shell-user-copy,
+  .layout-shell-avatar,
+  .layout-shell-divider {
+    display: none;
+  }
+
+  .layout-shell-current {
+    font-size: 13px;
+  }
+
+  .layout-shell-content {
+    padding: 28px 16px 48px;
+  }
+}

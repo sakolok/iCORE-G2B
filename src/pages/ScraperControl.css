@@ -1,0 +1,26 @@
+.scraper-control-page {
+  display: grid;
+  gap: 16px;
+}
+
+.scraper-runs-wrapper {
+  margin-top: 20px;
+}
+
+.scraper-runs-title {
+  margin-bottom: 8px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.notify-time-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.notify-time-add-button {
+  background: #f5f5f5;
+  border-color: #d9d9d9;
+  color: #595959;
+}
