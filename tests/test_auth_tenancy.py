@@ -585,6 +585,29 @@ class AuthTenancyTests(unittest.TestCase):
         self.assertIn("AUTH_SECRET_KEY", str(raised.exception))
         self.assertIn("DEFAULT_ADMIN_PASSWORD", str(raised.exception))
 
+    def test_production_rejects_local_example_auth_secret(self):
+        with self.assertRaises(RuntimeError) as raised:
+            validate_runtime_settings(
+                Settings(
+                    environment="production",
+                    auth_secret_key="local-only-change-me-at-least-32-characters",
+                    default_admin_password="strong-admin-password",
+                    google_oauth_client_id="google-client-id",
+                    allowed_login_domains=("iceu.kr", "iceu.co.kr"),
+                    cors_allowed_origins=("https://app.iceu.kr",),
+                    scraper_internal_token="s" * 32,
+                    g2b_award_service_key="award-service-key",
+                    g2b_award_scheduler_target_url=(
+                        "https://api.iceu.kr/api/v1/results/internal/collect"
+                    ),
+                    cloud_scheduler_invoker_service_account=(
+                        "scheduler@project.iam.gserviceaccount.com"
+                    ),
+                )
+            )
+
+        self.assertIn("AUTH_SECRET_KEY", str(raised.exception))
+
     def test_production_accepts_explicit_strong_auth_secrets(self):
         validate_runtime_settings(
             Settings(

@@ -4,7 +4,6 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.data.models import (
-    LandingTemplateModel,
     OrganizationMemberModel,
     OrganizationModel,
     OrganizationResultProfileModel,
@@ -15,27 +14,6 @@ from app.data.models import (
 )
 from app.g2b.opening_results.models import SheetDestinationModel
 from app.services.auth_service import hash_password, verify_password
-
-DEFAULT_TEMPLATES = [
-    {
-        "id": "clean-campaign",
-        "name": "Clean Campaign",
-        "description": "교육/설명형 랜딩에 맞는 심플한 구성",
-        "preview_style": "left-copy-right-cta",
-    },
-    {
-        "id": "dark-product",
-        "name": "Dark Product",
-        "description": "기술/솔루션 소개에 맞는 다크 톤 구성",
-        "preview_style": "hero-centered-strong-cta",
-    },
-    {
-        "id": "event-highlight",
-        "name": "Event Highlight",
-        "description": "모집/행사 공지에 맞는 카드형 구성",
-        "preview_style": "headline-benefits-action",
-    },
-]
 
 ORGANIZATION_MEMBERSHIP_BACKFILL_KEY = "2026-07-organization-membership-backfill"
 USER_RESULT_PROFILE_BACKFILL_KEY = "2026-07-user-result-profile-backfill"
@@ -223,13 +201,6 @@ def ensure_schema_compatibility(engine: Engine) -> None:
 
 
 def seed_defaults(db: Session) -> None:
-    existing_template_ids = {
-        row[0] for row in db.execute(select(LandingTemplateModel.id)).all()
-    }
-    for template_values in DEFAULT_TEMPLATES:
-        if template_values["id"] not in existing_template_ids:
-            db.add(LandingTemplateModel(**template_values))
-
     config = db.execute(select(ScraperConfigModel).limit(1)).scalar_one_or_none()
     if config is None:
         config = ScraperConfigModel(

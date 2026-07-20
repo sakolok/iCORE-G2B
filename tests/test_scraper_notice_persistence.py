@@ -19,7 +19,7 @@ from app.g2b.opening_results.models import (
 from app.g2b.opening_results.notice_context_repository import canonical_notice_key
 from app.g2b.opening_results.sheet_export import build_sheet_rows
 from app.schemas import ScraperDedupFilterRequest, ScraperNotice
-from app.services.platform_service import _make_dedup_key, filter_new_scraper_notices
+from app.g2b.bid_notices.service import _make_dedup_key, filter_new_scraper_notices
 from cloudrun.g2b_worker.main import (
     NoticeRow,
     ScraperJobPayload,

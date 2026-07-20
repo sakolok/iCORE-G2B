@@ -11,7 +11,11 @@ from app.data.models import Base, ScraperConfigModel
 from app.g2b.keyword_policy import evaluate_keyword_title, normalize_keywords
 from app.schemas import ScraperConfig
 from app.services.cloud_scheduler_service import _build_body
-from app.services.platform_service import get_scraper_config, upsert_scraper_config
+from app.g2b.bid_notices.service import (
+    _fetch_g2b_notices,
+    get_scraper_config,
+    upsert_scraper_config,
+)
 from cloudrun.g2b_worker.main import NoticeRow, _fetch_g2b_rows
 
 
@@ -69,6 +73,17 @@ class KeywordPolicyTests(unittest.TestCase):
         self.assertTrue(evaluate_keyword_title("OpenAI 활용 교육", ["AI"]).keep)
         self.assertFalse(evaluate_keyword_title("maintenance 용역", ["AI"]).keep)
         self.assertFalse(evaluate_keyword_title("training 시스템", ["AI"]).keep)
+
+    def test_api_scraper_source_setting_remains_available(self):
+        with patch("app.g2b.bid_notices.service.requests.get") as mocked_get:
+            mocked_get.return_value.raise_for_status.return_value = None
+            mocked_get.return_value.json.return_value = [
+                {"notice_id": "notice-1", "title": "AI 교육 운영"}
+            ]
+
+            notices = _fetch_g2b_notices(["AI"])
+
+        self.assertEqual([notice.notice_id for notice in notices], ["notice-1"])
 
     def test_worker_filters_api_rows_before_dedup(self):
         items = [

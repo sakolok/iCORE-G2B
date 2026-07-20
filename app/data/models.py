@@ -20,58 +20,6 @@ class SystemMigrationModel(Base):
     )
 
 
-class LandingTemplateModel(Base):
-    __tablename__ = "landing_templates"
-
-    id: Mapped[str] = mapped_column(String(80), primary_key=True)
-    name: Mapped[str] = mapped_column(String(120), nullable=False)
-    description: Mapped[str] = mapped_column(String(240), nullable=False)
-    preview_style: Mapped[str] = mapped_column(String(120), nullable=False)
-
-
-class LandingPageModel(Base):
-    __tablename__ = "landing_pages"
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    template_id: Mapped[str] = mapped_column(String(80), nullable=False)
-    business_topic: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
-    business_name: Mapped[str] = mapped_column(String(120), nullable=False)
-    major_categories: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    minor_categories: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    slug: Mapped[str] = mapped_column(String(120), nullable=False, unique=True, index=True)
-    url: Mapped[str] = mapped_column(String(500), nullable=False)
-    status: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
-    retention_days: Mapped[int] = mapped_column(Integer, nullable=False, default=30)
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    is_visible: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    custom_domain: Mapped[str | None] = mapped_column(String(240), nullable=True)
-    title: Mapped[str] = mapped_column(String(120), nullable=False)
-    subtitle: Mapped[str] = mapped_column(String(240), nullable=False)
-    body: Mapped[str] = mapped_column(Text, nullable=False)
-    cta_text: Mapped[str] = mapped_column(String(60), nullable=False)
-    cta_url: Mapped[str] = mapped_column(String(240), nullable=False)
-    primary_color: Mapped[str] = mapped_column(String(7), nullable=False)
-    secondary_color: Mapped[str] = mapped_column(String(7), nullable=False)
-    background_color: Mapped[str] = mapped_column(String(7), nullable=False)
-    features_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
-    curriculum_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
-    target_audience_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
-    stats_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
-    infos_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
-    faqs_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
-    deployed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc)
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        nullable=False,
-        default=lambda: datetime.now(timezone.utc),
-        onupdate=lambda: datetime.now(timezone.utc),
-    )
-
-
 class ScraperConfigModel(Base):
     __tablename__ = "scraper_configs"
 

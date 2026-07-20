@@ -16,18 +16,11 @@ def _env_csv(name: str, default: str = "") -> tuple[str, ...]:
 
 
 class Settings(BaseModel):
-    app_name: str = "iCore Integrated Work Platform API"
+    app_name: str = "iCore G2B API"
     environment: str = os.getenv("ENVIRONMENT", "local")
     database_url: str = os.getenv(
         "DATABASE_URL", "mysql+pymysql://icore:icore@localhost:3306/icore"
     )
-    client_web_bucket: str = os.getenv(
-        "BUCKET_CLIENT_WEB", os.getenv("GCS_BUCKET", "icore-client-web")
-    )
-    admin_web_bucket: str = os.getenv("BUCKET_ADMIN_WEB", "icore-admin-web")
-    media_assets_bucket: str = os.getenv("BUCKET_MEDIA_ASSETS", "icore-media-assets")
-    site_templates_bucket: str = os.getenv("BUCKET_SITE_TEMPLATES", "icore-site-templates")
-    landing_cdn_base_url: str = os.getenv("LANDING_CDN_BASE_URL", "")
     gcp_region: str = os.getenv("GCP_REGION", "asia-northeast3")
     scraper_private_api_base: str = os.getenv(
         "SCRAPER_PRIVATE_API_BASE", "http://scraper.internal"
@@ -91,10 +84,10 @@ def validate_runtime_settings(value: Settings) -> None:
 
     errors: list[str] = []
     if environment == "production":
-        if (
-            value.auth_secret_key == "change-me-in-production"
-            or len(value.auth_secret_key.strip()) < 32
-        ):
+        if value.auth_secret_key.strip() in {
+            "change-me-in-production",
+            "local-only-change-me-at-least-32-characters",
+        } or len(value.auth_secret_key.strip()) < 32:
             errors.append("AUTH_SECRET_KEY는 32자 이상의 운영 전용 비밀값이어야 합니다.")
         if (
             value.default_admin_password == "icore1234!"

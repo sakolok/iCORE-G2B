@@ -13,7 +13,7 @@ from app.schemas import (
     TriggerScraperResponse,
 )
 from app.services.auth_service import require_auth, verify_scraper_internal_token
-from app.services.platform_service import (
+from app.g2b.bid_notices.service import (
     create_scraper_task,
     filter_new_scraper_notices,
     get_last_scraper_run_time,
