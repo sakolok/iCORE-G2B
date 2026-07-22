@@ -1,6 +1,11 @@
 import "./LayoutShell.css";
 
-function LayoutShell({ session, onLogout, children }) {
+const NAV_ITEMS = [
+  { key: "pre-specifications", label: "사전규격", href: "#pre-specifications" },
+  { key: "opening-results", label: "개찰결과", href: "#opening-results" },
+];
+
+function LayoutShell({ session, activePage, onLogout, children }) {
   const email = session?.email || session?.username || "iCore 사용자";
   const avatarLabel = email.slice(0, 1).toUpperCase();
 
@@ -14,7 +19,18 @@ function LayoutShell({ session, onLogout, children }) {
               <strong>iCore</strong>
             </div>
             <span className="layout-shell-divider" aria-hidden="true" />
-            <span className="layout-shell-current">개찰결과</span>
+            <nav className="layout-shell-nav" aria-label="업무 페이지">
+              {NAV_ITEMS.map((item) => (
+                <a
+                  key={item.key}
+                  className={activePage === item.key ? "is-active" : undefined}
+                  href={item.href}
+                  aria-current={activePage === item.key ? "page" : undefined}
+                >
+                  {item.label}
+                </a>
+              ))}
+            </nav>
           </div>
 
           <div className="layout-shell-user">

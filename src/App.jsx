@@ -3,6 +3,7 @@ import { Alert, Button, Spin } from "antd";
 import LayoutShell from "./components/LayoutShell";
 import LoginPage from "./pages/LoginPage";
 import OpeningResultsPage from "./pages/OpeningResultsPage";
+import PreSpecificationsPage from "./pages/PreSpecificationsPage";
 import { authApi, AUTH_TOKEN_KEY, formatApiError } from "./api/client";
 
 const LOCAL_SINGLE_USER_ENABLED =
@@ -12,9 +13,25 @@ const LOCAL_SINGLE_USER_ENABLED =
     String(import.meta.env.VITE_SINGLE_USER_MODE_ENABLED || "").trim().toLowerCase()
   );
 
+const PAGE_BY_HASH = {
+  "#pre-specifications": "pre-specifications",
+  "#opening-results": "opening-results",
+};
+
+function pageFromHash() {
+  return PAGE_BY_HASH[window.location.hash] || "opening-results";
+}
+
 function App() {
   const [session, setSession] = useState({ loading: true, error: "" });
   const [sessionAttempt, setSessionAttempt] = useState(0);
+  const [activePage, setActivePage] = useState(pageFromHash);
+
+  useEffect(() => {
+    const handleHashChange = () => setActivePage(pageFromHash());
+    window.addEventListener("hashchange", handleHashChange);
+    return () => window.removeEventListener("hashchange", handleHashChange);
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -80,7 +97,7 @@ function App() {
       <div className="app-session-loading" role="status" aria-live="polite">
         <div className="app-session-loading-content">
           <Spin size="large" />
-          <span>개찰결과를 준비하고 있습니다.</span>
+          <span>업무 화면을 준비하고 있습니다.</span>
         </div>
       </div>
     );
@@ -111,9 +128,14 @@ function App() {
   return (
     <LayoutShell
       session={session}
+      activePage={activePage}
       onLogout={LOCAL_SINGLE_USER_ENABLED ? undefined : handleLogout}
     >
-      <OpeningResultsPage />
+      {activePage === "pre-specifications" ? (
+        <PreSpecificationsPage />
+      ) : (
+        <OpeningResultsPage />
+      )}
     </LayoutShell>
   );
 }

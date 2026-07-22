@@ -1,0 +1,84 @@
+.pre-specifications-page {
+  display: grid;
+  gap: 16px;
+  padding-bottom: 24px;
+}
+
+.pre-specifications-hero {
+  padding: 10px 2px 18px;
+}
+
+.pre-specifications-hero h2 {
+  max-width: 760px;
+  margin: 10px 0 8px !important;
+  color: var(--icore-text);
+  font-size: clamp(30px, 3vw, 40px) !important;
+  font-weight: 750 !important;
+  line-height: 1.2 !important;
+  letter-spacing: -0.045em;
+}
+
+.pre-specifications-hero p {
+  margin: 0 !important;
+  color: var(--icore-text-secondary);
+  font-size: 16px;
+  line-height: 1.55;
+}
+
+.pre-specifications-eyebrow {
+  color: var(--icore-primary);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.pre-specifications-empty-card {
+  border-color: var(--icore-border);
+  background: var(--icore-surface);
+}
+
+.pre-specifications-empty-card .ant-card-body {
+  display: grid;
+  min-height: 360px;
+  place-items: center;
+  padding: 48px 24px;
+}
+
+.pre-specifications-empty-card .ant-empty {
+  width: 100%;
+  margin: 0;
+}
+
+.pre-specifications-empty-copy {
+  display: grid;
+  width: 340px;
+  max-width: calc(100vw - 80px);
+  gap: 6px;
+  margin: 0 auto;
+  color: var(--icore-text-muted);
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.pre-specifications-empty-copy strong {
+  color: var(--icore-text-secondary);
+  font-size: 15px;
+}
+
+@media (max-width: 600px) {
+  .pre-specifications-page {
+    gap: 12px;
+  }
+
+  .pre-specifications-hero {
+    padding-top: 0;
+  }
+
+  .pre-specifications-hero h2 {
+    font-size: 30px !important;
+  }
+
+  .pre-specifications-empty-card {
+    border-radius: 14px;
+  }
+}
