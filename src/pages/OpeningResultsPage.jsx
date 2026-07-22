@@ -76,6 +76,25 @@ function sheetUrl(spreadsheetId) {
     : null;
 }
 
+function externalHttpUrl(value) {
+  if (!value) return null;
+  try {
+    const parsed = new URL(value);
+    const hostname = parsed.hostname.toLowerCase();
+    const isOfficialG2bHost = hostname === "g2b.go.kr" || hostname.endsWith(".g2b.go.kr");
+    return ["http:", "https:"].includes(parsed.protocol) && isOfficialG2bHost
+      ? parsed.toString()
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function archiveDaysRemaining(expiresAt) {
+  if (!expiresAt) return 0;
+  return Math.max(0, Math.ceil(dayjs(expiresAt).diff(dayjs(), "hour", true) / 24));
+}
+
 function formatMoney(value) {
   if (value == null || value === "") return "-";
   const number = Number(value);
@@ -139,6 +158,9 @@ function exportBlockText(row) {
 function OpeningResultsPage() {
   const resultsRequestId = useRef(0);
   const detailRequestId = useRef(0);
+  const archiveRequestId = useRef(0);
+  const archivePageRef = useRef(1);
+  const archivePageSizeRef = useRef(30);
   const destinationVerifyRequestId = useRef(0);
   const [rows, setRows] = useState([]);
   const [total, setTotal] = useState(0);
@@ -161,6 +183,14 @@ function OpeningResultsPage() {
   const [previewError, setPreviewError] = useState("");
   const [detail, setDetail] = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [archiveOpen, setArchiveOpen] = useState(false);
+  const [archiveRows, setArchiveRows] = useState([]);
+  const [archiveTotal, setArchiveTotal] = useState(0);
+  const [archivePage, setArchivePage] = useState(1);
+  const [archivePageSize, setArchivePageSize] = useState(30);
+  const [archiveLoading, setArchiveLoading] = useState(false);
+  const [archiveError, setArchiveError] = useState("");
+  const [restoringId, setRestoringId] = useState(null);
   const [settings, setSettings] = useState(null);
   const [settingsError, setSettingsError] = useState("");
   const [profileOpen, setProfileOpen] = useState(false);
@@ -180,6 +210,8 @@ function OpeningResultsPage() {
     tab_name: "개찰결과",
     scope: "PERSONAL",
   });
+  archivePageRef.current = archivePage;
+  archivePageSizeRef.current = archivePageSize;
 
   const selectedRows = useMemo(() => [...selectedById.values()], [selectedById]);
   const selectedRowKeys = useMemo(() => [...selectedById.keys()], [selectedById]);
@@ -233,6 +265,38 @@ function OpeningResultsPage() {
     }
   };
 
+  const loadArchive = async (
+    nextPage = archivePage,
+    nextPageSize = archivePageSize
+  ) => {
+    const requestId = ++archiveRequestId.current;
+    setArchiveLoading(true);
+    setArchiveError("");
+    try {
+      const response = await openingResultsApi.listArchive({
+        page: nextPage,
+        page_size: nextPageSize,
+      });
+      if (requestId !== archiveRequestId.current) return;
+      const nextTotal = response.data.total || 0;
+      const maxPage = Math.max(1, Math.ceil(nextTotal / nextPageSize));
+      setArchiveTotal(nextTotal);
+      if (nextPage > maxPage) {
+        archivePageRef.current = maxPage;
+        setArchivePage(maxPage);
+        return;
+      }
+      setArchiveRows(response.data.items || []);
+    } catch (error) {
+      if (requestId !== archiveRequestId.current) return;
+      setArchiveRows([]);
+      setArchiveTotal(0);
+      setArchiveError(formatApiError(error, "14일 보관함 조회에 실패했습니다."));
+    } finally {
+      if (requestId === archiveRequestId.current) setArchiveLoading(false);
+    }
+  };
+
   const loadSettings = async () => {
     setSettingsError("");
     try {
@@ -261,6 +325,10 @@ function OpeningResultsPage() {
   useEffect(() => {
     loadSettings();
   }, []);
+
+  useEffect(() => {
+    if (archiveOpen) loadArchive(archivePage, archivePageSize);
+  }, [archiveOpen, archivePage, archivePageSize]);
 
   const clearSelection = () => setSelectedById(new Map());
 
@@ -490,13 +558,17 @@ function OpeningResultsPage() {
     }
   };
 
-  const openDetail = async (resultId) => {
+  const openDetail = async (resultId, fromArchive = false) => {
     const requestId = ++detailRequestId.current;
     setDetailLoading(true);
-    setDetail({ id: resultId, entries: [] });
+    setDetail({ id: resultId, entries: [], from_archive: fromArchive });
     try {
-      const response = await openingResultsApi.detail(resultId);
-      if (requestId === detailRequestId.current) setDetail(response.data);
+      const response = fromArchive
+        ? await openingResultsApi.archiveDetail(resultId)
+        : await openingResultsApi.detail(resultId);
+      if (requestId === detailRequestId.current) {
+        setDetail({ ...response.data, from_archive: fromArchive });
+      }
     } catch (error) {
       if (requestId === detailRequestId.current) {
         message.error(formatApiError(error, "업체별 순위 조회에 실패했습니다."));
@@ -563,9 +635,10 @@ function OpeningResultsPage() {
       setPreviewTarget(null);
       clearSelection();
       await loadResults(page, pageSize);
+      if (archiveOpen) await loadArchive(archivePage, archivePageSize);
       notification.success({
         message: "Google Sheets 반영 완료",
-        description: `${response.data.inserted_count}건 추가, ${response.data.updated_count}건 갱신했습니다. 성공한 결과는 검토함에서 숨겨집니다.`,
+        description: `${response.data.inserted_count}건 추가, ${response.data.updated_count}건 갱신했습니다. 성공한 결과는 검토함에서 숨겨지고 14일 보관함에 남습니다.`,
         duration: 8,
         actions: previewTarget.url ? (
           <Button type="primary" href={previewTarget.url} target="_blank" rel="noreferrer">
@@ -589,14 +662,42 @@ function OpeningResultsPage() {
     try {
       const response = await openingResultsApi.restore(resultId);
       notification.destroy(notificationKey);
+      await Promise.all([
+        response.data.visible ? loadResults(page, pageSize) : Promise.resolve(),
+        loadArchive(archivePageRef.current, archivePageSizeRef.current),
+      ]);
       if (response.data.visible) {
-        await loadResults(page, pageSize);
         message.success("제외를 취소해 검토함에 다시 표시했습니다.");
       } else {
         message.warning("제외는 취소했지만 조직 공용 Sheet에서 이미 처리되어 다시 표시되지 않습니다.");
       }
     } catch (error) {
       message.error(formatApiError(error, "제외 실행취소에 실패했습니다."));
+    }
+  };
+
+  const restoreArchiveRow = async (resultId) => {
+    setRestoringId(resultId);
+    try {
+      const response = await openingResultsApi.restore(resultId);
+      if (detail?.id === resultId) {
+        detailRequestId.current += 1;
+        setDetail(null);
+        setDetailLoading(false);
+      }
+      await Promise.all([
+        loadArchive(archivePage, archivePageSize),
+        response.data.visible ? loadResults(page, pageSize) : Promise.resolve(),
+      ]);
+      if (response.data.visible) {
+        message.success("검토할 결과로 복구했습니다.");
+      } else {
+        message.warning("제외 상태는 복구했지만 조직 공용 Sheet에서 이미 처리되어 목록에는 표시되지 않습니다.");
+      }
+    } catch (error) {
+      message.error(formatApiError(error, "보관 항목 복구에 실패했습니다."));
+    } finally {
+      setRestoringId(null);
     }
   };
 
@@ -619,7 +720,7 @@ function OpeningResultsPage() {
       notification.open({
         key: notificationKey,
         message: "내 검토함에서 제외했습니다.",
-        description: "원본은 보존되며 다음 수집에서도 다시 나타나지 않습니다.",
+        description: "14일 보관함에서 다시 확인하거나 검토할 결과로 복구할 수 있습니다.",
         duration: 10,
         actions: (
           <Button type="link" onClick={() => undoDismiss(resultId, notificationKey)}>
@@ -723,7 +824,7 @@ function OpeningResultsPage() {
           </Button>
           <Popconfirm
             title="내 검토함에서 제외할까요?"
-            description="원본은 보존되지만 다음 수집에도 다시 나타나지 않습니다. 10초 동안 취소할 수 있습니다."
+            description="14일 보관함으로 이동하며, 기간 안에는 다시 복구할 수 있습니다."
             okText="제외"
             cancelText="닫기"
             onConfirm={() => dismissRow(row.id)}
@@ -732,6 +833,76 @@ function OpeningResultsPage() {
               제외
             </Button>
           </Popconfirm>
+        </Space>
+      ),
+    },
+  ];
+
+  const archiveColumns = [
+    {
+      title: "처리일",
+      dataIndex: "handled_at",
+      width: 135,
+      render: (value) => (value ? dayjs(value).format("YYYY-MM-DD HH:mm") : "-"),
+    },
+    {
+      title: "보관 유형",
+      dataIndex: "handled_state",
+      width: 120,
+      render: (value) => (
+        <Tag className={`opening-archive-tag is-${String(value || "unknown").toLowerCase()}`}>
+          {value === "EXPORTED" ? "Sheet 반영" : "목록 제외"}
+        </Tag>
+      ),
+    },
+    {
+      title: "사업명 / 공고번호",
+      key: "business",
+      render: (_, row) => (
+        <Space direction="vertical" size={2} className="opening-result-business">
+          <Button type="link" onClick={() => openDetail(row.id, true)}>
+            {businessTitle(row)}
+          </Button>
+          <Typography.Text type="secondary">{row.bid_notice_no || "공고번호 미확인"}</Typography.Text>
+        </Space>
+      ),
+    },
+    {
+      title: "자동 삭제",
+      dataIndex: "expires_at",
+      width: 135,
+      render: (value) => {
+        const days = archiveDaysRemaining(value);
+        return (
+          <Space direction="vertical" size={0}>
+            <Typography.Text>{days > 0 ? `${days}일 남음` : "오늘 삭제"}</Typography.Text>
+            <Typography.Text type="secondary">
+              {value ? dayjs(value).format("MM-DD HH:mm") : "-"}
+            </Typography.Text>
+          </Space>
+        );
+      },
+    },
+    {
+      title: "작업",
+      key: "actions",
+      width: 150,
+      render: (_, row) => (
+        <Space size={2}>
+          <Button type="link" onClick={() => openDetail(row.id, true)}>
+            상세
+          </Button>
+          {row.can_restore ? (
+            <Popconfirm
+              title="검토할 결과로 복구할까요?"
+              description="복구하면 보관함에서 빠지고 원래 목록에 다시 표시됩니다."
+              okText="복구"
+              cancelText="취소"
+              onConfirm={() => restoreArchiveRow(row.id)}
+            >
+              <Button type="link" loading={restoringId === row.id}>복구</Button>
+            </Popconfirm>
+          ) : null}
         </Space>
       ),
     },
@@ -783,6 +954,7 @@ function OpeningResultsPage() {
   const detailStatus = STATUS_META[detail?.status] || STATUS_META.UNKNOWN;
   const detailFirstRank = (detail?.entries || []).find((entry) => entry.rank === 1);
   const detailEntriesPending = detail?.sheet_export_status === "DETAIL_PENDING";
+  const detailNoticeUrl = externalHttpUrl(detail?.notice_url);
 
   return (
     <div className="opening-results-page">
@@ -800,6 +972,7 @@ function OpeningResultsPage() {
           <Typography.Text type="secondary" className="opening-results-loaded-at">
             {lastLoadedAt ? `DB 조회 ${lastLoadedAt.format("MM-DD HH:mm:ss")}` : "DB 조회 전"}
           </Typography.Text>
+          <Button onClick={() => setArchiveOpen(true)}>14일 보관함</Button>
           <Button onClick={manualRefresh} loading={loading}>
             목록 새로고침
           </Button>
@@ -1327,6 +1500,69 @@ function OpeningResultsPage() {
       </Modal>
 
       <Drawer
+        title={`14일 보관함 · ${archiveTotal.toLocaleString("ko-KR")}건`}
+        width={980}
+        open={archiveOpen}
+        onClose={() => {
+          archiveRequestId.current += 1;
+          setArchiveOpen(false);
+          setArchiveLoading(false);
+        }}
+        extra={
+          <Button onClick={() => loadArchive(archivePage, archivePageSize)} loading={archiveLoading}>
+            보관함 새로고침
+          </Button>
+        }
+      >
+        <Space direction="vertical" size={16} className="opening-results-archive-content">
+          <Alert
+            type="info"
+            showIcon
+            message="제외하거나 Sheet에 반영한 결과를 14일간 보관합니다."
+            description="목록 제외 항목은 기간 안에 복구할 수 있습니다. Sheet 반영 항목은 외부 문서 기록이 이미 완료되어 열람만 가능하며, 14일이 지나면 이 보관함에서 자동으로 사라집니다."
+          />
+          {archiveError ? (
+            <Alert
+              type="error"
+              showIcon
+              message="보관함을 불러오지 못했습니다."
+              description={archiveError}
+              action={<Button onClick={() => loadArchive(archivePage, archivePageSize)}>다시 시도</Button>}
+            />
+          ) : (
+            <Table
+              className="opening-results-table-card"
+              rowKey="id"
+              loading={archiveLoading}
+              dataSource={archiveRows}
+              columns={archiveColumns}
+              pagination={{
+                current: archivePage,
+                pageSize: archivePageSize,
+                total: archiveTotal,
+                showSizeChanger: true,
+                pageSizeOptions: [20, 30, 50, 100],
+                showTotal: (count) => `총 ${count}건`,
+                onChange: (nextPage, nextPageSize) => {
+                  setArchivePage(nextPageSize === archivePageSize ? nextPage : 1);
+                  setArchivePageSize(nextPageSize);
+                },
+              }}
+              locale={{
+                emptyText: (
+                  <Empty
+                    image={Empty.PRESENTED_IMAGE_SIMPLE}
+                    description="최근 14일 안에 보관된 결과가 없습니다."
+                  />
+                ),
+              }}
+              scroll={{ x: 850 }}
+            />
+          )}
+        </Space>
+      </Drawer>
+
+      <Drawer
         title={businessTitle(detail)}
         width={860}
         open={Boolean(detail)}
@@ -1337,21 +1573,41 @@ function OpeningResultsPage() {
           setDetailLoading(false);
         }}
         extra={
-          detail?.id ? (
+          detail?.id && !detail.from_archive ? (
             <Popconfirm
               title="내 검토함에서 제외할까요?"
-              description="원본은 보존되며 10초 동안 실행취소할 수 있습니다."
+              description="14일 보관함으로 이동하며, 기간 안에는 다시 복구할 수 있습니다."
               okText="제외"
               cancelText="취소"
               onConfirm={() => dismissRow(detail.id)}
             >
               <Button danger>내 목록에서 제외</Button>
             </Popconfirm>
+          ) : detail?.can_restore ? (
+            <Popconfirm
+              title="검토할 결과로 복구할까요?"
+              description="복구하면 보관함에서 빠지고 원래 목록에 다시 표시됩니다."
+              okText="복구"
+              cancelText="취소"
+              onConfirm={() => restoreArchiveRow(detail.id)}
+            >
+              <Button type="primary" loading={restoringId === detail.id}>검토함으로 복구</Button>
+            </Popconfirm>
           ) : null
         }
       >
         {detail ? (
           <Space direction="vertical" size={20} style={{ width: "100%" }}>
+            {detail.handled_state ? (
+              <Alert
+                type={detail.handled_state === "EXPORTED" ? "success" : "info"}
+                showIcon
+                message={detail.handled_state === "EXPORTED" ? "Google Sheet 반영 완료" : "내 목록에서 제외됨"}
+                description={detail.handled_state === "EXPORTED"
+                  ? "외부 Sheet 기록이 완료된 항목으로, 보관함에서는 열람만 할 수 있습니다."
+                  : `${archiveDaysRemaining(detail.expires_at)}일 안에 검토할 결과로 복구할 수 있습니다.`}
+              />
+            ) : null}
             <Descriptions bordered size="small" column={2}>
               <Descriptions.Item label="공고번호">{detail.bid_notice_no || "-"}</Descriptions.Item>
               <Descriptions.Item label="개찰상태">
@@ -1382,6 +1638,15 @@ function OpeningResultsPage() {
               <Descriptions.Item label="2단계 입찰">{detail.is_two_stage_bid == null ? "-" : detail.is_two_stage_bid ? "예" : "아니오"}</Descriptions.Item>
               <Descriptions.Item label="참가업체">{detail.participant_count == null ? "-" : `${detail.participant_count}개사`}</Descriptions.Item>
               <Descriptions.Item label="매칭 키워드">{detail.matched_keywords?.length ? detail.matched_keywords.map((keyword) => <Tag className="opening-keyword-tag" key={keyword}>{keyword}</Tag>) : "-"}</Descriptions.Item>
+              <Descriptions.Item label="본 공고" span={2}>
+                {detailNoticeUrl ? (
+                  <Button type="link" href={detailNoticeUrl} target="_blank" rel="noopener noreferrer" className="opening-results-notice-link">
+                    나라장터 공고 바로가기
+                  </Button>
+                ) : (
+                  <Typography.Text type="secondary">연결된 공식 공고 링크가 없습니다.</Typography.Text>
+                )}
+              </Descriptions.Item>
             </Descriptions>
             {!detail.sheet_exportable ? (
               <Alert type="warning" showIcon message="현재 Sheet 반영 불가" description={exportBlockText(detail)} />
