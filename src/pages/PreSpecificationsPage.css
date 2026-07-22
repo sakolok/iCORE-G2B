@@ -5,6 +5,10 @@
 }
 
 .pre-specifications-hero {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 32px;
   padding: 10px 2px 18px;
 }
 
@@ -31,41 +35,206 @@
   font-weight: 700;
 }
 
-.pre-specifications-empty-card {
+.pre-specifications-hero-actions,
+.pre-specifications-filter-row,
+.pre-specifications-filter-heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.pre-specifications-hero-actions {
+  flex: 0 0 auto;
+  justify-content: flex-end;
+}
+
+.pre-specifications-loaded-at {
+  margin-right: 2px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.pre-specifications-collect-controls .ant-picker {
+  width: 250px;
+}
+
+.pre-specifications-filter-card,
+.pre-specifications-table-card {
+  overflow: hidden;
   border-color: var(--icore-border);
   background: var(--icore-surface);
 }
 
-.pre-specifications-empty-card .ant-card-body {
+.pre-specifications-filter-card .ant-card-body {
   display: grid;
-  min-height: 360px;
-  place-items: center;
-  padding: 48px 24px;
+  gap: 14px;
+  padding: 20px 24px;
 }
 
-.pre-specifications-empty-card .ant-empty {
+.pre-specifications-filter-heading {
+  justify-content: space-between;
+}
+
+.pre-specifications-filter-heading > div {
+  display: grid;
+  gap: 4px;
+}
+
+.pre-specifications-filter-heading strong {
+  color: var(--icore-text);
+  font-size: 18px;
+  letter-spacing: -0.02em;
+}
+
+.pre-specifications-filter-heading span {
+  color: var(--icore-text-muted);
+  font-size: 12px;
+}
+
+.pre-specifications-filter-heading > span {
+  padding: 6px 9px;
+  border-radius: 8px;
+  background: var(--icore-surface-muted);
+  color: var(--icore-text-secondary);
+  font-weight: 650;
+}
+
+.pre-specifications-filter-row {
+  flex-wrap: wrap;
+}
+
+.pre-specifications-search {
+  width: min(420px, 100%);
+}
+
+.pre-specifications-date-filter {
+  width: 260px;
+}
+
+.pre-specifications-deadline-filter {
+  width: 170px;
+}
+
+.pre-specifications-attachment-filter {
+  width: 150px;
+}
+
+.pre-specifications-table-card .ant-card-body {
+  padding: 0;
+}
+
+.pre-specifications-table-card .ant-card-head {
+  min-height: 58px;
+  border-bottom-color: var(--icore-border);
+  padding: 0 24px;
+}
+
+.pre-specifications-table-card .ant-card-head-title {
+  color: var(--icore-text);
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.pre-specifications-table-card .ant-table-thead > tr > th {
+  padding: 13px 12px;
+  border-bottom-color: var(--icore-border);
+  background: var(--icore-surface-muted);
+  color: var(--icore-text-secondary);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.pre-specifications-table-card .ant-table-tbody > tr > td {
+  padding: 13px 12px;
+  border-bottom-color: #edf0f2;
+  color: var(--icore-text);
+  font-size: 14px;
+}
+
+.pre-specifications-table-card .ant-pagination {
+  margin: 20px 24px;
+}
+
+.pre-specification-business,
+.pre-specification-deadline {
+  display: grid;
+  gap: 4px;
+}
+
+.pre-specification-business .ant-btn-link {
+  display: block;
   width: 100%;
+  height: auto;
+  padding: 0;
+  overflow: hidden;
+  color: var(--icore-text);
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pre-specification-business > span,
+.pre-specification-deadline > span {
+  color: var(--icore-text-muted);
+  font-size: 12px;
+}
+
+.pre-specification-deadline .ant-tag {
+  width: fit-content;
   margin: 0;
 }
 
-.pre-specifications-empty-copy {
-  display: grid;
-  width: 340px;
-  max-width: calc(100vw - 80px);
-  gap: 6px;
-  margin: 0 auto;
+.pre-specifications-detail-loading {
+  padding: 48px 0;
   color: var(--icore-text-muted);
-  font-size: 13px;
-  line-height: 1.5;
-  overflow-wrap: anywhere;
+  text-align: center;
 }
 
-.pre-specifications-empty-copy strong {
-  color: var(--icore-text-secondary);
-  font-size: 15px;
+.pre-specifications-detail {
+  display: grid;
+  gap: 20px;
 }
 
-@media (max-width: 600px) {
+.pre-specifications-detail-heading {
+  display: grid;
+  gap: 6px;
+}
+
+.pre-specifications-detail-heading .ant-tag {
+  width: fit-content;
+  margin: 0;
+}
+
+.pre-specifications-detail-heading h3 {
+  margin: 0 !important;
+  color: var(--icore-text);
+  letter-spacing: -0.03em;
+}
+
+.pre-specifications-detail .ant-card .ant-card-body {
+  padding: 16px;
+}
+
+.pre-specifications-detail .ant-btn-link {
+  height: auto;
+  padding: 2px 0;
+}
+
+@media (max-width: 1180px) {
+  .pre-specifications-hero {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .pre-specifications-hero-actions {
+    width: 100%;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+}
+
+@media (max-width: 720px) {
   .pre-specifications-page {
     gap: 12px;
   }
@@ -78,7 +247,33 @@
     font-size: 30px !important;
   }
 
-  .pre-specifications-empty-card {
+  .pre-specifications-filter-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .pre-specifications-search,
+  .pre-specifications-date-filter,
+  .pre-specifications-deadline-filter,
+  .pre-specifications-attachment-filter,
+  .pre-specifications-filter-row > .ant-btn,
+  .pre-specifications-collect-controls {
+    width: 100%;
+  }
+
+  .pre-specifications-collect-controls .ant-picker {
+    min-width: 0;
+    width: auto;
+  }
+
+  .pre-specifications-filter-card,
+  .pre-specifications-table-card {
     border-radius: 14px;
+  }
+
+  .pre-specifications-filter-card .ant-card-body,
+  .pre-specifications-table-card .ant-card-head {
+    padding-right: 18px;
+    padding-left: 18px;
   }
 }

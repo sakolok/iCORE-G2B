@@ -132,7 +132,7 @@ function App() {
       onLogout={LOCAL_SINGLE_USER_ENABLED ? undefined : handleLogout}
     >
       {activePage === "pre-specifications" ? (
-        <PreSpecificationsPage />
+        <PreSpecificationsPage session={session} />
       ) : (
         <OpeningResultsPage />
       )}
