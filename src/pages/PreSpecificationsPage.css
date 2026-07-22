@@ -156,6 +156,63 @@
   margin: 20px 24px;
 }
 
+.pre-specification-row-selected td {
+  background: var(--icore-selected) !important;
+}
+
+.pre-specification-row-selected:hover td {
+  background: #e5f2ff !important;
+}
+
+.pre-specifications-selection-dock {
+  position: sticky;
+  z-index: 20;
+  bottom: 16px;
+  border-color: #c9ddfb;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.97);
+  box-shadow: 0 12px 38px rgba(25, 31, 40, 0.12);
+  backdrop-filter: blur(14px);
+}
+
+.pre-specifications-selection-dock.is-empty {
+  display: none;
+}
+
+.pre-specifications-selection-dock .ant-card-body {
+  padding: 13px 16px;
+}
+
+.pre-specifications-selection-count {
+  display: grid;
+  min-width: 36px;
+  height: 36px;
+  padding: 0 8px;
+  place-items: center;
+  border-radius: 11px;
+  background: var(--icore-primary);
+  color: #ffffff;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 750;
+}
+
+.pre-specifications-selection-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.pre-specifications-destination-select {
+  width: 280px;
+}
+
+.pre-specifications-preview-content,
+.pre-specifications-archive-content {
+  width: 100%;
+}
+
 .pre-specification-business,
 .pre-specification-deadline {
   display: grid;
@@ -221,6 +278,11 @@
   padding: 2px 0;
 }
 
+.pre-specifications-page .ant-table-cell,
+.pre-specifications-page code {
+  font-variant-numeric: tabular-nums;
+}
+
 @media (max-width: 1180px) {
   .pre-specifications-hero {
     align-items: flex-start;
@@ -275,5 +337,20 @@
   .pre-specifications-table-card .ant-card-head {
     padding-right: 18px;
     padding-left: 18px;
+  }
+
+  .pre-specifications-selection-dock {
+    bottom: 8px;
+  }
+
+  .pre-specifications-selection-row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .pre-specifications-selection-row > .ant-space,
+  .pre-specifications-selection-row > .ant-space > .ant-space-item:has(.pre-specifications-destination-select),
+  .pre-specifications-destination-select {
+    width: 100%;
   }
 }
