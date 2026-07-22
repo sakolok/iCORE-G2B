@@ -37,6 +37,7 @@ from app.g2b.pre_specifications.service import (
     load_visible_pre_specifications,
     response_payload,
     restore_dismissed_pre_specification,
+    run_scheduled_pre_specifications,
 )
 from app.g2b.pre_specifications.sheet_export import (
     PRE_SPECIFICATION_TAB_NAME,
@@ -54,7 +55,11 @@ from app.g2b.opening_results.matching import (
     SheetDestinationAccessError,
     resolve_sheet_destination,
 )
-from app.services.auth_service import require_organization_auth
+from app.services.auth_service import (
+    require_organization_auth,
+    verify_cloud_scheduler_oidc_token,
+    verify_scraper_internal_token,
+)
 
 
 router = APIRouter(
@@ -95,6 +100,22 @@ def collect_pre_specification_data(
             request.end_date,
         )
         return CollectPreSpecificationsResponse(**result)
+    except PreSpecificationApiConfigurationError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    except PreSpecificationApiError as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
+
+
+@router.post("/internal/collect", response_model=CollectPreSpecificationsResponse)
+def collect_pre_specification_data_on_schedule(
+    _: None = Depends(verify_scraper_internal_token),
+    __: None = Depends(verify_cloud_scheduler_oidc_token),
+    db: Session = Depends(get_db),
+) -> CollectPreSpecificationsResponse:
+    try:
+        return CollectPreSpecificationsResponse(
+            **run_scheduled_pre_specifications(db)
+        )
     except PreSpecificationApiConfigurationError as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
     except PreSpecificationApiError as error:

@@ -221,6 +221,21 @@ def collect_pre_specifications(
         raise
 
 
+def run_scheduled_pre_specifications(
+    db: Session,
+    *,
+    now: datetime | None = None,
+    client: PreSpecificationApiClient | None = None,
+) -> dict:
+    collection_date = (now or _utcnow()).astimezone(KST).date()
+    return collect_pre_specifications(
+        db,
+        collection_date,
+        collection_date,
+        client=client,
+    )
+
+
 def _base_statement(query: PreSpecificationListQuery):
     statement = select(PreSpecificationModel)
     if query.registered_from or query.registered_to:

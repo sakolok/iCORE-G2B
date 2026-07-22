@@ -27,6 +27,7 @@ from app.g2b.pre_specifications.models import (
 )
 from app.g2b.pre_specifications.router import (
     collect_pre_specification_data,
+    collect_pre_specification_data_on_schedule,
     delete_pre_specification_from_inbox,
     export_pre_specifications_sheet,
     fetch_archived_pre_specification_detail,
@@ -51,9 +52,14 @@ from app.g2b.pre_specifications.service import (
     deadline_status,
     list_archived_pre_specifications,
     list_pre_specifications,
+    run_scheduled_pre_specifications,
     upsert_pre_specifications,
 )
-from app.services.auth_service import require_organization_auth
+from app.services.auth_service import (
+    require_organization_auth,
+    verify_cloud_scheduler_oidc_token,
+    verify_scraper_internal_token,
+)
 
 
 def api_payload(items, total_count):
@@ -389,6 +395,22 @@ class PreSpecificationTests(unittest.TestCase):
         ).all()
         self.assertEqual([run.status for run in runs], ["SUCCESS", "FAILED"])
 
+    def test_scheduled_collection_uses_current_kst_date(self):
+        client = StubClient(
+            [{"bfSpecRgstNo": "R001", "prdctClsfcNoNm": "AI 교육"}]
+        )
+
+        result = run_scheduled_pre_specifications(
+            self.db,
+            now=datetime(2026, 7, 20, 15, 30, tzinfo=timezone.utc),
+            client=client,
+        )
+
+        self.assertEqual(result["fetched_count"], 1)
+        run = self.db.scalar(select(PreSpecificationCollectionRunModel))
+        self.assertEqual(run.window_start.date(), date(2026, 7, 21))
+        self.assertEqual(run.window_end.date(), date(2026, 7, 21))
+
     def test_deadline_status_uses_kst_date(self):
         now = datetime(2026, 7, 20, 15, 30, tzinfo=timezone.utc)
         same_kst_day = datetime(2026, 7, 21, 12, 0, tzinfo=timezone.utc)
@@ -414,6 +436,32 @@ class PreSpecificationTests(unittest.TestCase):
                 dependency.call for dependency in route.dependant.dependencies
             }
             self.assertIn(require_organization_auth, dependency_calls)
+
+    def test_scheduled_route_requires_internal_token_and_scheduler_oidc(self):
+        route = next(
+            route
+            for route in router.routes
+            if route.path == "/api/v1/pre-specifications/internal/collect"
+        )
+        dependency_calls = {
+            dependency.call for dependency in route.dependant.dependencies
+        }
+
+        self.assertIn(verify_scraper_internal_token, dependency_calls)
+        self.assertIn(verify_cloud_scheduler_oidc_token, dependency_calls)
+
+        with patch(
+            "app.g2b.pre_specifications.router.run_scheduled_pre_specifications",
+            return_value={
+                "run_key": "scheduled:test",
+                "fetched_count": 1,
+                "inserted_count": 1,
+                "updated_count": 0,
+            },
+        ):
+            response = collect_pre_specification_data_on_schedule(db=self.db)
+
+        self.assertEqual(response.run_key, "scheduled:test")
 
     def test_api_lists_and_fetches_detail_with_current_organization_auth(self):
         upsert_pre_specifications(
