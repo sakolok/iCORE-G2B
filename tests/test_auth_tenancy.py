@@ -150,7 +150,7 @@ class AuthTenancyTests(unittest.TestCase):
         self.assertIsNotNone(self.user.last_login_at)
         self.assertEqual(parse_access_token(response.access_token)["sub"], str(self.user.id))
 
-    def test_first_google_login_creates_user_membership_and_empty_profile_once(self):
+    def test_first_company_domain_login_creates_user_membership_and_empty_profile_once(self):
         engine = create_engine("sqlite+pysqlite:///:memory:")
         Base.metadata.create_all(engine)
         email = "new-user@iceu.co.kr"
@@ -172,7 +172,6 @@ class AuthTenancyTests(unittest.TestCase):
                     "allowed_login_domains",
                     ("iceu.kr", "iceu.co.kr"),
                 ),
-                patch.object(settings, "google_login_allowed_emails", (email,)),
                 patch(
                     "app.services.auth_service.google_id_token.verify_oauth2_token",
                     return_value=claims,
@@ -231,6 +230,20 @@ class AuthTenancyTests(unittest.TestCase):
             )
         engine.dispose()
 
+    def test_new_iceu_kr_user_does_not_require_email_registration(self):
+        user = authenticate_google_user(
+            self.db,
+            {
+                "sub": "new-iceu-kr-user",
+                "email": "new-user@iceu.kr",
+                "display_name": "신규 사용자",
+            },
+        )
+
+        self.assertEqual(user.email, "new-user@iceu.kr")
+        self.assertEqual(user.role, "viewer")
+        self.assertTrue(user.is_active)
+
     def test_google_login_rejects_external_missing_domain_and_unverified_email(self):
         base_claims = {
             "iss": "https://accounts.google.com",
@@ -275,48 +288,17 @@ class AuthTenancyTests(unittest.TestCase):
         self.db.refresh(self.user)
         self.assertIsNone(self.user.google_sub)
 
-    def test_google_login_rejects_unapproved_and_inactive_users(self):
-        claims = {
-            "iss": "accounts.google.com",
-            "aud": "google-client-id",
-            "sub": "unapproved-google-user",
-            "email": "unapproved@iceu.co.kr",
-            "email_verified": True,
-            "hd": "iceu.co.kr",
-            "name": "미승인 사용자",
-        }
-        with (
-            patch.object(settings, "google_oauth_client_id", "google-client-id"),
-            patch.object(
-                settings,
-                "allowed_login_domains",
-                ("iceu.kr", "iceu.co.kr"),
-            ),
-            patch.object(settings, "google_login_allowed_emails", ()),
-            patch(
-                "app.services.auth_service.google_id_token.verify_oauth2_token",
-                return_value=claims,
-            ),
-        ):
-            with self.assertRaises(HTTPException) as unapproved:
-                google_login(
-                    GoogleLoginRequest(credential="unapproved-token"),
-                    db=self.db,
-                )
-        self.assertEqual(unapproved.exception.status_code, 403)
-        self.assertIsNone(
-            self.db.scalar(
-                select(UserModel).where(UserModel.email == "unapproved@iceu.co.kr")
-            )
-        )
-
+    def test_google_login_rejects_inactive_user(self):
         self.user.is_active = False
         self.db.commit()
         inactive_claims = {
-            **claims,
+            "iss": "accounts.google.com",
+            "aud": "google-client-id",
             "sub": "inactive-google-user",
             "email": self.user.email,
+            "email_verified": True,
             "hd": "iceu.kr",
+            "name": "비활성 사용자",
         }
         with (
             patch.object(settings, "google_oauth_client_id", "google-client-id"),
@@ -697,10 +679,6 @@ class AuthTenancyTests(unittest.TestCase):
             "wildcard-cors": (
                 {**base, "cors_allowed_origins": ("*",)},
                 "CORS_ALLOWED_ORIGINS",
-            ),
-            "external-allowlist": (
-                {**base, "google_login_allowed_emails": ("user@example.com",)},
-                "GOOGLE_LOGIN_ALLOWED_EMAILS",
             ),
         }
 

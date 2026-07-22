@@ -10,7 +10,12 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.g2b.bid_notice import missing_bid_notice_context_fields
+from app.g2b.bid_notice import (
+    REGION_API_EMPTY,
+    REGION_API_ERROR,
+    REGION_API_ORDER_MISMATCH,
+    missing_bid_notice_context_fields,
+)
 from app.g2b.opening_results.models import BidOpeningEntryModel, BidOpeningRoundModel
 from app.g2b.opening_results.notice_context_repository import (
     canonical_notice_key,
@@ -151,6 +156,22 @@ def _sheet_datetime(value: datetime | None) -> str:
     return value.astimezone(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d %H:%M")
 
 
+def _sheet_region_restriction(context: BidNoticeSheetContext | None) -> str:
+    if context is None:
+        return ""
+    if context.region_restriction_api_status in {
+        REGION_API_EMPTY,
+        REGION_API_ERROR,
+        REGION_API_ORDER_MISMATCH,
+    }:
+        return ""
+
+    value = (context.region_restriction or "").strip()
+    if context.region_restriction_api_status is None and value == "없음":
+        return ""
+    return value
+
+
 def _sheet_score_breakdown(
     entry: BidOpeningEntryModel | None,
 ) -> str | int | float:
@@ -184,7 +205,7 @@ def build_sheet_row(
         (context.demand_agency_name if context else None) or "",
         business_amount,
         _sheet_datetime(context.proposal_deadline if context else None),
-        (context.region_restriction if context else None) or "",
+        _sheet_region_restriction(context),
         (
             "Y"
             if context and context.is_two_stage_bid is True
@@ -205,7 +226,10 @@ def build_sheet_row(
 
 
 def _has_complete_notice_context(context: BidNoticeSheetContext | None) -> bool:
-    return context is not None and not missing_bid_notice_context_fields(context)
+    return context is not None and not missing_bid_notice_context_fields(
+        context,
+        require_region_restriction=False,
+    )
 
 
 def build_sheet_rows(

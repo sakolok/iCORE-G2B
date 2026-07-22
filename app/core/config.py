@@ -44,9 +44,6 @@ class Settings(BaseModel):
     allowed_login_domains: tuple[str, ...] = _env_csv(
         "ALLOWED_LOGIN_DOMAINS", "iceu.kr,iceu.co.kr"
     )
-    google_login_allowed_emails: tuple[str, ...] = _env_csv(
-        "GOOGLE_LOGIN_ALLOWED_EMAILS"
-    )
     default_organization_name: str = os.getenv("DEFAULT_ORGANIZATION_NAME", "iCore")
     default_organization_slug: str = os.getenv("DEFAULT_ORGANIZATION_SLUG", "icore")
     cloud_scheduler_enabled: bool = _env_bool("CLOUD_SCHEDULER_ENABLED", False)
@@ -105,12 +102,6 @@ def validate_runtime_settings(value: Settings) -> None:
             errors.append("LEGACY_PASSWORD_LOGIN_ENABLED는 운영 환경에서 사용할 수 없습니다.")
         if not value.cors_allowed_origins or "*" in value.cors_allowed_origins:
             errors.append("CORS_ALLOWED_ORIGINS에는 운영 프론트 주소를 명시해야 합니다.")
-        allowed_domains = set(value.allowed_login_domains)
-        if any(
-            "@" not in email or email.rsplit("@", 1)[1] not in allowed_domains
-            for email in value.google_login_allowed_emails
-        ):
-            errors.append("GOOGLE_LOGIN_ALLOWED_EMAILS에는 회사 도메인 계정만 사용할 수 있습니다.")
         if len(value.scraper_internal_token.strip()) < 32:
             errors.append("SCRAPER_INTERNAL_TOKEN은 32자 이상의 비밀값이어야 합니다.")
         if not value.g2b_award_service_key.strip():

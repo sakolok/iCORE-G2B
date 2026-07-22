@@ -1428,6 +1428,37 @@ class OpeningResultServiceTests(unittest.TestCase):
         self.assertEqual(detail.sheet_export_status, "READY")
         self.assertEqual(detail.notice_url, "https://www.g2b.go.kr/notice/detail")
 
+    def test_region_api_error_does_not_block_sheet_and_exports_blank_cell(self):
+        collect_opening_results(self.db, self.request, self.make_client())
+        result_id = self.db.scalar(select(BidOpeningRoundModel.id))
+        self.add_bid_notice(
+            region_restriction="서울특별시",
+            region_restriction_api_status="API_ERROR",
+        )
+        self.db.commit()
+
+        response = fetch_results(
+            q=None,
+            status=None,
+            opened_from=datetime(2026, 7, 14, tzinfo=timezone.utc),
+            opened_to=datetime(2026, 7, 16, tzinfo=timezone.utc),
+            page=1,
+            page_size=30,
+            auth=self.auth,
+            db=self.db,
+        )
+        rows, missing_context_keys, missing_result_ids = build_sheet_rows(
+            self.db,
+            [result_id],
+        )
+
+        self.assertEqual(response.items[0].sheet_export_status, "READY")
+        self.assertTrue(response.items[0].sheet_exportable)
+        self.assertEqual(response.items[0].sheet_block_reasons, [])
+        self.assertEqual(missing_context_keys, [])
+        self.assertEqual(missing_result_ids, [])
+        self.assertEqual(rows[0][5], "")
+
     def test_list_route_marks_detail_pending_before_sheet_preview(self):
         collect_opening_results(self.db, self.request, self.make_client())
         round_row = self.db.scalar(select(BidOpeningRoundModel))

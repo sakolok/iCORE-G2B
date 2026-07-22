@@ -518,6 +518,13 @@ class ScraperNoticePersistenceTests(unittest.TestCase):
             "region_restriction",
             missing_bid_notice_context_fields(stored),
         )
+        self.assertNotIn(
+            "region_restriction",
+            missing_bid_notice_context_fields(
+                stored,
+                require_region_restriction=False,
+            ),
+        )
 
     def test_missing_official_rank_is_filled_by_total_score(self):
         result_id = self.add_opening_result()
@@ -612,7 +619,7 @@ class ScraperNoticePersistenceTests(unittest.TestCase):
         )
         self.assertEqual(missing_context_keys, ["R26BK00000001|00"])
 
-    def test_api_empty_region_requires_review_and_blocks_sheet_export(self):
+    def test_api_empty_region_requires_review_and_exports_blank_sheet_cell(self):
         notice = ScraperNotice(
             notice_id="R26BK00000001",
             title="AI 구축 용역",
@@ -629,13 +636,14 @@ class ScraperNoticePersistenceTests(unittest.TestCase):
         self.persist(notice)
         result_id = self.add_opening_result()
 
-        _, missing_context_keys, _ = build_sheet_rows(self.db, [result_id])
+        rows, missing_context_keys, _ = build_sheet_rows(self.db, [result_id])
 
         self.assertIn(
             "region_restriction",
             missing_bid_notice_context_fields(notice),
         )
-        self.assertEqual(missing_context_keys, ["R26BK00000001|00"])
+        self.assertEqual(missing_context_keys, [])
+        self.assertEqual(rows[0][5], "")
 
     def test_zero_padded_duplicate_notice_orders_create_one_official_row(self):
         self.assertEqual(
@@ -952,12 +960,17 @@ class ScraperNoticePersistenceTests(unittest.TestCase):
         self.assertFalse(rows[0].is_two_stage_bid)
 
         result_id = self.add_opening_result()
-        _, missing_context_keys, missing_result_ids = build_sheet_rows(
+        sheet_rows, missing_context_keys, missing_result_ids = build_sheet_rows(
             self.db,
             [result_id],
         )
-        self.assertEqual(missing_context_keys, ["R26BK00000001|00"])
+        self.assertIn(
+            "region_restriction",
+            missing_bid_notice_context_fields(rows[0]),
+        )
+        self.assertEqual(missing_context_keys, [])
         self.assertEqual(missing_result_ids, [])
+        self.assertEqual(sheet_rows[0][5], "")
 
     def test_unseen_stale_notice_is_not_persisted_or_reexposed(self):
         now = datetime.now(timezone.utc)

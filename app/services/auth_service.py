@@ -151,13 +151,6 @@ def authenticate_google_user(db: Session, identity: dict[str, str]) -> UserModel
 
     user = subject_user or email_user
     if user is None:
-        allowed_emails = {
-            item.strip().lower()
-            for item in settings.google_login_allowed_emails
-            if item.strip()
-        }
-        if email not in allowed_emails:
-            raise GoogleLoginAccessError("로그인이 허용된 사용자가 아닙니다.")
         salt, password_hash = hash_password(secrets.token_urlsafe(48))
         username = f"google_{hashlib.sha256(subject.encode('utf-8')).hexdigest()[:32]}"
         user = UserModel(

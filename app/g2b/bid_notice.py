@@ -140,20 +140,27 @@ def infer_two_stage_bid(explicit_value: Any, *official_method_values: Any) -> bo
     return None
 
 
-def missing_bid_notice_context_fields(notice: Any) -> list[str]:
+def missing_bid_notice_context_fields(
+    notice: Any,
+    *,
+    require_region_restriction: bool = True,
+) -> list[str]:
     missing: list[str] = []
     if canonical_bid_notice_identity(
         getattr(notice, "bid_notice_no", None),
         getattr(notice, "bid_notice_ord", None),
     ) is None:
         missing.append("bid_notice_no")
-    for field_name in ("business_name", "demand_agency_name", "region_restriction"):
+    required_text_fields = ["business_name", "demand_agency_name"]
+    if require_region_restriction:
+        required_text_fields.append("region_restriction")
+    for field_name in required_text_fields:
         value = getattr(notice, field_name, None)
         if not isinstance(value, str) or not value.strip():
             missing.append(field_name)
     region_value = clean_optional_text(getattr(notice, "region_restriction", None))
     region_api_status = getattr(notice, "region_restriction_api_status", None)
-    if (
+    if require_region_restriction and (
         region_api_status
         in {REGION_API_EMPTY, REGION_API_ERROR, REGION_API_ORDER_MISMATCH}
         or (region_api_status is None and region_value == "없음")

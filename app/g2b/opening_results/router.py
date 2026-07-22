@@ -156,7 +156,12 @@ def _summary_responses(
         elif context is None:
             block_reasons.append("bid_notice_context")
         else:
-            block_reasons.extend(missing_bid_notice_context_fields(context))
+            block_reasons.extend(
+                missing_bid_notice_context_fields(
+                    context,
+                    require_region_restriction=False,
+                )
+            )
 
         if detail_pending:
             export_status = "DETAIL_PENDING"
