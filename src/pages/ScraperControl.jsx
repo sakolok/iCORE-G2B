@@ -86,6 +86,7 @@ function ScraperControl() {
         gsheet_ids: config.gsheet_ids || [],
         receiver_emails: normalizeTags(config.receiver_emails),
         keywords: normalizeTags(config.keywords),
+        excluded_keywords: normalizeTags(config.excluded_keywords || []),
       });
       setRunHistory(config.recent_runs || []);
     } catch (error) {
@@ -104,6 +105,7 @@ function ScraperControl() {
     try {
       const receiverEmails = normalizeTags(values.receiver_emails);
       const keywords = normalizeTags(values.keywords);
+      const excludedKeywords = normalizeTags(values.excluded_keywords);
 
       const invalidEmail = receiverEmails.find((email) => !EMAIL_REGEX.test(email));
       if (invalidEmail) {
@@ -119,6 +121,7 @@ function ScraperControl() {
         gsheet_ids: normalizeTags(values.gsheet_ids),
         receiver_emails: receiverEmails,
         keywords,
+        excluded_keywords: excludedKeywords,
       };
       const response = await scraperApi.updateConfig(payload);
       message.success(response.data.message);
@@ -260,8 +263,20 @@ function ScraperControl() {
           <Form.Item name="receiver_emails" label="수신 메일 목록" rules={[{ required: true }]}>
             <Select mode="tags" tokenSeparators={[","]} placeholder="mail1@company.com" />
           </Form.Item>
-          <Form.Item name="keywords" label="키워드 목록" rules={[{ required: true }]}>
-            <Select mode="tags" tokenSeparators={[","]} placeholder="AI 용역, 클라우드" />
+          <Form.Item
+            name="keywords"
+            label="포함 키워드 (하나라도 일치)"
+            rules={[{ required: true }]}
+            extra="입력한 단어 중 하나라도 공고명에 포함되면 수집합니다."
+          >
+            <Select mode="tags" tokenSeparators={[","]} placeholder="AI, 클라우드, 연수" />
+          </Form.Item>
+          <Form.Item
+            name="excluded_keywords"
+            label="제외 키워드"
+            extra="포함 조건에 맞아도 아래 단어가 하나라도 있으면 제외합니다. 예: 연수구, 연수원"
+          >
+            <Select mode="tags" tokenSeparators={[","]} placeholder="연수구, 연수원" />
           </Form.Item>
         </Form>
 
