@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from app.data.database import get_db
 from app.g2b.opening_results.matching import SheetDestinationAccessError, resolve_sheet_destination
 from app.g2b.pre_specifications.client import PreSpecificationApiConfigurationError, PreSpecificationApiError
-from app.g2b.pre_specifications.models import PreSpecificationModel, PreSpecificationSheetExportModel
+from app.g2b.pre_specifications.models import PreSpecificationModel, PreSpecificationSheetExportModel, UserPreSpecificationStateModel
 from app.g2b.pre_specifications.schemas import (
     CollectPreSpecificationsRequest,
     PreSpecificationExportRequest,
@@ -15,13 +15,19 @@ from app.g2b.pre_specifications.schemas import (
     PreSpecificationListQuery,
     PreSpecificationListResponse,
     PreSpecificationResponse,
+    PreSpecificationSelectionRequest,
+    PreSpecificationSelectionResponse,
 )
 from app.g2b.pre_specifications.service import (
+    archive_pre_specifications,
     collect_pre_specifications,
     get_pre_specification,
+    list_archived_pre_specifications,
     list_pre_specifications,
     mark_exported,
     response_payload,
+    restore_removed_sheet_pre_specifications,
+    restore_archived_pre_specifications,
     run_scheduled_pre_specifications,
 )
 from app.g2b.pre_specifications.sheet_export import SHEET_HEADERS, PreSpecificationSheetError, PreSpecificationSheetWriter, build_rows
@@ -84,6 +90,44 @@ def fetch_pre_specifications(
     return PreSpecificationListResponse(items=[PreSpecificationResponse(**response_payload(row, exported=row.bf_spec_rgst_no in exported_ids)) for row in rows], total=total, page=query.page, page_size=query.page_size)
 
 
+@router.get("/archive", response_model=PreSpecificationListResponse)
+def fetch_archived_pre_specifications(
+    q: str | None = None,
+    keywords: list[str] = Query(default=[]),
+    keyword_mode: str = "OR",
+    excluded_keywords: list[str] = Query(default=[]),
+    registered_from: date | None = None,
+    registered_to: date | None = None,
+    demand_agency: str | None = None,
+    min_budget: float | None = None,
+    max_budget: float | None = None,
+    attachment: str = "ALL",
+    deadline_status: str = "ALL",
+    page: int = 1,
+    page_size: int = 30,
+    auth: dict = Depends(require_organization_auth),
+    db: Session = Depends(get_db),
+) -> PreSpecificationListResponse:
+    try:
+        query = PreSpecificationListQuery(q=q, keywords=keywords, keyword_mode=keyword_mode, excluded_keywords=excluded_keywords, registered_from=registered_from, registered_to=registered_to, demand_agency=demand_agency, min_budget=min_budget, max_budget=max_budget, attachment=attachment, deadline_status=deadline_status, page=page, page_size=page_size)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    rows, total = list_archived_pre_specifications(db, query, organization_id=auth["organization_id"], user_id=auth["user_id"])
+    return PreSpecificationListResponse(items=[PreSpecificationResponse(**response_payload(row)) for row in rows], total=total, page=query.page, page_size=query.page_size)
+
+
+@router.post("/archive", response_model=PreSpecificationSelectionResponse)
+def archive_selected_pre_specifications(request: PreSpecificationSelectionRequest, auth: dict = Depends(require_organization_auth), db: Session = Depends(get_db)) -> PreSpecificationSelectionResponse:
+    updated_count, missing_ids = archive_pre_specifications(db, organization_id=auth["organization_id"], user_id=auth["user_id"], ids=request.bf_spec_rgst_nos)
+    return PreSpecificationSelectionResponse(updated_count=updated_count, missing_ids=missing_ids)
+
+
+@router.post("/archive/restore", response_model=PreSpecificationSelectionResponse)
+def restore_selected_pre_specifications(request: PreSpecificationSelectionRequest, auth: dict = Depends(require_organization_auth), db: Session = Depends(get_db)) -> PreSpecificationSelectionResponse:
+    updated_count, missing_ids = restore_archived_pre_specifications(db, organization_id=auth["organization_id"], user_id=auth["user_id"], ids=request.bf_spec_rgst_nos)
+    return PreSpecificationSelectionResponse(updated_count=updated_count, missing_ids=missing_ids)
+
+
 @router.get("/{bf_spec_rgst_no}", response_model=PreSpecificationResponse)
 def fetch_pre_specification_detail(bf_spec_rgst_no: str, auth: dict = Depends(require_organization_auth), db: Session = Depends(get_db)) -> PreSpecificationResponse:
     row = get_pre_specification(db, bf_spec_rgst_no)
@@ -101,6 +145,19 @@ def export_pre_specifications(request: PreSpecificationExportRequest, auth: dict
         raise HTTPException(status_code=404, detail=str(error)) from error
     if destination.owner_user_id is None and not _can_manage_organization(auth):
         raise HTTPException(status_code=403, detail="조직 관리자만 조직 공용 Sheet에 반영할 수 있습니다.")
+    archived_ids = set(
+        db.scalars(
+            select(UserPreSpecificationStateModel.bf_spec_rgst_no).where(
+                UserPreSpecificationStateModel.organization_id == auth["organization_id"],
+                UserPreSpecificationStateModel.user_id == auth["user_id"],
+                UserPreSpecificationStateModel.bf_spec_rgst_no.in_(request.bf_spec_rgst_nos),
+                UserPreSpecificationStateModel.state == "ARCHIVED",
+            )
+        ).all()
+    )
+    not_archived = [item_id for item_id in request.bf_spec_rgst_nos if item_id not in archived_ids]
+    if not_archived:
+        raise HTTPException(status_code=409, detail="Google Sheet 반영 전에는 선택한 사전규격을 보관함으로 이동해야 합니다.")
     values = db.scalars(select(PreSpecificationModel).where(PreSpecificationModel.bf_spec_rgst_no.in_(request.bf_spec_rgst_nos))).all()
     by_id = {row.bf_spec_rgst_no: row for row in values}
     selected = [by_id[item_id] for item_id in request.bf_spec_rgst_nos if item_id in by_id]
@@ -138,4 +195,10 @@ def reconcile_pre_specification_sheet(destination_id: int, auth: dict = Depends(
         raise HTTPException(status_code=502, detail="기존 Google Sheet 확인에 실패했습니다. 공유 권한을 확인하세요.") from error
     known_ids = set(db.scalars(select(PreSpecificationModel.bf_spec_rgst_no).where(PreSpecificationModel.bf_spec_rgst_no.in_(ids))).all())
     mark_exported(db, organization_id=auth["organization_id"], user_id=auth["user_id"], ids=known_ids)
-    return {"sheet_record_count": len(ids), "matched_count": len(known_ids)}
+    restored_count = restore_removed_sheet_pre_specifications(
+        db,
+        organization_id=auth["organization_id"],
+        user_id=auth["user_id"],
+        sheet_ids=known_ids,
+    )
+    return {"sheet_record_count": len(ids), "matched_count": len(known_ids), "restored_count": restored_count}

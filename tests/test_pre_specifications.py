@@ -16,9 +16,13 @@ from app.g2b.pre_specifications.client import (
 from app.g2b.pre_specifications.models import PreSpecificationModel, UserPreSpecificationStateModel
 from app.g2b.pre_specifications.schemas import PreSpecificationListQuery
 from app.g2b.pre_specifications.service import (
+    archive_pre_specifications,
     deadline_status,
+    list_archived_pre_specifications,
     list_pre_specifications,
     mark_exported,
+    restore_removed_sheet_pre_specifications,
+    restore_archived_pre_specifications,
     upsert_pre_specifications,
 )
 from app.g2b.pre_specifications.sheet_export import SHEET_HEADERS, build_rows
@@ -74,6 +78,60 @@ class PreSpecificationTests(unittest.TestCase):
         values = build_rows([row])
         self.assertEqual(len(SHEET_HEADERS), len(values[0]))
         self.assertEqual(values[0][0], "R001")
+
+    def test_archive_moves_items_out_of_work_list_and_restore_returns_them(self):
+        upsert_pre_specifications(self.db, [
+            {"bf_spec_rgst_no": "R001", "business_name": "AI 교육"},
+            {"bf_spec_rgst_no": "R002", "business_name": "클라우드 전환"},
+        ])
+        query = PreSpecificationListQuery()
+
+        updated, missing = archive_pre_specifications(
+            self.db,
+            organization_id=self.organization.id,
+            user_id=self.user.id,
+            ids=["R001", "UNKNOWN"],
+        )
+        self.assertEqual((updated, missing), (1, ["UNKNOWN"]))
+
+        rows, total, _ = list_pre_specifications(self.db, query, organization_id=self.organization.id, user_id=self.user.id)
+        self.assertEqual((total, [row.bf_spec_rgst_no for row in rows]), (1, ["R002"]))
+        archived, archived_total = list_archived_pre_specifications(self.db, query, organization_id=self.organization.id, user_id=self.user.id)
+        self.assertEqual((archived_total, [row.bf_spec_rgst_no for row in archived]), (1, ["R001"]))
+
+        restored, missing = restore_archived_pre_specifications(
+            self.db,
+            organization_id=self.organization.id,
+            user_id=self.user.id,
+            ids=["R001"],
+        )
+        self.assertEqual((restored, missing), (1, []))
+        rows, total, _ = list_pre_specifications(self.db, query, organization_id=self.organization.id, user_id=self.user.id)
+        self.assertEqual((total, [row.bf_spec_rgst_no for row in rows]), (2, ["R002", "R001"]))
+
+    def test_sheet_reconcile_restores_exported_item_removed_from_sheet(self):
+        upsert_pre_specifications(self.db, [
+            {"bf_spec_rgst_no": "R001", "business_name": "시트에 남은 사업"},
+            {"bf_spec_rgst_no": "R002", "business_name": "시트에서 삭제한 사업"},
+        ])
+        mark_exported(self.db, organization_id=self.organization.id, user_id=self.user.id, ids=["R001", "R002"])
+
+        restored_count = restore_removed_sheet_pre_specifications(
+            self.db,
+            organization_id=self.organization.id,
+            user_id=self.user.id,
+            sheet_ids=["R001"],
+        )
+
+        self.assertEqual(restored_count, 1)
+        rows, total, exported = list_pre_specifications(
+            self.db,
+            PreSpecificationListQuery(include_exported=True),
+            organization_id=self.organization.id,
+            user_id=self.user.id,
+        )
+        self.assertEqual((total, [row.bf_spec_rgst_no for row in rows]), (2, ["R002", "R001"]))
+        self.assertEqual(exported, {"R001"})
 
 
 if __name__ == "__main__":

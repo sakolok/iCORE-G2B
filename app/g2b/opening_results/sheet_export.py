@@ -4,6 +4,7 @@ import os
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal, ROUND_HALF_UP
+from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -64,8 +65,13 @@ def get_sheet_service_account_email() -> str | None:
     inline_json = os.getenv("GSHEET_SERVICE_ACCOUNT_JSON", "").strip()
     if inline_json:
         try:
-            email = str(json.loads(inline_json).get("client_email") or "").strip()
-        except (json.JSONDecodeError, AttributeError):
+            account = (
+                json.loads(inline_json)
+                if inline_json.startswith("{")
+                else json.loads(Path(inline_json).expanduser().read_text(encoding="utf-8"))
+            )
+            email = str(account.get("client_email") or "").strip()
+        except (OSError, json.JSONDecodeError, AttributeError):
             email = ""
         if email:
             return email
@@ -307,12 +313,22 @@ class GoogleSheetWriter:
 
         inline_json = os.getenv("GSHEET_SERVICE_ACCOUNT_JSON", "").strip()
         if inline_json:
+            try:
+                account = (
+                    json.loads(inline_json)
+                    if inline_json.startswith("{")
+                    else json.loads(Path(inline_json).expanduser().read_text(encoding="utf-8"))
+                )
+            except (OSError, json.JSONDecodeError) as error:
+                raise SheetExportConfigurationError(
+                    "GSHEET_SERVICE_ACCOUNT_JSON JSON 또는 파일 경로가 올바르지 않습니다."
+                ) from error
             credentials = service_account.Credentials.from_service_account_info(
-                json.loads(inline_json),
+                account,
                 scopes=["https://www.googleapis.com/auth/spreadsheets"],
             )
-            return build("sheets", "v4", credentials=credentials)
-        return build("sheets", "v4")
+            return build("sheets", "v4", credentials=credentials, cache_discovery=False)
+        return build("sheets", "v4", cache_discovery=False)
 
     def verify_connection(self) -> SheetConnectionVerification:
         metadata = (

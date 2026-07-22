@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal, InvalidOperation
 from typing import Any
+from urllib.parse import unquote
 
 import requests
 
@@ -40,6 +41,11 @@ class PreSpecificationApiClient:
         self.config = config
         self.session = session or requests.Session()
 
+    @property
+    def service_key(self) -> str:
+        """Public Data Portal keys may be stored in encoded form in local env files."""
+        return unquote(self.config.service_key) if "%" in self.config.service_key else self.config.service_key
+
     @staticmethod
     def _items(payload: Any) -> tuple[int, list[dict[str, Any]]]:
         root = payload.get("response", payload) if isinstance(payload, dict) else {}
@@ -60,7 +66,7 @@ class PreSpecificationApiClient:
             try:
                 response = self.session.get(
                     f"{self.config.base_url}{self.PATH}",
-                    params={"serviceKey": self.config.service_key, "type": "json", "inqryDiv": "1", "inqryBgnDt": start_date.strftime("%Y%m%d0000"), "inqryEndDt": end_date.strftime("%Y%m%d2359"), "pageNo": page, "numOfRows": self.config.page_size},
+                    params={"serviceKey": self.service_key, "type": "json", "inqryDiv": "1", "inqryBgnDt": start_date.strftime("%Y%m%d0000"), "inqryEndDt": end_date.strftime("%Y%m%d2359"), "pageNo": page, "numOfRows": self.config.page_size},
                     headers={"Accept": "application/json"}, timeout=self.config.timeout_seconds,
                 )
                 response.raise_for_status()

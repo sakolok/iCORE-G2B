@@ -137,6 +137,23 @@ class PreSpecificationExportRequest(BaseModel):
         return list(dict.fromkeys(str(value).strip() for value in values if str(value).strip()))
 
 
+class PreSpecificationSelectionRequest(BaseModel):
+    bf_spec_rgst_nos: list[str] = Field(min_length=1, max_length=100)
+
+    @field_validator("bf_spec_rgst_nos")
+    @classmethod
+    def unique_ids(cls, values):
+        result = list(dict.fromkeys(str(value).strip() for value in values if str(value).strip()))
+        if not result:
+            raise ValueError("사전규격 등록번호를 하나 이상 선택해야 합니다.")
+        return result
+
+
+class PreSpecificationSelectionResponse(BaseModel):
+    updated_count: int
+    missing_ids: list[str]
+
+
 class PreSpecificationExportResponse(BaseModel):
     headers: list[str]
     row_count: int

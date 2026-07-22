@@ -125,14 +125,27 @@ def _base_statement(query: PreSpecificationListQuery):
     return statement
 
 
-def list_pre_specifications(db: Session, query: PreSpecificationListQuery, *, organization_id: int, user_id: int) -> tuple[list[PreSpecificationModel], int, set[str]]:
-    statement = _base_statement(query)
-    states = {row.bf_spec_rgst_no: row.state for row in db.scalars(select(UserPreSpecificationStateModel).where(UserPreSpecificationStateModel.organization_id == organization_id, UserPreSpecificationStateModel.user_id == user_id)).all()}
-    rows = db.scalars(statement.order_by(PreSpecificationModel.registered_at.desc(), PreSpecificationModel.bf_spec_rgst_no.desc())).all()
+def _user_states(db: Session, *, organization_id: int, user_id: int) -> dict[str, str]:
+    return {
+        row.bf_spec_rgst_no: row.state
+        for row in db.scalars(
+            select(UserPreSpecificationStateModel).where(
+                UserPreSpecificationStateModel.organization_id == organization_id,
+                UserPreSpecificationStateModel.user_id == user_id,
+            )
+        ).all()
+    }
+
+
+def _filter_pre_specifications(rows: Iterable[PreSpecificationModel], query: PreSpecificationListQuery, states: dict[str, str], *, archived_only: bool) -> list[PreSpecificationModel]:
     filtered: list[PreSpecificationModel] = []
     now = _utcnow()
     for row in rows:
-        if not query.include_exported and states.get(row.bf_spec_rgst_no) == "EXPORTED":
+        state = states.get(row.bf_spec_rgst_no)
+        if archived_only:
+            if state != "ARCHIVED":
+                continue
+        elif state == "ARCHIVED" or (not query.include_exported and state == "EXPORTED"):
             continue
         title = row.business_name or ""
         if query.keywords:
@@ -144,9 +157,27 @@ def list_pre_specifications(db: Session, query: PreSpecificationListQuery, *, or
         if query.deadline_status != "ALL" and deadline_status(row.opinion_deadline, now) != query.deadline_status:
             continue
         filtered.append(row)
+    return filtered
+
+
+def list_pre_specifications(db: Session, query: PreSpecificationListQuery, *, organization_id: int, user_id: int) -> tuple[list[PreSpecificationModel], int, set[str]]:
+    statement = _base_statement(query)
+    states = _user_states(db, organization_id=organization_id, user_id=user_id)
+    rows = db.scalars(statement.order_by(PreSpecificationModel.registered_at.desc(), PreSpecificationModel.bf_spec_rgst_no.desc())).all()
+    filtered = _filter_pre_specifications(rows, query, states, archived_only=False)
     total = len(filtered)
     start = (query.page - 1) * query.page_size
     return filtered[start:start + query.page_size], total, {key for key, state in states.items() if state == "EXPORTED"}
+
+
+def list_archived_pre_specifications(db: Session, query: PreSpecificationListQuery, *, organization_id: int, user_id: int) -> tuple[list[PreSpecificationModel], int]:
+    statement = _base_statement(query)
+    states = _user_states(db, organization_id=organization_id, user_id=user_id)
+    rows = db.scalars(statement.order_by(PreSpecificationModel.registered_at.desc(), PreSpecificationModel.bf_spec_rgst_no.desc())).all()
+    filtered = _filter_pre_specifications(rows, query, states, archived_only=True)
+    total = len(filtered)
+    start = (query.page - 1) * query.page_size
+    return filtered[start:start + query.page_size], total
 
 
 def get_pre_specification(db: Session, bf_spec_rgst_no: str) -> PreSpecificationModel | None:
@@ -157,12 +188,70 @@ def response_payload(row: PreSpecificationModel, *, exported: bool = False) -> d
     return {"bf_spec_rgst_no": row.bf_spec_rgst_no, "bid_notice_no": row.bid_notice_no, "bid_notice_ord": row.bid_notice_ord, "reference_no": row.reference_no, "business_name": row.business_name, "business_type": row.business_type, "demand_agency_name": row.demand_agency_name, "ordering_agency_name": row.ordering_agency_name, "allocated_budget": row.allocated_budget, "registered_at": row.registered_at, "opinion_deadline": row.opinion_deadline, "delivery_deadline": row.delivery_deadline, "contact_name": row.contact_name, "contact_phone": row.contact_phone, "attachments": _attachments(row), "deadline_status": deadline_status(row.opinion_deadline), "exported": exported, "first_seen_at": row.first_seen_at, "last_seen_at": row.last_seen_at}
 
 
-def mark_exported(db: Session, *, organization_id: int, user_id: int, ids: Iterable[str]) -> None:
+def _set_user_state(db: Session, *, organization_id: int, user_id: int, ids: Iterable[str], state: str) -> None:
     now = _utcnow()
     for item_id in ids:
-        row = db.scalar(select(UserPreSpecificationStateModel).where(UserPreSpecificationStateModel.user_id == user_id, UserPreSpecificationStateModel.bf_spec_rgst_no == item_id))
+        row = db.scalar(
+            select(UserPreSpecificationStateModel).where(
+                UserPreSpecificationStateModel.organization_id == organization_id,
+                UserPreSpecificationStateModel.user_id == user_id,
+                UserPreSpecificationStateModel.bf_spec_rgst_no == item_id,
+            )
+        )
         if row is None:
-            db.add(UserPreSpecificationStateModel(organization_id=organization_id, user_id=user_id, bf_spec_rgst_no=item_id, state="EXPORTED", acted_at=now))
+            db.add(UserPreSpecificationStateModel(organization_id=organization_id, user_id=user_id, bf_spec_rgst_no=item_id, state=state, acted_at=now))
         else:
-            row.state, row.acted_at = "EXPORTED", now
+            row.state, row.acted_at = state, now
     db.commit()
+
+
+def mark_exported(db: Session, *, organization_id: int, user_id: int, ids: Iterable[str]) -> None:
+    _set_user_state(db, organization_id=organization_id, user_id=user_id, ids=ids, state="EXPORTED")
+
+
+def restore_removed_sheet_pre_specifications(
+    db: Session,
+    *,
+    organization_id: int,
+    user_id: int,
+    sheet_ids: Iterable[str],
+) -> int:
+    """Return exported items to the work list when they no longer exist in the synced Sheet."""
+    present_ids = set(sheet_ids)
+    rows = db.scalars(
+        select(UserPreSpecificationStateModel).where(
+            UserPreSpecificationStateModel.organization_id == organization_id,
+            UserPreSpecificationStateModel.user_id == user_id,
+            UserPreSpecificationStateModel.state == "EXPORTED",
+        )
+    ).all()
+    removed_rows = [row for row in rows if row.bf_spec_rgst_no not in present_ids]
+    for row in removed_rows:
+        db.delete(row)
+    db.commit()
+    return len(removed_rows)
+
+
+def archive_pre_specifications(db: Session, *, organization_id: int, user_id: int, ids: Iterable[str]) -> tuple[int, list[str]]:
+    requested = list(dict.fromkeys(ids))
+    existing = set(db.scalars(select(PreSpecificationModel.bf_spec_rgst_no).where(PreSpecificationModel.bf_spec_rgst_no.in_(requested))).all())
+    selected = [item_id for item_id in requested if item_id in existing]
+    _set_user_state(db, organization_id=organization_id, user_id=user_id, ids=selected, state="ARCHIVED")
+    return len(selected), [item_id for item_id in requested if item_id not in existing]
+
+
+def restore_archived_pre_specifications(db: Session, *, organization_id: int, user_id: int, ids: Iterable[str]) -> tuple[int, list[str]]:
+    requested = list(dict.fromkeys(ids))
+    rows = db.scalars(
+        select(UserPreSpecificationStateModel).where(
+            UserPreSpecificationStateModel.organization_id == organization_id,
+            UserPreSpecificationStateModel.user_id == user_id,
+            UserPreSpecificationStateModel.bf_spec_rgst_no.in_(requested),
+            UserPreSpecificationStateModel.state == "ARCHIVED",
+        )
+    ).all()
+    restored = {row.bf_spec_rgst_no for row in rows}
+    for row in rows:
+        db.delete(row)
+    db.commit()
+    return len(restored), [item_id for item_id in requested if item_id not in restored]

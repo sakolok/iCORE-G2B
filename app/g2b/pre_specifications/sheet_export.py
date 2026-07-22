@@ -11,6 +11,9 @@ from app.g2b.pre_specifications.service import deadline_status
 
 
 SHEET_HEADERS = ["사전규격 등록번호", "사업명", "수요기관", "공고기관", "사업구분", "배정예산", "등록일", "의견마감일", "의견마감 상태", "담당자", "연락처", "첨부문서 URL"]
+# The first prototype used these labels with the same 12-column order. Keep it
+# writable so existing internal sheets can be adopted without changing data.
+LEGACY_SHEET_HEADERS = ["사전규격 등록번호", "사업명", "수요기관", "공고기관", "업무구분", "배정예산", "등록일시", "의견마감일시", "마감상태", "담당자", "연락처", "규격서 URL"]
 
 
 class PreSpecificationSheetError(RuntimeError):
@@ -81,8 +84,8 @@ class PreSpecificationSheetWriter:
         header = values.get(spreadsheetId=self.spreadsheet_id, range=f"'{tab}'!A1:L1").execute().get("values") or []
         if not header:
             values.update(spreadsheetId=self.spreadsheet_id, range=f"'{tab}'!A1", valueInputOption="RAW", body={"values": [SHEET_HEADERS]}).execute()
-        elif header[0][:len(SHEET_HEADERS)] != SHEET_HEADERS:
-            raise PreSpecificationSheetError("사전규격 Sheet의 A:L 헤더가 고정 12개 열과 일치하지 않습니다.")
+        elif tuple(header[0][:len(SHEET_HEADERS)]) not in {tuple(SHEET_HEADERS), tuple(LEGACY_SHEET_HEADERS)}:
+            raise PreSpecificationSheetError("사전규격 Sheet의 A:L 헤더가 지원하는 12개 열 형식과 일치하지 않습니다.")
         existing = values.get(spreadsheetId=self.spreadsheet_id, range=f"'{tab}'!A2:A").execute().get("values") or []
         known = {str(value[0]).strip() for value in existing if value and str(value[0]).strip()}
         append_rows = [row for row in rows if str(row[0]).strip() not in known]
