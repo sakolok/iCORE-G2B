@@ -86,6 +86,9 @@ class ScraperNoticeModel(Base):
         DateTime(timezone=True), nullable=True
     )
     region_restriction: Mapped[str | None] = mapped_column(String(240), nullable=True)
+    region_restriction_api_status: Mapped[str | None] = mapped_column(
+        String(20), nullable=True
+    )
     is_two_stage_bid: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

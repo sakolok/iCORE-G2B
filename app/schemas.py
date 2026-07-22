@@ -4,6 +4,7 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
+from app.g2b.bid_notice import RegionRestrictionApiStatus
 from app.g2b.keyword_policy import normalize_keywords
 
 
@@ -70,6 +71,7 @@ class ScraperNotice(BaseModel):
     )
     proposal_deadline: Optional[datetime] = None
     region_restriction: Optional[str] = Field(default=None, max_length=240)
+    region_restriction_api_status: Optional[RegionRestrictionApiStatus] = None
     is_two_stage_bid: Optional[bool] = None
 
 

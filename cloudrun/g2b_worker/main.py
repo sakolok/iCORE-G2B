@@ -19,6 +19,10 @@ from pydantic import BaseModel, Field
 from requests.exceptions import JSONDecodeError as RequestsJSONDecodeError
 
 from app.g2b.bid_notice import (
+    REGION_API_EMPTY,
+    REGION_API_ERROR,
+    REGION_API_VALUE,
+    RegionRestrictionApiStatus,
     canonical_bid_notice_identity,
     clean_optional_text,
     infer_two_stage_bid,
@@ -65,6 +69,7 @@ class NoticeRow(BaseModel):
     prearranged_price_decision_method: str | None = None
     proposal_deadline: datetime | None = None
     region_restriction: str | None = None
+    region_restriction_api_status: RegionRestrictionApiStatus | None = None
     is_two_stage_bid: bool | None = None
 
 
@@ -154,6 +159,9 @@ def _extract_from_item(item: dict[str, Any]) -> NoticeRow | None:
     demand_agency_name = clean_optional_text(
         item.get("demand_agency_name") or item.get("dminsttNm")
     )
+    region_restriction = clean_optional_text(
+        item.get("region_restriction") or item.get("prtcptPsblRgnNm")
+    )
     return NoticeRow(
         notice_id=notice_id,
         title=title,
@@ -175,8 +183,9 @@ def _extract_from_item(item: dict[str, Any]) -> NoticeRow | None:
         proposal_deadline=parse_g2b_datetime(
             item.get("proposal_deadline") or item.get("bidClseDt")
         ),
-        region_restriction=clean_optional_text(
-            item.get("region_restriction") or item.get("prtcptPsblRgnNm")
+        region_restriction=region_restriction,
+        region_restriction_api_status=(
+            REGION_API_VALUE if region_restriction else None
         ),
         is_two_stage_bid=infer_two_stage_bid(
             item.get("is_two_stage_bid"),
@@ -740,7 +749,9 @@ def _enrich_bid_notice_contexts(notices: list[NoticeRow]) -> list[NoticeRow]:
         notice_no, _ = identity
         notice_ord = (notice.bid_notice_ord or "00").strip() or "00"
 
-        if notice.region_restriction is None:
+        if notice.region_restriction is not None:
+            notice.region_restriction_api_status = REGION_API_VALUE
+        else:
             succeeded, items = _fetch_bid_notice_detail_items(
                 url=region_url,
                 params={
@@ -753,12 +764,28 @@ def _enrich_bid_notice_contexts(notices: list[NoticeRow]) -> list[NoticeRow]:
                 source_label=f"G2B participant region {notice_no}|{notice_ord}",
             )
             if succeeded:
-                region_names: list[str] = []
-                for item in _matching_bid_notice_items(items, identity):
-                    region_name = clean_optional_text(item.get("prtcptPsblRgnNm"))
-                    if region_name and region_name not in region_names:
-                        region_names.append(region_name)
-                notice.region_restriction = ", ".join(region_names) or "없음"
+                matching_items = _matching_bid_notice_items(items, identity)
+                if items and not matching_items:
+                    notice.region_restriction_api_status = REGION_API_ERROR
+                else:
+                    region_names: list[str] = []
+                    for item in matching_items:
+                        region_name = clean_optional_text(
+                            item.get("prtcptPsblRgnNm")
+                        )
+                        if region_name and region_name not in region_names:
+                            region_names.append(region_name)
+                    notice.region_restriction = clean_optional_text(
+                        ", ".join(region_names),
+                        max_length=240,
+                    )
+                    notice.region_restriction_api_status = (
+                        REGION_API_VALUE
+                        if notice.region_restriction
+                        else REGION_API_EMPTY
+                    )
+            else:
+                notice.region_restriction_api_status = REGION_API_ERROR
 
     return notices
 

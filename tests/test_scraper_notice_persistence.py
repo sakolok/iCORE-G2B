@@ -8,6 +8,9 @@ from sqlalchemy.orm import Session
 
 from app.data.models import Base, ScraperNoticeModel, ScraperRunModel
 from app.g2b.bid_notice import (
+    REGION_API_EMPTY,
+    REGION_API_ERROR,
+    REGION_API_VALUE,
     canonical_bid_notice_identity,
     infer_two_stage_bid,
     missing_bid_notice_context_fields,
@@ -33,6 +36,7 @@ from cloudrun.g2b_worker.main import (
     NoticeRow,
     ScraperJobPayload,
     _build_query_window,
+    _enrich_bid_notice_contexts,
     _extract_from_item,
     _fetch_g2b_notices,
     run_scraper,
@@ -149,6 +153,10 @@ class ScraperNoticePersistenceTests(unittest.TestCase):
         self.assertEqual(stored.base_amount, Decimal("165000000.00"))
         self.assertEqual(stored.prearranged_price_decision_method, "복수예가")
         self.assertEqual(stored.region_restriction, "서울특별시")
+        self.assertEqual(
+            stored.region_restriction_api_status,
+            REGION_API_VALUE,
+        )
         self.assertTrue(stored.is_two_stage_bid)
         self.assertEqual(notice.published_at.utcoffset(), timedelta(hours=9))
         self.assertEqual(notice.published_at.hour, 10)
@@ -205,7 +213,8 @@ class ScraperNoticePersistenceTests(unittest.TestCase):
             base_amount=Decimal("90000000"),
             prearranged_price_decision_method="비예가",
             proposal_deadline=datetime(2026, 7, 20, 15, 0),
-            region_restriction="없음",
+            region_restriction="서울특별시",
+            region_restriction_api_status=REGION_API_VALUE,
             is_two_stage_bid=False,
         )
         result_id = self.add_opening_result()
@@ -248,7 +257,8 @@ class ScraperNoticePersistenceTests(unittest.TestCase):
             base_amount=Decimal("165000000"),
             prearranged_price_decision_method="비예가",
             proposal_deadline=datetime(2026, 7, 20, 15, 0),
-            region_restriction="없음",
+            region_restriction="서울특별시",
+            region_restriction_api_status=REGION_API_VALUE,
             is_two_stage_bid=False,
         )
         result_id = self.add_opening_result()
@@ -309,6 +319,7 @@ class ScraperNoticePersistenceTests(unittest.TestCase):
             "presmptPrce": "81818182",
             "VAT": "8181818",
             "bidClseDt": "202607201500",
+            "prtcptPsblRgnNm": "메인 응답 지역",
         }
         region_items = [
             {
@@ -329,6 +340,183 @@ class ScraperNoticePersistenceTests(unittest.TestCase):
         self.assertEqual(notice.base_amount, Decimal("90000000"))
         self.assertEqual(len(notice.region_restriction), 240)
         self.assertTrue(notice.region_restriction.startswith("지역제한-00"))
+        self.assertEqual(
+            notice.region_restriction_api_status,
+            REGION_API_VALUE,
+        )
+
+    def test_official_context_marks_empty_region_api_response(self):
+        result_id = self.add_opening_result()
+        round_row = self.db.get(BidOpeningRoundModel, result_id)
+        notice_item = {
+            "bidNtceNo": "R26BK00000001",
+            "bidNtceOrd": "00",
+            "bidNtceNm": "AI 구축 용역",
+            "dminsttNm": "OO기관",
+            "presmptPrce": "81818182",
+            "VAT": "8181818",
+            "bidClseDt": "202607201500",
+        }
+
+        with patch(
+            "app.g2b.bid_notices.service._fetch_bid_notice_api_items",
+            side_effect=[(True, [notice_item]), (True, [])],
+        ):
+            notice = _fetch_official_bid_notice_context(round_row)
+
+        self.assertIsNotNone(notice)
+        self.assertIsNone(notice.region_restriction)
+        self.assertEqual(
+            notice.region_restriction_api_status,
+            REGION_API_EMPTY,
+        )
+
+    def test_official_context_marks_region_api_error(self):
+        result_id = self.add_opening_result()
+        round_row = self.db.get(BidOpeningRoundModel, result_id)
+        notice_item = {
+            "bidNtceNo": "R26BK00000001",
+            "bidNtceOrd": "00",
+            "bidNtceNm": "AI 구축 용역",
+            "dminsttNm": "OO기관",
+            "presmptPrce": "81818182",
+            "VAT": "8181818",
+            "bidClseDt": "202607201500",
+        }
+
+        with patch(
+            "app.g2b.bid_notices.service._fetch_bid_notice_api_items",
+            side_effect=[(True, [notice_item]), (False, [])],
+        ):
+            notice = _fetch_official_bid_notice_context(round_row)
+
+        self.assertIsNotNone(notice)
+        self.assertIsNone(notice.region_restriction)
+        self.assertEqual(
+            notice.region_restriction_api_status,
+            REGION_API_ERROR,
+        )
+
+    def test_official_context_marks_mismatched_region_response_as_error(self):
+        result_id = self.add_opening_result()
+        round_row = self.db.get(BidOpeningRoundModel, result_id)
+        notice_item = {
+            "bidNtceNo": "R26BK00000001",
+            "bidNtceOrd": "00",
+            "bidNtceNm": "AI 구축 용역",
+        }
+        mismatched_region_item = {
+            "bidNtceNo": "R26BK99999999",
+            "bidNtceOrd": "00",
+            "prtcptPsblRgnNm": "서울특별시",
+        }
+
+        with patch(
+            "app.g2b.bid_notices.service._fetch_bid_notice_api_items",
+            side_effect=[
+                (True, [notice_item]),
+                (True, [mismatched_region_item]),
+            ],
+        ):
+            notice = _fetch_official_bid_notice_context(round_row)
+
+        self.assertIsNotNone(notice)
+        self.assertIsNone(notice.region_restriction)
+        self.assertEqual(
+            notice.region_restriction_api_status,
+            REGION_API_ERROR,
+        )
+
+    def test_empty_and_error_region_api_outcomes_persist_separately(self):
+        worker_notices = [
+            NoticeRow(
+                notice_id="R26BK00000001",
+                title="빈 지역 응답 용역",
+                bid_notice_no="R26BK00000001",
+                bid_notice_ord="00",
+                region_restriction_api_status=REGION_API_EMPTY,
+            ),
+            NoticeRow(
+                notice_id="R26BK00000002",
+                title="지역 API 오류 용역",
+                bid_notice_no="R26BK00000002",
+                bid_notice_ord="00",
+                region_restriction_api_status=REGION_API_ERROR,
+            ),
+        ]
+        self.persist(
+            *[
+                ScraperNotice.model_validate(
+                    notice.model_dump(exclude={"matched_keyword"})
+                )
+                for notice in worker_notices
+            ]
+        )
+
+        stored = {
+            row.bid_notice_no: row
+            for row in self.db.scalars(select(ScraperNoticeModel)).all()
+        }
+        self.assertIsNone(stored["R26BK00000001"].region_restriction)
+        self.assertEqual(
+            stored["R26BK00000001"].region_restriction_api_status,
+            REGION_API_EMPTY,
+        )
+        self.assertIsNone(stored["R26BK00000002"].region_restriction)
+        self.assertEqual(
+            stored["R26BK00000002"].region_restriction_api_status,
+            REGION_API_ERROR,
+        )
+
+    def test_region_api_outcomes_keep_stored_context_consistent(self):
+        common = {
+            "notice_id": "R26BK00000001",
+            "title": "AI 교육 운영 용역",
+            "bid_notice_no": "R26BK00000001",
+            "bid_notice_ord": "00",
+        }
+        self.persist(
+            ScraperNotice(
+                **common,
+                region_restriction="없음",
+            )
+        )
+        self.persist(
+            ScraperNotice(
+                **common,
+                region_restriction_api_status=REGION_API_EMPTY,
+            )
+        )
+        stored = self.db.scalar(select(ScraperNoticeModel))
+        self.assertIsNone(stored.region_restriction)
+        self.assertEqual(
+            stored.region_restriction_api_status,
+            REGION_API_EMPTY,
+        )
+
+        self.persist(
+            ScraperNotice(
+                **common,
+                region_restriction="서울특별시",
+                region_restriction_api_status=REGION_API_VALUE,
+            )
+        )
+        self.persist(
+            ScraperNotice(
+                **common,
+                region_restriction_api_status=REGION_API_ERROR,
+            )
+        )
+        stored = self.db.scalar(select(ScraperNoticeModel))
+        self.assertEqual(stored.region_restriction, "서울특별시")
+        self.assertEqual(
+            stored.region_restriction_api_status,
+            REGION_API_ERROR,
+        )
+        self.assertIn(
+            "region_restriction",
+            missing_bid_notice_context_fields(stored),
+        )
 
     def test_missing_official_rank_is_filled_by_total_score(self):
         result_id = self.add_opening_result()
@@ -497,6 +685,10 @@ class ScraperNoticePersistenceTests(unittest.TestCase):
 
         self.assertEqual(rows[0].base_amount, Decimal("165000000"))
         self.assertEqual(rows[0].region_restriction, "서울특별시, 경기도")
+        self.assertEqual(
+            rows[0].region_restriction_api_status,
+            REGION_API_VALUE,
+        )
         self.assertEqual(get_mock.call_count, 1)
         self.assertTrue(
             get_mock.call_args.args[0].endswith(
@@ -559,6 +751,71 @@ class ScraperNoticePersistenceTests(unittest.TestCase):
             get_mock.call_args.args[0].endswith(
                 "/getBidPblancListInfoPrtcptPsblRgn"
             )
+        )
+
+    def test_worker_marks_empty_region_api_response(self):
+        notice = NoticeRow(
+            notice_id="R26BK00000001",
+            title="AI 교육 운영 용역",
+            bid_notice_no="R26BK00000001",
+            bid_notice_ord="00",
+        )
+
+        with patch(
+            "cloudrun.g2b_worker.main._fetch_bid_notice_detail_items",
+            return_value=(True, []),
+        ):
+            rows = _enrich_bid_notice_contexts([notice])
+
+        self.assertIsNone(rows[0].region_restriction)
+        self.assertEqual(
+            rows[0].region_restriction_api_status,
+            REGION_API_EMPTY,
+        )
+
+    def test_worker_marks_region_api_error(self):
+        notice = NoticeRow(
+            notice_id="R26BK00000001",
+            title="AI 교육 운영 용역",
+            bid_notice_no="R26BK00000001",
+            bid_notice_ord="00",
+        )
+
+        with patch(
+            "cloudrun.g2b_worker.main._fetch_bid_notice_detail_items",
+            return_value=(False, []),
+        ):
+            rows = _enrich_bid_notice_contexts([notice])
+
+        self.assertIsNone(rows[0].region_restriction)
+        self.assertEqual(
+            rows[0].region_restriction_api_status,
+            REGION_API_ERROR,
+        )
+
+    def test_worker_marks_mismatched_region_response_as_error(self):
+        notice = NoticeRow(
+            notice_id="R26BK00000001",
+            title="AI 교육 운영 용역",
+            bid_notice_no="R26BK00000001",
+            bid_notice_ord="00",
+        )
+        mismatched_item = {
+            "bidNtceNo": "R26BK99999999",
+            "bidNtceOrd": "00",
+            "prtcptPsblRgnNm": "서울특별시",
+        }
+
+        with patch(
+            "cloudrun.g2b_worker.main._fetch_bid_notice_detail_items",
+            return_value=(True, [mismatched_item]),
+        ):
+            rows = _enrich_bid_notice_contexts([notice])
+
+        self.assertIsNone(rows[0].region_restriction)
+        self.assertEqual(
+            rows[0].region_restriction_api_status,
+            REGION_API_ERROR,
         )
 
     def test_missing_refresh_values_do_not_erase_stored_official_context(self):
@@ -673,7 +930,7 @@ class ScraperNoticePersistenceTests(unittest.TestCase):
             self.db,
             [result_id],
         )
-        self.assertEqual(missing_context_keys, [])
+        self.assertEqual(missing_context_keys, ["R26BK00000001|00"])
         self.assertEqual(missing_result_ids, [])
 
     def test_unseen_stale_notice_is_not_persisted_or_reexposed(self):

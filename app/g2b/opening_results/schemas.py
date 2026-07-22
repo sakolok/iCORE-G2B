@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.g2b.bid_notice import RegionRestrictionApiStatus
 from app.g2b.keyword_policy import normalize_keywords
 
 
@@ -125,6 +126,7 @@ class OpeningResultSummaryResponse(BaseModel):
     prearranged_price_decision_method: str | None = None
     proposal_deadline: datetime | None = None
     region_restriction: str | None = None
+    region_restriction_api_status: RegionRestrictionApiStatus | None = None
     is_two_stage_bid: bool | None = None
     sheet_export_status: Literal[
         "READY",
@@ -193,6 +195,7 @@ class BidNoticeSheetContext(BaseModel):
     prearranged_price_decision_method: str | None = None
     proposal_deadline: datetime | None = None
     region_restriction: str | None = None
+    region_restriction_api_status: RegionRestrictionApiStatus | None = None
     is_two_stage_bid: bool | None = None
 
 

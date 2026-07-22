@@ -406,7 +406,8 @@ class OpeningResultServiceTests(unittest.TestCase):
         base_amount=Decimal("165000000"),
         prearranged_price_decision_method="복수예가",
         proposal_deadline=datetime(2026, 7, 20, 15, 0),
-        region_restriction="없음",
+        region_restriction="서울특별시",
+        region_restriction_api_status="API_VALUE",
         is_two_stage_bid=True,
         dedup_suffix="default",
     ):
@@ -423,6 +424,7 @@ class OpeningResultServiceTests(unittest.TestCase):
             prearranged_price_decision_method=prearranged_price_decision_method,
             proposal_deadline=proposal_deadline,
             region_restriction=region_restriction,
+            region_restriction_api_status=region_restriction_api_status,
             is_two_stage_bid=is_two_stage_bid,
             first_seen_at=now,
             last_seen_at=now,
@@ -1044,7 +1046,7 @@ class OpeningResultServiceTests(unittest.TestCase):
                 "OO대학교",
                 165000000,
                 "2026-07-20 15:00",
-                "없음",
+                "서울특별시",
                 "Y",
                 "일등기업",
                 "19.5+75=94.50",
@@ -1372,6 +1374,8 @@ class OpeningResultServiceTests(unittest.TestCase):
         self.add_bid_notice(
             business_name="공식 AI 교육 운영 용역",
             demand_agency_name="공식 수요기관",
+            region_restriction="서울특별시",
+            region_restriction_api_status="API_VALUE",
         )
 
         response = fetch_results(
@@ -1392,7 +1396,11 @@ class OpeningResultServiceTests(unittest.TestCase):
         self.assertEqual(response.items[0].business_name, "공식 AI 교육 운영 용역")
         self.assertEqual(response.items[0].demand_agency_name, "공식 수요기관")
         self.assertEqual(response.items[0].base_amount, Decimal("165000000"))
-        self.assertEqual(response.items[0].region_restriction, "없음")
+        self.assertEqual(response.items[0].region_restriction, "서울특별시")
+        self.assertEqual(
+            response.items[0].region_restriction_api_status,
+            "API_VALUE",
+        )
         self.assertTrue(response.items[0].is_two_stage_bid)
         self.assertEqual(response.items[0].first_rank_company_name, "일등기업")
         self.assertEqual(response.items[0].first_rank_bid_price_score, Decimal("19.5"))

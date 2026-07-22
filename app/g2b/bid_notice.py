@@ -1,10 +1,19 @@
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
-from typing import Any
+from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
 
 KST = ZoneInfo("Asia/Seoul")
+
+REGION_API_VALUE = "API_VALUE"
+REGION_API_EMPTY = "API_EMPTY"
+REGION_API_ERROR = "API_ERROR"
+RegionRestrictionApiStatus = Literal[
+    "API_VALUE",
+    "API_EMPTY",
+    "API_ERROR",
+]
 
 
 def clean_optional_text(value: Any, *, max_length: int | None = None) -> str | None:
@@ -140,6 +149,13 @@ def missing_bid_notice_context_fields(notice: Any) -> list[str]:
         value = getattr(notice, field_name, None)
         if not isinstance(value, str) or not value.strip():
             missing.append(field_name)
+    region_value = clean_optional_text(getattr(notice, "region_restriction", None))
+    region_api_status = getattr(notice, "region_restriction_api_status", None)
+    if (
+        region_api_status in {REGION_API_EMPTY, REGION_API_ERROR}
+        or (region_api_status is None and region_value == "없음")
+    ) and "region_restriction" not in missing:
+        missing.append("region_restriction")
     if getattr(notice, "base_amount", None) is None:
         missing.append("base_amount")
     for field_name in ("proposal_deadline", "is_two_stage_bid"):
