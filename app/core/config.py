@@ -59,6 +59,9 @@ class Settings(BaseModel):
     g2b_award_service_key: str = os.getenv(
         "G2B_AWARD_SERVICE_KEY", os.getenv("G2B_SERVICE_KEY", "")
     )
+    g2b_pre_spec_service_key: str = os.getenv(
+        "G2B_PRE_SPEC_SERVICE_KEY", os.getenv("G2B_SERVICE_KEY", "")
+    )
     g2b_award_scheduler_target_url: str = os.getenv(
         "G2B_AWARD_SCHEDULER_TARGET_URL", ""
     )
