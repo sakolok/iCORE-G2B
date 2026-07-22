@@ -52,6 +52,8 @@ from app.g2b.opening_results.router import (
     collect_results,
     collect_results_on_schedule,
     export_results_sheet,
+    fetch_archived_result_detail,
+    fetch_archived_results,
     fetch_sheet_destinations,
     fetch_result_detail,
     fetch_result_settings,
@@ -72,6 +74,7 @@ from app.g2b.opening_results.matching import (
     dismiss_result,
     ensure_sheet_target_access,
     fail_sheet_exports,
+    list_archived_results,
     normalize_spreadsheet_id,
     save_sheet_destination,
     sync_user_matches,
@@ -409,6 +412,7 @@ class OpeningResultServiceTests(unittest.TestCase):
         region_restriction="서울특별시",
         region_restriction_api_status="API_VALUE",
         is_two_stage_bid=True,
+        notice_url="https://www.g2b.go.kr/notice/detail",
         dedup_suffix="default",
     ):
         now = datetime.now(timezone.utc)
@@ -426,6 +430,7 @@ class OpeningResultServiceTests(unittest.TestCase):
             region_restriction=region_restriction,
             region_restriction_api_status=region_restriction_api_status,
             is_two_stage_bid=is_two_stage_bid,
+            notice_url=notice_url,
             first_seen_at=now,
             last_seen_at=now,
         )
@@ -1409,6 +1414,10 @@ class OpeningResultServiceTests(unittest.TestCase):
         self.assertEqual(response.items[0].sheet_export_status, "READY")
         self.assertTrue(response.items[0].sheet_exportable)
         self.assertEqual(response.items[0].sheet_block_reasons, [])
+        self.assertEqual(
+            response.items[0].notice_url,
+            "https://www.g2b.go.kr/notice/detail",
+        )
         self.assertIsNotNone(response.items[0].opened_at.tzinfo)
         self.assertIn("Z", response.model_dump_json())
 
@@ -1421,6 +1430,7 @@ class OpeningResultServiceTests(unittest.TestCase):
         self.assertEqual(detail.first_rank_company_name, "일등기업")
         self.assertEqual(detail.winner_company_name, "최종낙찰기업")
         self.assertEqual(detail.sheet_export_status, "READY")
+        self.assertEqual(detail.notice_url, "https://www.g2b.go.kr/notice/detail")
 
     def test_list_route_marks_detail_pending_before_sheet_preview(self):
         collect_opening_results(self.db, self.request, self.make_client())
@@ -2857,6 +2867,120 @@ class OpeningResultServiceTests(unittest.TestCase):
             "DISMISSED",
         )
 
+    def test_dismissed_result_is_restorable_from_archive_for_fourteen_days(self):
+        collect_opening_results(self.db, self.request, self.make_client())
+        result_id = self.db.scalar(select(BidOpeningRoundModel.id))
+        self.add_bid_notice()
+        dismiss_result(
+            self.db,
+            organization_id=self.organization.id,
+            user_id=self.user.id,
+            result_id=result_id,
+        )
+
+        archive = fetch_archived_results(
+            page=1,
+            page_size=30,
+            auth=self.auth,
+            db=self.db,
+        )
+        detail = fetch_archived_result_detail(
+            result_id,
+            auth=self.auth,
+            db=self.db,
+        )
+
+        self.assertEqual(archive.total, 1)
+        self.assertEqual(archive.items[0].handled_state, "DISMISSED")
+        self.assertTrue(archive.items[0].can_restore)
+        self.assertEqual(
+            archive.items[0].expires_at - archive.items[0].handled_at,
+            timedelta(days=14),
+        )
+        self.assertEqual(detail.id, result_id)
+        self.assertEqual(detail.notice_url, "https://www.g2b.go.kr/notice/detail")
+
+    def test_expired_archive_item_is_hidden_and_cannot_be_restored(self):
+        collect_opening_results(self.db, self.request, self.make_client())
+        result_id = self.db.scalar(select(BidOpeningRoundModel.id))
+        dismiss_result(
+            self.db,
+            organization_id=self.organization.id,
+            user_id=self.user.id,
+            result_id=result_id,
+        )
+        state = self.db.scalar(select(UserOpeningResultStateModel))
+        state.acted_at = datetime.now(timezone.utc) - timedelta(days=15)
+        self.db.commit()
+
+        rows, total = list_archived_results(
+            self.db,
+            organization_id=self.organization.id,
+            user_id=self.user.id,
+        )
+        _, visible_total = list_opening_results(
+            self.db,
+            OpeningResultListQuery(
+                opened_from=datetime(2026, 7, 14, tzinfo=timezone.utc),
+                opened_to=datetime(2026, 7, 16, tzinfo=timezone.utc),
+            ),
+            organization_id=self.organization.id,
+            user_id=self.user.id,
+        )
+
+        self.assertEqual(rows, [])
+        self.assertEqual(total, 0)
+        self.assertEqual(visible_total, 0)
+        with self.assertRaises(HTTPException) as raised:
+            restore_result_to_inbox(result_id, auth=self.auth, db=self.db)
+        self.assertEqual(raised.exception.status_code, 404)
+        self.assertEqual(
+            self.db.scalar(select(UserOpeningResultStateModel.state)),
+            "DISMISSED",
+        )
+
+    def test_dismissed_archive_can_be_cleared_after_profile_change(self):
+        collect_opening_results(self.db, self.request, self.make_client())
+        result_id = self.db.scalar(select(BidOpeningRoundModel.id))
+        dismiss_result(
+            self.db,
+            organization_id=self.organization.id,
+            user_id=self.user.id,
+            result_id=result_id,
+        )
+        profile = self.db.scalar(
+            select(UserResultProfileModel).where(
+                UserResultProfileModel.user_id == self.user.id
+            )
+        )
+        profile.enabled = False
+        sync_user_matches(
+            self.db,
+            organization_id=self.organization.id,
+            user_id=self.user.id,
+        )
+        self.db.commit()
+
+        archive = fetch_archived_results(
+            page=1,
+            page_size=30,
+            auth=self.auth,
+            db=self.db,
+        )
+        response = restore_result_to_inbox(result_id, auth=self.auth, db=self.db)
+        refreshed_archive = fetch_archived_results(
+            page=1,
+            page_size=30,
+            auth=self.auth,
+            db=self.db,
+        )
+
+        self.assertEqual(archive.total, 1)
+        self.assertTrue(archive.items[0].can_restore)
+        self.assertEqual(response.state, "RESTORED")
+        self.assertFalse(response.visible)
+        self.assertEqual(refreshed_archive.total, 0)
+
     def test_restore_dismissed_result_only_restores_current_user(self):
         teammate = UserModel(
             username="restore-teammate",
@@ -3059,6 +3183,7 @@ class OpeningResultServiceTests(unittest.TestCase):
                 is_active=True,
             )
         )
+        self.add_user_result_profile(teammate.id)
         self.db.commit()
         collect_opening_results(self.db, self.request, self.make_client())
         result_id = self.db.scalar(select(BidOpeningRoundModel.id))
@@ -3098,6 +3223,24 @@ class OpeningResultServiceTests(unittest.TestCase):
             user_id=teammate.id,
         )
         export_record = self.db.scalar(select(SheetExportModel))
+        archive = fetch_archived_results(
+            page=1,
+            page_size=30,
+            auth=self.auth,
+            db=self.db,
+        )
+        teammate_archive = fetch_archived_results(
+            page=1,
+            page_size=30,
+            auth={
+                **self.auth,
+                "user_id": teammate.id,
+                "username": teammate.username,
+                "role": teammate.role,
+                "organization_role": "member",
+            },
+            db=self.db,
+        )
 
         self.assertTrue(response.written)
         self.assertEqual(my_total, 0)
@@ -3105,6 +3248,43 @@ class OpeningResultServiceTests(unittest.TestCase):
         self.assertEqual(export_record.status, "SUCCEEDED")
         self.assertEqual(
             self.db.scalar(select(UserOpeningResultStateModel.state)),
+            "EXPORTED",
+        )
+        self.assertEqual(archive.total, 1)
+        self.assertEqual(archive.items[0].handled_state, "EXPORTED")
+        self.assertFalse(archive.items[0].can_restore)
+        self.assertEqual(teammate_archive.total, 1)
+        self.assertEqual(teammate_archive.items[0].handled_state, "EXPORTED")
+        self.assertFalse(teammate_archive.items[0].can_restore)
+
+        teammate_profile = self.db.scalar(
+            select(UserResultProfileModel).where(
+                UserResultProfileModel.user_id == teammate.id
+            )
+        )
+        teammate_profile.enabled = False
+        sync_user_matches(
+            self.db,
+            organization_id=self.organization.id,
+            user_id=teammate.id,
+        )
+        self.db.commit()
+        teammate_archive_after_profile_change = fetch_archived_results(
+            page=1,
+            page_size=30,
+            auth={
+                **self.auth,
+                "user_id": teammate.id,
+                "username": teammate.username,
+                "role": teammate.role,
+                "organization_role": "member",
+            },
+            db=self.db,
+        )
+
+        self.assertEqual(teammate_archive_after_profile_change.total, 1)
+        self.assertEqual(
+            teammate_archive_after_profile_change.items[0].handled_state,
             "EXPORTED",
         )
 
@@ -3874,6 +4054,8 @@ class OpeningResultRouterTests(unittest.TestCase):
         self.assertIn("/api/v1/results", paths)
         self.assertIn("/api/v1/results/internal/collect", paths)
         self.assertIn("/api/v1/results/export/sheet", paths)
+        self.assertIn("/api/v1/results/archive", paths)
+        self.assertIn("/api/v1/results/archive/{result_id}", paths)
         self.assertIn("/api/v1/results/sheet-destinations/verify", paths)
         self.assertIn("/api/v1/results/{result_id}/restore", paths)
         self.assertIn("/api/v1/results/{result_id}", paths)

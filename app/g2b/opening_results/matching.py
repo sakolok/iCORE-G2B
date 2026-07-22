@@ -26,6 +26,7 @@ from app.g2b.opening_results.models import (
 
 
 MATCH_LOOKBACK_DAYS = 14
+ARCHIVE_RETENTION_DAYS = 14
 EXPORT_CLAIM_MINUTES = 15
 USER_TERMINAL_STATES = ("EXPORTED", "DISMISSED")
 
@@ -71,8 +72,24 @@ class SheetExportClaimBatch:
     records: list[SheetExportModel]
 
 
+@dataclass(frozen=True)
+class ArchivedOpeningResult:
+    row: BidOpeningRoundModel
+    handled_state: str
+    handled_at: datetime
+    can_restore: bool
+
+
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _as_utc(value: datetime) -> datetime:
+    return (
+        value.replace(tzinfo=timezone.utc)
+        if value.tzinfo is None
+        else value.astimezone(timezone.utc)
+    )
 
 
 def _split_keywords(value: str | None) -> list[str]:
@@ -518,6 +535,120 @@ def load_visible_results(
     return rows
 
 
+def list_archived_results(
+    db: Session,
+    *,
+    organization_id: int,
+    user_id: int,
+    page: int = 1,
+    page_size: int = 30,
+    result_id: int | None = None,
+    now: datetime | None = None,
+) -> tuple[list[ArchivedOpeningResult], int]:
+    current = _as_utc(now) if now is not None else _utcnow()
+    cutoff = current - timedelta(days=ARCHIVE_RETENTION_DAYS)
+    archived_by_result_id: dict[int, ArchivedOpeningResult] = {}
+
+    state_statement = (
+        select(BidOpeningRoundModel, UserOpeningResultStateModel)
+        .join(
+            UserOpeningResultStateModel,
+            UserOpeningResultStateModel.result_external_key
+            == BidOpeningRoundModel.external_key,
+        )
+        .where(
+            UserOpeningResultStateModel.organization_id == organization_id,
+            UserOpeningResultStateModel.user_id == user_id,
+            UserOpeningResultStateModel.state.in_(USER_TERMINAL_STATES),
+            UserOpeningResultStateModel.acted_at >= cutoff,
+        )
+    )
+    if result_id is not None:
+        state_statement = state_statement.where(BidOpeningRoundModel.id == result_id)
+    for round_row, state in db.execute(state_statement).all():
+        handled_at = _as_utc(state.acted_at)
+        archived_by_result_id[round_row.id] = ArchivedOpeningResult(
+            row=round_row,
+            handled_state=state.state,
+            handled_at=handled_at,
+            can_restore=state.state == "DISMISSED",
+        )
+
+    export_destination = aliased(SheetDestinationModel)
+    shared_destination_alias = aliased(SheetDestinationModel)
+    export_statement = (
+        select(BidOpeningRoundModel, SheetExportModel)
+        .join(
+            UserOpeningResultMatchModel,
+            UserOpeningResultMatchModel.round_id == BidOpeningRoundModel.id,
+        )
+        .join(
+            SheetExportModel,
+            SheetExportModel.result_external_key == BidOpeningRoundModel.external_key,
+        )
+        .join(
+            export_destination,
+            export_destination.id == SheetExportModel.destination_id,
+        )
+        .where(
+            UserOpeningResultMatchModel.organization_id == organization_id,
+            UserOpeningResultMatchModel.user_id == user_id,
+            SheetExportModel.organization_id == organization_id,
+            SheetExportModel.status == "SUCCEEDED",
+            SheetExportModel.succeeded_at.is_not(None),
+            SheetExportModel.succeeded_at >= cutoff,
+            or_(
+                export_destination.owner_user_id.is_(None),
+                exists(
+                    select(shared_destination_alias.id).where(
+                        shared_destination_alias.organization_id == organization_id,
+                        shared_destination_alias.spreadsheet_id
+                        == export_destination.spreadsheet_id,
+                        shared_destination_alias.tab_name == export_destination.tab_name,
+                        shared_destination_alias.owner_user_id.is_(None),
+                    )
+                ),
+            ),
+        )
+    )
+    if result_id is not None:
+        export_statement = export_statement.where(BidOpeningRoundModel.id == result_id)
+    for round_row, sheet_export in db.execute(export_statement).all():
+        handled_at = _as_utc(sheet_export.succeeded_at)
+        existing = archived_by_result_id.get(round_row.id)
+        if existing is None or handled_at > existing.handled_at:
+            archived_by_result_id[round_row.id] = ArchivedOpeningResult(
+                row=round_row,
+                handled_state="EXPORTED",
+                handled_at=handled_at,
+                can_restore=False,
+            )
+
+    archived = sorted(
+        archived_by_result_id.values(),
+        key=lambda item: (item.handled_at, item.row.id),
+        reverse=True,
+    )
+    round_ids = [item.row.id for item in archived]
+    if round_ids:
+        matches = db.execute(
+            select(UserOpeningResultMatchModel).where(
+                UserOpeningResultMatchModel.organization_id == organization_id,
+                UserOpeningResultMatchModel.user_id == user_id,
+                UserOpeningResultMatchModel.round_id.in_(round_ids),
+            )
+        ).scalars()
+        keywords_by_round_id = {
+            match.round_id: _split_keywords(match.matched_keywords) for match in matches
+        }
+        for item in archived:
+            item.row.matched_keywords = keywords_by_round_id.get(item.row.id, [])
+
+    total = len(archived)
+    start = (page - 1) * page_size
+    return archived[start : start + page_size], total
+
+
 def dismiss_result(
     db: Session,
     *,
@@ -550,6 +681,7 @@ def restore_dismissed_result(
     organization_id: int,
     user_id: int,
     result_id: int,
+    now: datetime | None = None,
 ) -> bool:
     result_external_key = db.execute(
         select(UserOpeningResultMatchModel.result_external_key)
@@ -560,7 +692,6 @@ def restore_dismissed_result(
         .where(
             UserOpeningResultMatchModel.organization_id == organization_id,
             UserOpeningResultMatchModel.user_id == user_id,
-            UserOpeningResultMatchModel.is_current_match.is_(True),
             BidOpeningRoundModel.id == result_id,
         )
     ).scalar_one_or_none()
@@ -575,6 +706,9 @@ def restore_dismissed_result(
         )
     ).scalar_one_or_none()
     if state is None:
+        raise ResultAccessError(str(result_id))
+    current = _as_utc(now) if now is not None else _utcnow()
+    if _as_utc(state.acted_at) < current - timedelta(days=ARCHIVE_RETENTION_DAYS):
         raise ResultAccessError(str(result_id))
     db.delete(state)
     db.commit()

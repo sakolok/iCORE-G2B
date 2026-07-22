@@ -1,5 +1,5 @@
 import hmac
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -13,6 +13,9 @@ from app.g2b.opening_results.client import (
     OpeningResultApiError,
 )
 from app.g2b.opening_results.schemas import (
+    ArchivedOpeningResultDetailResponse,
+    ArchivedOpeningResultListResponse,
+    ArchivedOpeningResultSummaryResponse,
     CollectOpeningResultsRequest,
     CollectOpeningResultsResponse,
     DismissOpeningResultResponse,
@@ -36,6 +39,7 @@ from app.g2b.opening_results.schemas import (
 )
 from app.g2b.keyword_policy import normalize_keywords
 from app.g2b.opening_results.matching import (
+    ARCHIVE_RETENTION_DAYS,
     ResultAccessError,
     SheetDestinationAccessError,
     SheetDestinationConflictError,
@@ -47,6 +51,7 @@ from app.g2b.opening_results.matching import (
     ensure_sheet_target_access,
     fail_sheet_exports,
     get_user_result_profile,
+    list_archived_results,
     list_sheet_destinations,
     load_visible_results,
     normalize_spreadsheet_id,
@@ -176,6 +181,7 @@ def _summary_responses(
                         context.region_restriction_api_status if context else None
                     ),
                     "is_two_stage_bid": context.is_two_stage_bid if context else None,
+                    "notice_url": context.notice_url if context else None,
                     "sheet_export_status": export_status,
                     "sheet_exportable": not block_reasons,
                     "sheet_block_reasons": block_reasons,
@@ -192,6 +198,26 @@ def _summary_responses(
             )
         )
     return responses
+
+
+def _archived_summary_responses(
+    db: Session,
+    archived_rows,
+) -> list[ArchivedOpeningResultSummaryResponse]:
+    summaries_by_id = {
+        summary.id: summary
+        for summary in _summary_responses(db, [item.row for item in archived_rows])
+    }
+    return [
+        ArchivedOpeningResultSummaryResponse(
+            **summaries_by_id[item.row.id].model_dump(),
+            handled_state=item.handled_state,
+            handled_at=item.handled_at,
+            expires_at=item.handled_at + timedelta(days=ARCHIVE_RETENTION_DAYS),
+            can_restore=item.can_restore,
+        )
+        for item in archived_rows
+    ]
 
 
 @router.post("/collect", response_model=CollectOpeningResultsResponse)
@@ -290,6 +316,28 @@ def fetch_results(
         items = items[start : start + page_size]
     return OpeningResultListResponse(
         items=items,
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
+
+
+@router.get("/archive", response_model=ArchivedOpeningResultListResponse)
+def fetch_archived_results(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=30, ge=1, le=100),
+    auth: dict = Depends(require_organization_auth),
+    db: Session = Depends(get_db),
+) -> ArchivedOpeningResultListResponse:
+    rows, total = list_archived_results(
+        db,
+        organization_id=auth["organization_id"],
+        user_id=auth["user_id"],
+        page=page,
+        page_size=page_size,
+    )
+    return ArchivedOpeningResultListResponse(
+        items=_archived_summary_responses(db, rows),
         total=total,
         page=page,
         page_size=page_size,
@@ -634,6 +682,53 @@ def export_results_sheet(
         destination_scope="PERSONAL" if destination.owner_user_id is not None else "ORGANIZATION",
         destination_tab_name=destination.tab_name,
         preview_token=preview_token,
+    )
+
+
+@router.get(
+    "/archive/{result_id}",
+    response_model=ArchivedOpeningResultDetailResponse,
+)
+def fetch_archived_result_detail(
+    result_id: int,
+    auth: dict = Depends(require_organization_auth),
+    db: Session = Depends(get_db),
+) -> ArchivedOpeningResultDetailResponse:
+    archived_rows, _ = list_archived_results(
+        db,
+        organization_id=auth["organization_id"],
+        user_id=auth["user_id"],
+        page=1,
+        page_size=1,
+        result_id=result_id,
+    )
+    if not archived_rows:
+        raise HTTPException(status_code=404, detail="14일 보관함에서 결과를 찾을 수 없습니다.")
+    result = get_opening_result(db, result_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="개찰결과를 찾을 수 없습니다.")
+    round_row, entries = result
+    summary = _archived_summary_responses(db, archived_rows)[0]
+    calculated_ranks = {
+        ranked.entry.id: ranked.rank for ranked in organize_entry_rankings(entries)
+    }
+    ordered_entries = sorted(
+        entries,
+        key=lambda entry: (
+            calculated_ranks.get(entry.id) is None,
+            calculated_ranks.get(entry.id) or 0,
+            entry.id,
+        ),
+    )
+    return ArchivedOpeningResultDetailResponse(
+        **summary.model_dump(),
+        opening_notice=round_row.opening_notice,
+        entries=[
+            OpeningEntryResponse.model_validate(entry).model_copy(
+                update={"rank": calculated_ranks.get(entry.id, entry.rank)}
+            )
+            for entry in ordered_entries
+        ],
     )
 
 

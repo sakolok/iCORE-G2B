@@ -128,6 +128,7 @@ class OpeningResultSummaryResponse(BaseModel):
     region_restriction: str | None = None
     region_restriction_api_status: RegionRestrictionApiStatus | None = None
     is_two_stage_bid: bool | None = None
+    notice_url: str | None = None
     sheet_export_status: Literal[
         "READY",
         "DETAIL_PENDING",
@@ -177,6 +178,30 @@ class OpeningResultListResponse(BaseModel):
     page_size: int
 
 
+class ArchivedOpeningResultSummaryResponse(OpeningResultSummaryResponse):
+    handled_state: Literal["DISMISSED", "EXPORTED"]
+    handled_at: datetime
+    expires_at: datetime
+    can_restore: bool
+
+    @field_validator("handled_at", "expires_at", mode="before")
+    @classmethod
+    def ensure_archive_timezone(cls, value):
+        return _utc_if_naive(value)
+
+
+class ArchivedOpeningResultDetailResponse(ArchivedOpeningResultSummaryResponse):
+    opening_notice: str | None
+    entries: list[OpeningEntryResponse]
+
+
+class ArchivedOpeningResultListResponse(BaseModel):
+    items: list[ArchivedOpeningResultSummaryResponse]
+    total: int
+    page: int
+    page_size: int
+
+
 class OpeningResultListQuery(BaseModel):
     q: str | None = None
     status: OpeningStatus | None = None
@@ -197,6 +222,7 @@ class BidNoticeSheetContext(BaseModel):
     region_restriction: str | None = None
     region_restriction_api_status: RegionRestrictionApiStatus | None = None
     is_two_stage_bid: bool | None = None
+    notice_url: str | None = None
 
 
 class ExportOpeningResultsSheetRequest(BaseModel):

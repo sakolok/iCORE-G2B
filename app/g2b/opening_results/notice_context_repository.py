@@ -88,6 +88,7 @@ def resolve_bid_notice_contexts(
             region_restriction=record.region_restriction,
             region_restriction_api_status=record.region_restriction_api_status,
             is_two_stage_bid=record.is_two_stage_bid,
+            notice_url=record.notice_url,
         )
 
     return contexts, ambiguous_keys
