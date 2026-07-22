@@ -91,6 +91,13 @@ class CollectPreSpecificationsRequest(BaseModel):
         return self
 
 
+class CollectPreSpecificationsResponse(BaseModel):
+    run_key: str
+    fetched_count: int
+    inserted_count: int
+    updated_count: int
+
+
 class PreSpecificationListQuery(BaseModel):
     q: str | None = None
     keywords: list[str] = Field(default_factory=list)
