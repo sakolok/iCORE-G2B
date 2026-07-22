@@ -50,7 +50,7 @@ const BLOCK_REASON_LABELS = {
   base_amount: "사업금액 정보가 없습니다.",
   prearranged_price_decision_method: "예정가격 결정방법이 없습니다.",
   proposal_deadline: "제안마감 정보가 없습니다.",
-  region_restriction: "지역제한 정보가 없습니다.",
+  region_restriction: "지역제한 정보 확인이 필요합니다.",
   is_two_stage_bid: "2단계 입찰 여부가 없습니다.",
 };
 
@@ -99,6 +99,31 @@ function formatMoney(value) {
   if (value == null || value === "") return "-";
   const number = Number(value);
   return Number.isFinite(number) ? `${number.toLocaleString("ko-KR")}원` : String(value);
+}
+
+function regionRestrictionText(row) {
+  if (row?.region_restriction_api_status === "API_EMPTY") {
+    return "확인 필요 (API 응답 비어 있음)";
+  }
+  if (row?.region_restriction_api_status === "API_ERROR") {
+    return "재확인 대기 (API 오류)";
+  }
+  if (row?.region_restriction_api_status === "ORDER_MISMATCH") {
+    return "확인 필요 (공고차수 불일치)";
+  }
+  return row?.region_restriction || "확인 필요";
+}
+
+function exportStatusMeta(value, row) {
+  if (value === "NOTICE_CONTEXT_MISSING") {
+    if (row?.region_restriction_api_status === "API_ERROR") {
+      return { color: "gold", label: "재확인 대기" };
+    }
+    if (["API_EMPTY", "ORDER_MISMATCH"].includes(row?.region_restriction_api_status)) {
+      return { color: "orange", label: "확인 필요" };
+    }
+  }
+  return EXPORT_STATUS_META[value] || EXPORT_STATUS_META.NOTICE_CONTEXT_MISSING;
 }
 
 function decimalParts(value) {
@@ -797,7 +822,7 @@ function OpeningResultsPage() {
       dataIndex: "sheet_export_status",
       width: 140,
       render: (value, row) => {
-        const meta = EXPORT_STATUS_META[value] || EXPORT_STATUS_META.NOTICE_CONTEXT_MISSING;
+        const meta = exportStatusMeta(value, row);
         const reason = exportBlockText(row);
         return (
           <Space direction="vertical" size={2}>
@@ -1634,7 +1659,7 @@ function OpeningResultsPage() {
               <Descriptions.Item label="개찰일">{detail.opened_at ? dayjs(detail.opened_at).format("YYYY-MM-DD HH:mm") : "-"}</Descriptions.Item>
               <Descriptions.Item label="사업금액">{formatMoney(detail.base_amount)}</Descriptions.Item>
               <Descriptions.Item label="제안마감">{detail.proposal_deadline ? dayjs(detail.proposal_deadline).format("YYYY-MM-DD HH:mm") : "-"}</Descriptions.Item>
-              <Descriptions.Item label="지역제한">{detail.region_restriction || "-"}</Descriptions.Item>
+              <Descriptions.Item label="지역제한">{regionRestrictionText(detail)}</Descriptions.Item>
               <Descriptions.Item label="2단계 입찰">{detail.is_two_stage_bid == null ? "-" : detail.is_two_stage_bid ? "예" : "아니오"}</Descriptions.Item>
               <Descriptions.Item label="참가업체">{detail.participant_count == null ? "-" : `${detail.participant_count}개사`}</Descriptions.Item>
               <Descriptions.Item label="매칭 키워드">{detail.matched_keywords?.length ? detail.matched_keywords.map((keyword) => <Tag className="opening-keyword-tag" key={keyword}>{keyword}</Tag>) : "-"}</Descriptions.Item>
