@@ -101,3 +101,85 @@ class PreSpecificationCollectionRunModel(Base):
     finished_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+
+
+class UserPreSpecificationStateModel(Base):
+    __tablename__ = "user_pre_specification_states"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "bf_spec_rgst_no",
+            name="uq_user_pre_specification_state",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    organization_id: Mapped[int] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    bf_spec_rgst_no: Mapped[str] = mapped_column(
+        ForeignKey("g2b_pre_specifications.bf_spec_rgst_no", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    state: Mapped[str] = mapped_column(String(20), nullable=False)
+    acted_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow
+    )
+
+
+class PreSpecificationSheetExportModel(Base):
+    __tablename__ = "g2b_pre_specification_sheet_exports"
+    __table_args__ = (
+        UniqueConstraint(
+            "destination_id",
+            "bf_spec_rgst_no",
+            name="uq_pre_spec_sheet_export",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    destination_id: Mapped[int] = mapped_column(
+        ForeignKey("sheet_destinations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    organization_id: Mapped[int] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    bf_spec_rgst_no: Mapped[str] = mapped_column(
+        ForeignKey("g2b_pre_specifications.bf_spec_rgst_no", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    exported_by_user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="PENDING", index=True
+    )
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    claimed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow
+    )
+    succeeded_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow, onupdate=_utcnow
+    )

@@ -1,14 +1,16 @@
 import unittest
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import requests
 from fastapi import HTTPException
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session
 
-from app.data.models import Base
+from app.data.models import Base, OrganizationModel, UserModel
+from app.g2b.opening_results.models import SheetDestinationModel
+from app.g2b.opening_results.sheet_export import SheetUpsertResult
 from app.g2b.pre_specifications.client import (
     PreSpecificationApiClient,
     PreSpecificationApiConfigurationError,
@@ -19,21 +21,35 @@ from app.g2b.pre_specifications.client import (
 from app.g2b.pre_specifications.models import (
     PreSpecificationCollectionRunModel,
     PreSpecificationModel,
+    PreSpecificationSheetExportModel,
     PreSpecificationSnapshotModel,
+    UserPreSpecificationStateModel,
 )
 from app.g2b.pre_specifications.router import (
     collect_pre_specification_data,
+    delete_pre_specification_from_inbox,
+    export_pre_specifications_sheet,
+    fetch_archived_pre_specification_detail,
+    fetch_archived_pre_specifications,
     fetch_pre_specification_detail,
     fetch_pre_specifications,
+    restore_pre_specification_to_inbox,
     router,
 )
 from app.g2b.pre_specifications.schemas import (
     CollectPreSpecificationsRequest,
+    ExportPreSpecificationsSheetRequest,
     PreSpecificationListQuery,
+)
+from app.g2b.pre_specifications.sheet_export import (
+    SHEET_HEADERS,
+    PreSpecificationSheetWriter,
+    build_sheet_rows,
 )
 from app.g2b.pre_specifications.service import (
     collect_pre_specifications,
     deadline_status,
+    list_archived_pre_specifications,
     list_pre_specifications,
     upsert_pre_specifications,
 )
@@ -89,11 +105,94 @@ class StubClient:
         return self.rows
 
 
+class FakeSheetRequest:
+    def __init__(self, result=None, callback=None):
+        self.result = result or {}
+        self.callback = callback
+
+    def execute(self):
+        if self.callback:
+            self.callback()
+        return self.result
+
+
+class FakePreSpecificationSheetService:
+    def __init__(self, *, tab_exists=True):
+        self.tab_exists = tab_exists
+        self.header = list(SHEET_HEADERS)
+        self.existing_rows = [["R001", "기존 값"]]
+        self.write_data = []
+        self.added_tabs = []
+
+    def spreadsheets(self):
+        return self
+
+    def values(self):
+        return self
+
+    def get(self, *, spreadsheetId, fields=None, range=None):
+        if fields:
+            return FakeSheetRequest(
+                {
+                    "sheets": (
+                        [{"properties": {"title": "사전규격"}}]
+                        if self.tab_exists
+                        else []
+                    )
+                }
+            )
+        if range.endswith("A1:L1"):
+            return FakeSheetRequest({"values": [self.header]})
+        return FakeSheetRequest({"values": self.existing_rows})
+
+    def update(self, **kwargs):
+        return FakeSheetRequest()
+
+    def batchUpdate(self, *, spreadsheetId, body):
+        if "data" in body:
+            self.write_data.extend(body["data"])
+        else:
+            requests = body.get("requests") or []
+            self.added_tabs.extend(
+                request["addSheet"]["properties"]["title"]
+                for request in requests
+                if "addSheet" in request
+            )
+        return FakeSheetRequest()
+
+
 class PreSpecificationTests(unittest.TestCase):
     def setUp(self):
         self.engine = create_engine("sqlite+pysqlite:///:memory:")
         Base.metadata.create_all(self.engine)
         self.db = Session(self.engine)
+        self.organization = OrganizationModel(name="테스트 조직", slug="pre-spec-test")
+        self.user = UserModel(
+            username="pre-spec-user",
+            password_salt="salt",
+            password_hash="hash",
+            role="admin",
+            is_active=True,
+        )
+        self.db.add_all([self.organization, self.user])
+        self.db.flush()
+        self.destination = SheetDestinationModel(
+            organization_id=self.organization.id,
+            owner_user_id=self.user.id,
+            label="내 프로젝트 Sheet",
+            spreadsheet_id="sheet-id",
+            tab_name="개찰결과",
+            is_default=True,
+            is_active=True,
+        )
+        self.db.add(self.destination)
+        self.db.commit()
+        self.auth = {
+            "user_id": self.user.id,
+            "role": "admin",
+            "organization_id": self.organization.id,
+            "organization_role": "admin",
+        }
 
     def tearDown(self):
         self.db.close()
@@ -230,7 +329,12 @@ class PreSpecificationTests(unittest.TestCase):
             attachment="HAS",
         )
 
-        rows, total = list_pre_specifications(self.db, query)
+        rows, total = list_pre_specifications(
+            self.db,
+            query,
+            organization_id=self.organization.id,
+            user_id=self.user.id,
+        )
 
         self.assertEqual(total, 1)
         self.assertEqual(rows[0].bf_spec_rgst_no, "R001")
@@ -247,6 +351,8 @@ class PreSpecificationTests(unittest.TestCase):
         rows, total = list_pre_specifications(
             self.db,
             PreSpecificationListQuery(excluded_keywords=["연수구"]),
+            organization_id=self.organization.id,
+            user_id=self.user.id,
         )
 
         self.assertEqual(total, 1)
@@ -293,8 +399,12 @@ class PreSpecificationTests(unittest.TestCase):
     def test_api_routes_use_current_organization_auth(self):
         protected_paths = {
             "/api/v1/pre-specifications",
+            "/api/v1/pre-specifications/archive",
+            "/api/v1/pre-specifications/archive/{bf_spec_rgst_no}",
             "/api/v1/pre-specifications/collect",
+            "/api/v1/pre-specifications/export/sheet",
             "/api/v1/pre-specifications/{bf_spec_rgst_no}",
+            "/api/v1/pre-specifications/{bf_spec_rgst_no}/restore",
         }
         routes = [route for route in router.routes if route.path in protected_paths]
 
@@ -321,12 +431,6 @@ class PreSpecificationTests(unittest.TestCase):
                 },
             ],
         )
-        auth = {
-            "user_id": 1,
-            "role": "viewer",
-            "organization_id": 10,
-            "organization_role": "member",
-        }
         response = fetch_pre_specifications(
             q=None,
             keywords=["AI"],
@@ -341,16 +445,20 @@ class PreSpecificationTests(unittest.TestCase):
             deadline_status="ALL",
             page=1,
             page_size=30,
-            _=auth,
+            auth=self.auth,
             db=self.db,
         )
-        detail = fetch_pre_specification_detail("R001", _=auth, db=self.db)
+        detail = fetch_pre_specification_detail(
+            "R001",
+            auth=self.auth,
+            db=self.db,
+        )
 
         self.assertEqual(response.total, 1)
         self.assertEqual(response.items[0].bf_spec_rgst_no, "R001")
         self.assertEqual(detail.attachments[0]["url"], "https://example.test/spec")
         with self.assertRaises(HTTPException) as raised:
-            fetch_pre_specification_detail("UNKNOWN", _=auth, db=self.db)
+            fetch_pre_specification_detail("UNKNOWN", auth=self.auth, db=self.db)
         self.assertEqual(raised.exception.status_code, 404)
 
     def test_api_manual_collection_requires_system_admin(self):
@@ -436,11 +544,333 @@ class PreSpecificationTests(unittest.TestCase):
                 deadline_status="ALL",
                 page=1,
                 page_size=30,
-                _={"organization_id": 10},
+                auth=self.auth,
                 db=self.db,
             )
 
         self.assertEqual(raised.exception.status_code, 422)
+
+    def test_dismissed_item_stays_in_archive_for_fourteen_days_and_restores(self):
+        upsert_pre_specifications(
+            self.db,
+            [
+                {"bf_spec_rgst_no": "R001", "business_name": "AI 교육"},
+                {"bf_spec_rgst_no": "R002", "business_name": "클라우드 전환"},
+            ],
+        )
+
+        dismissed = delete_pre_specification_from_inbox(
+            "R001",
+            auth=self.auth,
+            db=self.db,
+        )
+        inbox = fetch_pre_specifications(
+            q=None,
+            keywords=[],
+            keyword_mode="OR",
+            excluded_keywords=[],
+            registered_from=None,
+            registered_to=None,
+            demand_agency=None,
+            min_budget=None,
+            max_budget=None,
+            attachment="ALL",
+            deadline_status="ALL",
+            page=1,
+            page_size=30,
+            auth=self.auth,
+            db=self.db,
+        )
+        archive = fetch_archived_pre_specifications(
+            page=1,
+            page_size=30,
+            auth=self.auth,
+            db=self.db,
+        )
+        detail = fetch_archived_pre_specification_detail(
+            "R001",
+            auth=self.auth,
+            db=self.db,
+        )
+
+        self.assertEqual(dismissed.state, "DISMISSED")
+        self.assertEqual([item.bf_spec_rgst_no for item in inbox.items], ["R002"])
+        self.assertEqual(archive.total, 1)
+        self.assertTrue(archive.items[0].can_restore)
+        self.assertEqual(
+            archive.items[0].expires_at - archive.items[0].handled_at,
+            timedelta(days=14),
+        )
+        self.assertEqual(detail.bf_spec_rgst_no, "R001")
+
+        restored = restore_pre_specification_to_inbox(
+            "R001",
+            auth=self.auth,
+            db=self.db,
+        )
+        self.assertTrue(restored.visible)
+        self.assertEqual(
+            fetch_archived_pre_specifications(
+                page=1,
+                page_size=30,
+                auth=self.auth,
+                db=self.db,
+            ).total,
+            0,
+        )
+
+    def test_expired_archive_item_is_hidden_and_cannot_be_restored(self):
+        upsert_pre_specifications(
+            self.db,
+            [{"bf_spec_rgst_no": "R001", "business_name": "AI 교육"}],
+        )
+        delete_pre_specification_from_inbox("R001", auth=self.auth, db=self.db)
+        state = self.db.scalar(select(UserPreSpecificationStateModel))
+        state.acted_at = datetime.now(timezone.utc) - timedelta(days=15)
+        self.db.commit()
+
+        rows, total = list_archived_pre_specifications(
+            self.db,
+            organization_id=self.organization.id,
+            user_id=self.user.id,
+        )
+
+        self.assertEqual((rows, total), ([], 0))
+        with self.assertRaises(HTTPException) as raised:
+            restore_pre_specification_to_inbox(
+                "R001",
+                auth=self.auth,
+                db=self.db,
+            )
+        self.assertEqual(raised.exception.status_code, 404)
+        _, inbox_total = list_pre_specifications(
+            self.db,
+            PreSpecificationListQuery(),
+            organization_id=self.organization.id,
+            user_id=self.user.id,
+        )
+        self.assertEqual(inbox_total, 0)
+
+    def test_sheet_preview_and_write_use_existing_connection_and_archive_result(self):
+        upsert_pre_specifications(
+            self.db,
+            [
+                {
+                    "bf_spec_rgst_no": "R001",
+                    "business_name": "AI 교육",
+                    "demand_agency_name": "교육청",
+                    "allocated_budget": 1000,
+                    "attachments": [{"url": "https://example.test/spec"}],
+                }
+            ],
+        )
+        preview = export_pre_specifications_sheet(
+            ExportPreSpecificationsSheetRequest(
+                bf_spec_rgst_nos=["R001"],
+                destination_id=self.destination.id,
+            ),
+            auth=self.auth,
+            db=self.db,
+        )
+        writer = Mock()
+        writer.upsert.return_value = SheetUpsertResult(
+            inserted_count=1,
+            updated_count=0,
+        )
+        with patch(
+            "app.g2b.pre_specifications.router.PreSpecificationSheetWriter.from_env",
+            return_value=writer,
+        ) as writer_factory:
+            written = export_pre_specifications_sheet(
+                ExportPreSpecificationsSheetRequest(
+                    bf_spec_rgst_nos=["R001"],
+                    destination_id=self.destination.id,
+                    dry_run=False,
+                    expected_preview_token=preview.preview_token,
+                ),
+                auth=self.auth,
+                db=self.db,
+            )
+
+        writer_factory.assert_called_once_with("sheet-id")
+        self.assertEqual(preview.destination_tab_name, "사전규격")
+        self.assertEqual(len(preview.headers), 12)
+        self.assertEqual(preview.preview_rows[0][0], "R001")
+        self.assertTrue(written.written)
+        self.assertEqual(written.inserted_count, 1)
+        self.assertEqual(
+            self.db.scalar(select(PreSpecificationSheetExportModel.status)),
+            "SUCCEEDED",
+        )
+        self.assertEqual(
+            self.db.scalar(select(UserPreSpecificationStateModel.state)),
+            "EXPORTED",
+        )
+        archive = fetch_archived_pre_specifications(
+            page=1,
+            page_size=30,
+            auth=self.auth,
+            db=self.db,
+        )
+        self.assertEqual(archive.items[0].handled_state, "EXPORTED")
+        self.assertFalse(archive.items[0].can_restore)
+
+    def test_sheet_failure_releases_lock_and_keeps_item_visible(self):
+        upsert_pre_specifications(
+            self.db,
+            [{"bf_spec_rgst_no": "R001", "business_name": "AI 교육"}],
+        )
+        preview = export_pre_specifications_sheet(
+            ExportPreSpecificationsSheetRequest(
+                bf_spec_rgst_nos=["R001"],
+                destination_id=self.destination.id,
+            ),
+            auth=self.auth,
+            db=self.db,
+        )
+        writer = Mock()
+        writer.upsert.side_effect = RuntimeError("sheet unavailable")
+
+        with patch(
+            "app.g2b.pre_specifications.router.PreSpecificationSheetWriter.from_env",
+            return_value=writer,
+        ):
+            with self.assertRaises(HTTPException) as raised:
+                export_pre_specifications_sheet(
+                    ExportPreSpecificationsSheetRequest(
+                        bf_spec_rgst_nos=["R001"],
+                        destination_id=self.destination.id,
+                        dry_run=False,
+                        expected_preview_token=preview.preview_token,
+                    ),
+                    auth=self.auth,
+                    db=self.db,
+                )
+
+        self.assertEqual(raised.exception.status_code, 502)
+        self.db.refresh(self.destination)
+        self.assertIsNone(self.destination.export_lock_token)
+        self.assertEqual(
+            self.db.scalar(select(PreSpecificationSheetExportModel.status)),
+            "FAILED",
+        )
+        self.assertIsNone(self.db.scalar(select(UserPreSpecificationStateModel.id)))
+        _, total = list_pre_specifications(
+            self.db,
+            PreSpecificationListQuery(),
+            organization_id=self.organization.id,
+            user_id=self.user.id,
+        )
+        self.assertEqual(total, 1)
+
+    def test_shared_sheet_export_hides_item_for_organization_members(self):
+        teammate = UserModel(
+            username="pre-spec-teammate",
+            password_salt="salt",
+            password_hash="hash",
+            role="viewer",
+            is_active=True,
+        )
+        self.db.add(teammate)
+        self.destination.owner_user_id = None
+        self.db.commit()
+        upsert_pre_specifications(
+            self.db,
+            [{"bf_spec_rgst_no": "R001", "business_name": "AI 교육"}],
+        )
+        member_auth = {
+            "user_id": teammate.id,
+            "role": "viewer",
+            "organization_id": self.organization.id,
+            "organization_role": "member",
+        }
+        with self.assertRaises(HTTPException) as raised:
+            export_pre_specifications_sheet(
+                ExportPreSpecificationsSheetRequest(
+                    bf_spec_rgst_nos=["R001"],
+                    destination_id=self.destination.id,
+                ),
+                auth=member_auth,
+                db=self.db,
+            )
+        self.assertEqual(raised.exception.status_code, 403)
+
+        preview = export_pre_specifications_sheet(
+            ExportPreSpecificationsSheetRequest(
+                bf_spec_rgst_nos=["R001"],
+                destination_id=self.destination.id,
+            ),
+            auth=self.auth,
+            db=self.db,
+        )
+        writer = Mock()
+        writer.upsert.return_value = SheetUpsertResult(
+            inserted_count=1,
+            updated_count=0,
+        )
+        with patch(
+            "app.g2b.pre_specifications.router.PreSpecificationSheetWriter.from_env",
+            return_value=writer,
+        ):
+            export_pre_specifications_sheet(
+                ExportPreSpecificationsSheetRequest(
+                    bf_spec_rgst_nos=["R001"],
+                    destination_id=self.destination.id,
+                    dry_run=False,
+                    expected_preview_token=preview.preview_token,
+                ),
+                auth=self.auth,
+                db=self.db,
+            )
+
+        _, teammate_total = list_pre_specifications(
+            self.db,
+            PreSpecificationListQuery(),
+            organization_id=self.organization.id,
+            user_id=teammate.id,
+        )
+        teammate_archive = fetch_archived_pre_specifications(
+            page=1,
+            page_size=30,
+            auth=member_auth,
+            db=self.db,
+        )
+        self.assertEqual(teammate_total, 0)
+        self.assertEqual(teammate_archive.total, 1)
+        self.assertEqual(teammate_archive.items[0].handled_state, "EXPORTED")
+
+    def test_sheet_writer_updates_existing_row_and_inserts_new_row(self):
+        upsert_pre_specifications(
+            self.db,
+            [
+                {"bf_spec_rgst_no": "R001", "business_name": "변경 값"},
+                {"bf_spec_rgst_no": "R002", "business_name": "신규 값"},
+            ],
+        )
+        rows = self.db.scalars(
+            select(PreSpecificationModel).order_by(
+                PreSpecificationModel.bf_spec_rgst_no
+            )
+        ).all()
+        service = FakePreSpecificationSheetService()
+        writer = PreSpecificationSheetWriter("sheet-id", service)
+
+        result = writer.upsert(build_sheet_rows(rows))
+
+        self.assertEqual(result.inserted_count, 1)
+        self.assertEqual(result.updated_count, 1)
+        self.assertEqual(
+            [item["range"] for item in service.write_data],
+            ["'사전규격'!A2:L2", "'사전규격'!A3:L3"],
+        )
+
+    def test_sheet_writer_creates_dedicated_tab_when_missing(self):
+        service = FakePreSpecificationSheetService(tab_exists=False)
+        writer = PreSpecificationSheetWriter("sheet-id", service)
+
+        writer.upsert([])
+
+        self.assertEqual(service.added_tabs, ["사전규격"])
 
 
 if __name__ == "__main__":

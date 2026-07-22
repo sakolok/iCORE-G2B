@@ -157,6 +157,66 @@ class PreSpecificationListResponse(BaseModel):
     page_size: int
 
 
+class ArchivedPreSpecificationResponse(PreSpecificationResponse):
+    handled_state: Literal["DISMISSED", "EXPORTED"]
+    handled_at: datetime
+    expires_at: datetime
+    can_restore: bool
+
+
+class ArchivedPreSpecificationListResponse(BaseModel):
+    items: list[ArchivedPreSpecificationResponse]
+    total: int
+    page: int
+    page_size: int
+
+
+class DismissPreSpecificationResponse(BaseModel):
+    bf_spec_rgst_no: str
+    state: Literal["DISMISSED"] = "DISMISSED"
+
+
+class RestorePreSpecificationResponse(BaseModel):
+    bf_spec_rgst_no: str
+    state: Literal["RESTORED"] = "RESTORED"
+    visible: bool
+
+
+class ExportPreSpecificationsSheetRequest(BaseModel):
+    bf_spec_rgst_nos: list[str] = Field(min_length=1, max_length=100)
+    destination_id: int = Field(ge=1)
+    dry_run: bool = True
+    expected_preview_token: str | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{64}$",
+    )
+
+    @field_validator("bf_spec_rgst_nos")
+    @classmethod
+    def deduplicate_ids(cls, values: list[str]) -> list[str]:
+        normalized = list(
+            dict.fromkeys(str(value).strip() for value in values if str(value).strip())
+        )
+        if not normalized:
+            raise ValueError("사전규격 등록번호를 하나 이상 선택해야 합니다.")
+        return normalized
+
+
+class ExportPreSpecificationsSheetResponse(BaseModel):
+    headers: list[str]
+    requested_count: int
+    row_count: int
+    written: bool
+    inserted_count: int
+    updated_count: int
+    preview_rows: list[list[str | int | float]]
+    destination_id: int
+    destination_label: str
+    destination_scope: Literal["PERSONAL", "ORGANIZATION"]
+    destination_tab_name: str
+    preview_token: str
+
+
 def date_window(start: date, end: date) -> tuple[datetime, datetime]:
     return (
         datetime.combine(start, time.min, tzinfo=KST),
