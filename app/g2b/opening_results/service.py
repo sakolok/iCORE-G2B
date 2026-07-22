@@ -12,11 +12,11 @@ from sqlalchemy.orm import Session
 
 from app.data.models import ScraperNoticeModel
 from app.g2b.bid_notice import canonical_bid_notice_order
-from app.g2b.bid_notices.service import (
-    enrich_bid_notice_contexts_for_opening_rounds,
-)
 from app.g2b.keyword_policy import normalize_keywords
 from app.g2b.opening_results.client import OpeningResultApiClient, OpeningResultApiConfig
+from app.g2b.opening_results.enrichment_queue import (
+    enqueue_notice_enrichment_jobs,
+)
 from app.g2b.opening_results.models import (
     BidOpeningCollectionLeaseModel,
     BidOpeningCollectionRunModel,
@@ -464,7 +464,6 @@ def collect_opening_results(
     collection_run_id: int | None = None,
     collection_claim_token: str | None = None,
 ) -> CollectOpeningResultsResponse:
-    uses_default_client = client is None
     client = client or OpeningResultApiClient(OpeningResultApiConfig.from_env())
     business_type = request.business_type.value
     global_claim_token = _claim_global_collection_lease(db, business_type)
@@ -558,6 +557,7 @@ def collect_opening_results(
         db.commit()
         sync_organization_matches(db)
         sync_user_matches(db)
+        enqueue_notice_enrichment_jobs(db)
         _refresh_collection_lease(
             db,
             collection_run_id=collection_run_id,
@@ -571,16 +571,6 @@ def collect_opening_results(
                 BidOpeningRoundModel.business_type == business_type
             )
         ).all()
-        if uses_default_client:
-            enrich_bid_notice_contexts_for_opening_rounds(db, source_rounds)
-            _refresh_collection_lease(
-                db,
-                collection_run_id=collection_run_id,
-                collection_claim_token=collection_claim_token,
-                business_type=business_type,
-                global_claim_token=global_claim_token,
-            )
-            db.commit()
         pending_detail_keys = {
             round_row.external_key
             for round_row in source_rounds

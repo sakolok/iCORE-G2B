@@ -80,6 +80,14 @@ class ScheduledCollectOpeningResultsResponse(CollectOpeningResultsResponse):
         return _utc_if_naive(value)
 
 
+class NoticeEnrichmentRunResponse(BaseModel):
+    enqueued_count: int
+    claimed_count: int
+    succeeded_count: int
+    needs_review_count: int
+    retry_scheduled_count: int
+
+
 class OpeningEntryResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

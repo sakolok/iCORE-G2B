@@ -215,6 +215,19 @@ X-Scraper-Internal-Token: ...
 Authorization: Bearer <Cloud Scheduler OIDC token>
 ```
 
+공고정보 보강은 수집 요청에서 직접 실행하지 않는다. 사용자 키워드에 현재 매칭되고 아직
+`EXPORTED`·`DISMISSED` 처리되지 않은 최근 14일 결과만 공고번호·차수 기준 대기열에 등록한다.
+사업금액 누락은 우선순위 100, 그 밖의 공고정보 누락과 `API_ERROR`는 우선순위 50이다.
+
+```text
+cron: 10 8,11,14,17 * * *
+POST /api/v1/results/internal/enrich-context
+```
+
+보강 실행은 최대 10건을 선점하고 결과를 건별 커밋한다. `API_EMPTY`와 `ORDER_MISMATCH`는
+`NEEDS_REVIEW`로 종료해 자동 재호출하지 않는다. `API_ERROR`만 1시간·6시간·24시간 간격으로
+최대 3회 재시도하며, 이후에는 사용자 확인이 필요하다.
+
 08시 실행은 전날 17시부터 당일 08시까지, 11·14·17시 실행은 직전 슬롯부터 현재 슬롯까지를
 수집한다. 이전 성공 이후 놓친 슬롯이 있으면 최대 최근 14일까지 현재 실행에서 자동 보충한다.
 동일 슬롯의 재호출은

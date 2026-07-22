@@ -25,6 +25,7 @@ from app.g2b.opening_results.client import (
     OpeningResultApiError,
 )
 from app.g2b.opening_results.models import (
+    BidNoticeEnrichmentJobModel,
     BidOpeningCollectionRunModel,
     BidOpeningCollectionLeaseModel,
     BidOpeningEntryModel,
@@ -620,7 +621,7 @@ class OpeningResultServiceTests(unittest.TestCase):
         self.assertEqual(len(matches), 1)
         self.assertEqual(matches[0].matched_keywords, "연수")
 
-    def test_default_collection_enriches_notice_context_for_all_shared_rounds(self):
+    def test_default_collection_enqueues_matched_missing_business_amount(self):
         matched = self.completed_summary()
         unmatched = self.completed_summary()
         unmatched["bidNtceNo"] = "R26BK00000002"
@@ -639,18 +640,13 @@ class OpeningResultServiceTests(unittest.TestCase):
                 "app.g2b.opening_results.service.OpeningResultApiClient",
                 return_value=client,
             ),
-            patch(
-                "app.g2b.opening_results.service.enrich_bid_notice_contexts_for_opening_rounds",
-                return_value=0,
-            ) as enrich_contexts,
         ):
             collect_opening_results(self.db, self.request)
 
-        enriched_rounds = enrich_contexts.call_args.args[1]
-        self.assertEqual(
-            {row.bid_notice_no for row in enriched_rounds},
-            {matched["bidNtceNo"], unmatched["bidNtceNo"]},
-        )
+        jobs = self.db.scalars(select(BidNoticeEnrichmentJobModel)).all()
+        self.assertEqual(len(jobs), 1)
+        self.assertEqual(jobs[0].bid_notice_no, matched["bidNtceNo"])
+        self.assertEqual(jobs[0].priority, 100)
 
     def test_same_shared_source_is_matched_independently_per_user_profile(self):
         teammate = UserModel(
@@ -4053,6 +4049,7 @@ class OpeningResultRouterTests(unittest.TestCase):
         paths = {route.path for route in app.routes}
         self.assertIn("/api/v1/results", paths)
         self.assertIn("/api/v1/results/internal/collect", paths)
+        self.assertIn("/api/v1/results/internal/enrich-context", paths)
         self.assertIn("/api/v1/results/export/sheet", paths)
         self.assertIn("/api/v1/results/archive", paths)
         self.assertIn("/api/v1/results/archive/{result_id}", paths)

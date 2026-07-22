@@ -23,6 +23,7 @@ env:
   CLOUD_RUN_WORKER_SERVICE: icore-g2b-worker
   CLOUD_SCHEDULER_LOCATION: asia-northeast3
   OPENING_RESULTS_SCHEDULER_JOB_ID: icore-g2b-opening-results-12h
+  NOTICE_ENRICHMENT_SCHEDULER_JOB_ID: icore-g2b-notice-enrichment
 
 jobs:
   test-and-build:
@@ -336,6 +337,50 @@ jobs:
           expected="$EXPECTED_SCHEDULE $EXPECTED_TIME_ZONE ENABLED $TARGET_URL POST $INVOKER_SERVICE_ACCOUNT $API_URL"
           if [ "$actual" != "$expected" ]; then
             echo "Opening results scheduler verification failed."
+            exit 1
+          fi
+
+          ENRICHMENT_TARGET_URL="$API_URL/api/v1/results/internal/enrich-context"
+          ENRICHMENT_SCHEDULE="10 8,11,14,17 * * *"
+          enrichment_args=(
+            --project="${{ env.PROJECT_ID }}"
+            --location="${{ env.CLOUD_SCHEDULER_LOCATION }}"
+            --schedule="$ENRICHMENT_SCHEDULE"
+            --time-zone="$EXPECTED_TIME_ZONE"
+            --uri="$ENRICHMENT_TARGET_URL"
+            --http-method=POST
+            --message-body='{}'
+            --oidc-service-account-email="$INVOKER_SERVICE_ACCOUNT"
+            --oidc-token-audience="$API_URL"
+            --attempt-deadline=10m
+            --max-retry-attempts=1
+            --min-backoff=60s
+            --max-backoff=300s
+            --max-doublings=2
+          )
+          if gcloud scheduler jobs describe "${{ env.NOTICE_ENRICHMENT_SCHEDULER_JOB_ID }}" \
+            --project="${{ env.PROJECT_ID }}" \
+            --location="${{ env.CLOUD_SCHEDULER_LOCATION }}" >/dev/null 2>&1; then
+            gcloud scheduler jobs update http "${{ env.NOTICE_ENRICHMENT_SCHEDULER_JOB_ID }}" \
+              "${enrichment_args[@]}" \
+              --update-headers="Content-Type=application/json,X-Scraper-Internal-Token=$INTERNAL_TOKEN"
+          else
+            gcloud scheduler jobs create http "${{ env.NOTICE_ENRICHMENT_SCHEDULER_JOB_ID }}" \
+              "${enrichment_args[@]}" \
+              --headers="Content-Type=application/json,X-Scraper-Internal-Token=$INTERNAL_TOKEN"
+          fi
+
+          gcloud scheduler jobs resume "${{ env.NOTICE_ENRICHMENT_SCHEDULER_JOB_ID }}" \
+            --project="${{ env.PROJECT_ID }}" \
+            --location="${{ env.CLOUD_SCHEDULER_LOCATION }}" || true
+
+          enrichment_actual=$(gcloud scheduler jobs describe "${{ env.NOTICE_ENRICHMENT_SCHEDULER_JOB_ID }}" \
+            --project="${{ env.PROJECT_ID }}" \
+            --location="${{ env.CLOUD_SCHEDULER_LOCATION }}" \
+            --format=json | jq -r '[.schedule, .timeZone, .state, .httpTarget.uri, .httpTarget.httpMethod, .httpTarget.oidcToken.serviceAccountEmail, .httpTarget.oidcToken.audience] | join(" ")')
+          enrichment_expected="$ENRICHMENT_SCHEDULE $EXPECTED_TIME_ZONE ENABLED $ENRICHMENT_TARGET_URL POST $INVOKER_SERVICE_ACCOUNT $API_URL"
+          if [ "$enrichment_actual" != "$enrichment_expected" ]; then
+            echo "Notice enrichment scheduler verification failed."
             exit 1
           fi
 

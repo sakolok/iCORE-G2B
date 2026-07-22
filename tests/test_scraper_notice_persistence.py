@@ -10,6 +10,7 @@ from app.data.models import Base, ScraperNoticeModel, ScraperRunModel
 from app.g2b.bid_notice import (
     REGION_API_EMPTY,
     REGION_API_ERROR,
+    REGION_API_ORDER_MISMATCH,
     REGION_API_VALUE,
     canonical_bid_notice_identity,
     infer_two_stage_bid,
@@ -397,7 +398,7 @@ class ScraperNoticePersistenceTests(unittest.TestCase):
             REGION_API_ERROR,
         )
 
-    def test_official_context_marks_mismatched_region_response_as_error(self):
+    def test_official_context_marks_mismatched_region_response_for_review(self):
         result_id = self.add_opening_result()
         round_row = self.db.get(BidOpeningRoundModel, result_id)
         notice_item = {
@@ -424,7 +425,7 @@ class ScraperNoticePersistenceTests(unittest.TestCase):
         self.assertIsNone(notice.region_restriction)
         self.assertEqual(
             notice.region_restriction_api_status,
-            REGION_API_ERROR,
+            REGION_API_ORDER_MISMATCH,
         )
 
     def test_empty_and_error_region_api_outcomes_persist_separately(self):
@@ -611,6 +612,31 @@ class ScraperNoticePersistenceTests(unittest.TestCase):
         )
         self.assertEqual(missing_context_keys, ["R26BK00000001|00"])
 
+    def test_api_empty_region_requires_review_and_blocks_sheet_export(self):
+        notice = ScraperNotice(
+            notice_id="R26BK00000001",
+            title="AI 구축 용역",
+            bid_notice_no="R26BK00000001",
+            bid_notice_ord="00",
+            business_name="AI 구축 용역",
+            demand_agency_name="OO기관",
+            base_amount=Decimal("266264460"),
+            prearranged_price_decision_method="복수예가",
+            proposal_deadline=datetime(2026, 7, 20, 15, 0),
+            region_restriction_api_status=REGION_API_EMPTY,
+            is_two_stage_bid=False,
+        )
+        self.persist(notice)
+        result_id = self.add_opening_result()
+
+        _, missing_context_keys, _ = build_sheet_rows(self.db, [result_id])
+
+        self.assertIn(
+            "region_restriction",
+            missing_bid_notice_context_fields(notice),
+        )
+        self.assertEqual(missing_context_keys, ["R26BK00000001|00"])
+
     def test_zero_padded_duplicate_notice_orders_create_one_official_row(self):
         self.assertEqual(
             canonical_bid_notice_identity(" R26BK00000001 ", "000"),
@@ -793,7 +819,7 @@ class ScraperNoticePersistenceTests(unittest.TestCase):
             REGION_API_ERROR,
         )
 
-    def test_worker_marks_mismatched_region_response_as_error(self):
+    def test_worker_marks_mismatched_region_response_for_review(self):
         notice = NoticeRow(
             notice_id="R26BK00000001",
             title="AI 교육 운영 용역",
@@ -815,7 +841,7 @@ class ScraperNoticePersistenceTests(unittest.TestCase):
         self.assertIsNone(rows[0].region_restriction)
         self.assertEqual(
             rows[0].region_restriction_api_status,
-            REGION_API_ERROR,
+            REGION_API_ORDER_MISMATCH,
         )
 
     def test_missing_refresh_values_do_not_erase_stored_official_context(self):

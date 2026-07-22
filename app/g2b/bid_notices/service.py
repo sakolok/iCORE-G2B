@@ -22,6 +22,7 @@ from app.data.models import (
 from app.g2b.bid_notice import (
     REGION_API_EMPTY,
     REGION_API_ERROR,
+    REGION_API_ORDER_MISMATCH,
     REGION_API_VALUE,
     canonical_bid_notice_identity,
     clean_optional_text,
@@ -573,7 +574,10 @@ def _apply_notice_fields(
         ):
             continue
         setattr(row, field_name, value)
-    if fields.get("region_restriction_api_status") == REGION_API_EMPTY:
+    if fields.get("region_restriction_api_status") in {
+        REGION_API_EMPTY,
+        REGION_API_ORDER_MISMATCH,
+    }:
         row.region_restriction = None
 
 
@@ -771,7 +775,7 @@ def _fetch_official_bid_notice_context(
         matching_region_items = _matching_bid_notice_items(region_items, identity)
         if region_items and not matching_region_items:
             region_restriction = None
-            region_api_status = REGION_API_ERROR
+            region_api_status = REGION_API_ORDER_MISMATCH
         else:
             region_names: list[str] = []
             for region_item in matching_region_items:

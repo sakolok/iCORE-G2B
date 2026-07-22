@@ -25,6 +25,7 @@ from app.g2b.opening_results.schemas import (
     OpeningResultDetailResponse,
     OpeningResultListQuery,
     OpeningResultListResponse,
+    NoticeEnrichmentRunResponse,
     OpeningResultProfileResponse,
     OpeningResultProfileUpdateRequest,
     OpeningResultSettingsResponse,
@@ -73,6 +74,10 @@ from app.g2b.opening_results.service import (
     OpeningResultCollectionConflictError,
     OpeningResultCollectionLeaseLostError,
     run_scheduled_opening_results,
+)
+from app.g2b.opening_results.enrichment_queue import (
+    enqueue_notice_enrichment_jobs,
+    process_notice_enrichment_jobs,
 )
 from app.g2b.opening_results.sheet_export import (
     GoogleSheetWriter,
@@ -265,6 +270,27 @@ def collect_results_on_schedule(
         raise HTTPException(status_code=409, detail=str(error)) from error
     except OpeningResultCollectionConflictError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
+
+
+@router.post(
+    "/internal/enrich-context",
+    response_model=NoticeEnrichmentRunResponse,
+)
+def enrich_notice_context_on_schedule(
+    _: None = Depends(verify_scraper_internal_token),
+    __: None = Depends(verify_cloud_scheduler_oidc_token),
+    db: Session = Depends(get_db),
+) -> NoticeEnrichmentRunResponse:
+    enqueued_count = enqueue_notice_enrichment_jobs(db)
+    db.commit()
+    result = process_notice_enrichment_jobs(db, limit=10)
+    return NoticeEnrichmentRunResponse(
+        enqueued_count=enqueued_count,
+        claimed_count=result.claimed_count,
+        succeeded_count=result.succeeded_count,
+        needs_review_count=result.needs_review_count,
+        retry_scheduled_count=result.retry_scheduled_count,
+    )
 
 
 @router.get("", response_model=OpeningResultListResponse)

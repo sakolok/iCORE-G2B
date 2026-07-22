@@ -9,10 +9,12 @@ KST = ZoneInfo("Asia/Seoul")
 REGION_API_VALUE = "API_VALUE"
 REGION_API_EMPTY = "API_EMPTY"
 REGION_API_ERROR = "API_ERROR"
+REGION_API_ORDER_MISMATCH = "ORDER_MISMATCH"
 RegionRestrictionApiStatus = Literal[
     "API_VALUE",
     "API_EMPTY",
     "API_ERROR",
+    "ORDER_MISMATCH",
 ]
 
 
@@ -152,7 +154,8 @@ def missing_bid_notice_context_fields(notice: Any) -> list[str]:
     region_value = clean_optional_text(getattr(notice, "region_restriction", None))
     region_api_status = getattr(notice, "region_restriction_api_status", None)
     if (
-        region_api_status in {REGION_API_EMPTY, REGION_API_ERROR}
+        region_api_status
+        in {REGION_API_EMPTY, REGION_API_ERROR, REGION_API_ORDER_MISMATCH}
         or (region_api_status is None and region_value == "없음")
     ) and "region_restriction" not in missing:
         missing.append("region_restriction")

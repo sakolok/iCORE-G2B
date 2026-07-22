@@ -21,6 +21,7 @@ from requests.exceptions import JSONDecodeError as RequestsJSONDecodeError
 from app.g2b.bid_notice import (
     REGION_API_EMPTY,
     REGION_API_ERROR,
+    REGION_API_ORDER_MISMATCH,
     REGION_API_VALUE,
     RegionRestrictionApiStatus,
     canonical_bid_notice_identity,
@@ -766,7 +767,9 @@ def _enrich_bid_notice_contexts(notices: list[NoticeRow]) -> list[NoticeRow]:
             if succeeded:
                 matching_items = _matching_bid_notice_items(items, identity)
                 if items and not matching_items:
-                    notice.region_restriction_api_status = REGION_API_ERROR
+                    notice.region_restriction_api_status = (
+                        REGION_API_ORDER_MISMATCH
+                    )
                 else:
                     region_names: list[str] = []
                     for item in matching_items:

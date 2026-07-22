@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.data.models import Base
@@ -120,6 +120,49 @@ class BidOpeningCollectionLeaseModel(Base):
     business_type: Mapped[str] = mapped_column(String(20), primary_key=True)
     claim_token: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class BidNoticeEnrichmentJobModel(Base):
+    __tablename__ = "g2b_notice_enrichment_jobs"
+    __table_args__ = (
+        UniqueConstraint(
+            "bid_notice_no",
+            "bid_notice_ord",
+            "task_type",
+            name="uq_g2b_notice_enrichment_job",
+        ),
+        Index(
+            "ix_g2b_notice_enrichment_jobs_ready",
+            "status",
+            "next_retry_at",
+            "priority",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    bid_notice_no: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    bid_notice_ord: Mapped[str] = mapped_column(String(20), nullable=False, default="0")
+    task_type: Mapped[str] = mapped_column(
+        String(30), nullable=False, default="NOTICE_CONTEXT"
+    )
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="PENDING")
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    next_retry_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    claim_token: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow, onupdate=_utcnow
+    )
 
 
 class OrganizationOpeningResultMatchModel(Base):
