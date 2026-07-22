@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.g2b.bid_notice import missing_bid_notice_context_fields
 from app.g2b.opening_results.models import BidOpeningEntryModel, BidOpeningRoundModel
 from app.g2b.opening_results.notice_context_repository import (
     canonical_notice_key,
@@ -204,19 +205,7 @@ def build_sheet_row(
 
 
 def _has_complete_notice_context(context: BidNoticeSheetContext | None) -> bool:
-    if context is None:
-        return False
-    return bool(
-        context.business_name
-        and context.business_name.strip()
-        and context.demand_agency_name
-        and context.demand_agency_name.strip()
-        and context.base_amount is not None
-        and context.proposal_deadline is not None
-        and context.region_restriction
-        and context.region_restriction.strip()
-        and context.is_two_stage_bid is not None
-    )
+    return context is not None and not missing_bid_notice_context_fields(context)
 
 
 def build_sheet_rows(

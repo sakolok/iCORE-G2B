@@ -172,6 +172,9 @@ def _summary_responses(
                     ),
                     "proposal_deadline": context.proposal_deadline if context else None,
                     "region_restriction": context.region_restriction if context else None,
+                    "region_restriction_api_status": (
+                        context.region_restriction_api_status if context else None
+                    ),
                     "is_two_stage_bid": context.is_two_stage_bid if context else None,
                     "sheet_export_status": export_status,
                     "sheet_exportable": not block_reasons,

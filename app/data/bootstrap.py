@@ -165,6 +165,7 @@ def ensure_schema_compatibility(engine: Engine) -> None:
             "prearranged_price_decision_method": "VARCHAR(120) NULL",
             "proposal_deadline": "DATETIME NULL",
             "region_restriction": "VARCHAR(240) NULL",
+            "region_restriction_api_status": "VARCHAR(20) NULL",
             "is_two_stage_bid": "BOOLEAN NULL",
         },
     )

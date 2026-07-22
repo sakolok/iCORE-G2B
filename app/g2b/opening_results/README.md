@@ -22,7 +22,7 @@
 API에 받은 차수·분류·재입찰번호 문자열은 그대로 보존하되, 모듈 연결 키를 비교할 때는
 `00`과 `000`처럼 값은 같고 0 채움만 다른 코드를 같은 값으로 취급한다.
 
-Google Sheet 출력에 필요한 다음 9개 값은 입찰공고 모듈이 `scraper_notices`의 공식 연결
+Google Sheet 출력과 지역 API 판정에 필요한 다음 10개 값은 입찰공고 모듈이 `scraper_notices`의 공식 연결
 필드에 저장한다.
 
 ```text
@@ -34,6 +34,7 @@ base_amount
 prearranged_price_decision_method
 proposal_deadline
 region_restriction
+region_restriction_api_status
 is_two_stage_bid
 ```
 
@@ -59,7 +60,8 @@ DB/API 호환을 위해 필드명은 `base_amount`를 유지하지만, 개찰결
 | `base_amount` | 호환 필드명; 값은 `presmptPrce + VAT` 사업금액 |
 | `prearranged_price_decision_method` | `prearngPrceDcsnMthdNm`; 사업금액과 별도 보관 |
 | `proposal_deadline` | `bidClseDt` (KST) |
-| `region_restriction` | 참가가능지역조회 `prtcptPsblRgnNm`; 정상 빈 응답은 `없음` |
+| `region_restriction` | 참가가능지역조회 `prtcptPsblRgnNm`; 새 수집에서 확인되지 않으면 `NULL` |
+| `region_restriction_api_status` | 값 확인 `API_VALUE`, 정상 빈 응답 `API_EMPTY`, 호출·응답 오류 `API_ERROR` |
 | `is_two_stage_bid` | 검증된 공식 입찰·계약·낙찰방법명에 `2단계` 포함 여부 |
 
 사업금액은 공고 본문의 추정가격과 부가세로 계산하고, 참가가능지역 URL은
@@ -68,6 +70,8 @@ DB/API 호환을 위해 필드명은 `base_amount`를 유지하지만, 개찰결
 채우지 않고 `NULL`로 유지하여 Sheet 실제 반영을 차단한다. `전자입찰`처럼 2단계 여부를
 확정할 수 없는 방법명도 임의로 `N` 처리하지 않는다. 공식 컨텍스트가 미완성인 실행은
 성공 체크포인트를 전진시키지 않고 최근 14일 범위에서 다음 정기 실행 때 다시 보강한다.
+응답에 다른 공고번호·차수의 항목만 있으면 정상 빈 응답이 아니라 `API_ERROR`로 본다.
+기존 `region_restriction="없음"`이면서 API 상태가 없는 행도 미확인으로 취급한다.
 
 ## 개발·병합 순서
 

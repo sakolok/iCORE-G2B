@@ -20,6 +20,9 @@ from app.data.models import (
     ScraperRunModel,
 )
 from app.g2b.bid_notice import (
+    REGION_API_EMPTY,
+    REGION_API_ERROR,
+    REGION_API_VALUE,
     canonical_bid_notice_identity,
     clean_optional_text,
     infer_two_stage_bid,
@@ -282,6 +285,19 @@ def _fetch_g2b_notices(
                         item.get("region_restriction")
                         or item.get("prtcptPsblRgnNm")
                     ),
+                    region_restriction_api_status=(
+                        clean_optional_text(
+                            item.get("region_restriction_api_status")
+                        )
+                        or (
+                            REGION_API_VALUE
+                            if clean_optional_text(
+                                item.get("region_restriction")
+                                or item.get("prtcptPsblRgnNm")
+                            )
+                            else None
+                        )
+                    ),
                     is_two_stage_bid=infer_two_stage_bid(
                         item.get("is_two_stage_bid"),
                         item.get("bidMethdNm"),
@@ -536,6 +552,7 @@ def _notice_fields_for_db(notice: ScraperNotice) -> dict[str, object | None]:
             notice.region_restriction,
             max_length=240,
         ),
+        "region_restriction_api_status": notice.region_restriction_api_status,
         "is_two_stage_bid": notice.is_two_stage_bid,
     }
 
@@ -556,6 +573,8 @@ def _apply_notice_fields(
         ):
             continue
         setattr(row, field_name, value)
+    if fields.get("region_restriction_api_status") == REGION_API_EMPTY:
+        row.region_restriction = None
 
 
 def _find_existing_scraper_notice(
@@ -749,15 +768,27 @@ def _fetch_official_bid_notice_context(
         source_label=f"G2B participant region {notice_no}|{notice_ord}",
     )
     if region_succeeded:
-        region_names: list[str] = []
-        for region_item in _matching_bid_notice_items(region_items, identity):
-            region_name = clean_optional_text(region_item.get("prtcptPsblRgnNm"))
-            if region_name and region_name not in region_names:
-                region_names.append(region_name)
-        region_restriction = (
-            clean_optional_text(", ".join(region_names), max_length=240)
-            or "없음"
-        )
+        matching_region_items = _matching_bid_notice_items(region_items, identity)
+        if region_items and not matching_region_items:
+            region_restriction = None
+            region_api_status = REGION_API_ERROR
+        else:
+            region_names: list[str] = []
+            for region_item in matching_region_items:
+                region_name = clean_optional_text(
+                    region_item.get("prtcptPsblRgnNm")
+                )
+                if region_name and region_name not in region_names:
+                    region_names.append(region_name)
+            region_restriction = clean_optional_text(
+                ", ".join(region_names),
+                max_length=240,
+            )
+            region_api_status = (
+                REGION_API_VALUE if region_restriction else REGION_API_EMPTY
+            )
+    else:
+        region_api_status = REGION_API_ERROR
 
     estimated_price = parse_official_amount(item.get("presmptPrce"))
     proposal_deadline = parse_g2b_datetime(item.get("bidClseDt"))
@@ -795,6 +826,7 @@ def _fetch_official_bid_notice_context(
         prearranged_price_decision_method=price_method,
         proposal_deadline=proposal_deadline,
         region_restriction=region_restriction,
+        region_restriction_api_status=region_api_status,
         is_two_stage_bid=infer_two_stage_bid(
             None,
             item.get("bidMethdNm"),
