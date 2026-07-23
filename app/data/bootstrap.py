@@ -180,9 +180,18 @@ def ensure_schema_compatibility(engine: Engine) -> None:
             "work_type": "VARCHAR(40) NULL",
             "procurement_type": "VARCHAR(20) NULL",
             "official_base_amount": "NUMERIC(20, 2) NULL",
-            "source_payload": "TEXT NOT NULL DEFAULT '{}'",
+            "source_payload": "TEXT NULL",
         },
     )
+    if "scraper_notices" in inspect(engine).get_table_names():
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "UPDATE scraper_notices "
+                    "SET source_payload = '{}' "
+                    "WHERE source_payload IS NULL"
+                )
+            )
     _ensure_index(
         engine,
         "scraper_notices",
