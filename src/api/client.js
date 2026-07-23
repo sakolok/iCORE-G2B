@@ -178,7 +178,10 @@ export const preSpecificationsApi = {
 
 export const bidNoticesApi = {
   list: (params) => api.get("/v1/bid-notices", { params }),
+  listArchive: (params) => api.get("/v1/bid-notices/archive", { params }),
   collect: (payload) => api.post("/v1/bid-notices/collect", payload, { timeout: 60000 }),
+  dismiss: (noticeId) => api.delete(`/v1/bid-notices/items/${noticeId}`),
+  restore: (noticeId) => api.post(`/v1/bid-notices/items/${noticeId}/restore`),
   settings: () => api.get("/v1/bid-notices/settings"),
   updateProfile: (payload) => api.put("/v1/bid-notices/settings/profile", payload),
   listSheetDestinations: () => api.get("/v1/bid-notices/sheet-destinations"),

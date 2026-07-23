@@ -8,6 +8,7 @@ import {
   Empty,
   Input,
   Modal,
+  Popconfirm,
   Select,
   Space,
   Switch,
@@ -60,6 +61,7 @@ function BidNoticesPage({ session }) {
   const [listError, setListError] = useState("");
   const [queryDraft, setQueryDraft] = useState("");
   const [query, setQuery] = useState("");
+  const [workType, setWorkType] = useState();
   const [profileOpen, setProfileOpen] = useState(false);
   const [profileLoading, setProfileLoading] = useState(false);
   const [savingProfile, setSavingProfile] = useState(false);
@@ -85,6 +87,12 @@ function BidNoticesPage({ session }) {
     spreadsheet_id: "",
     tab_name: "입찰공고",
   });
+  const [archiveOpen, setArchiveOpen] = useState(false);
+  const [archiveRows, setArchiveRows] = useState([]);
+  const [archiveTotal, setArchiveTotal] = useState(0);
+  const [archivePage, setArchivePage] = useState(1);
+  const [archiveLoading, setArchiveLoading] = useState(false);
+  const [restoringId, setRestoringId] = useState(null);
 
   const canCollect = session?.role === "admin";
   const profileSummary = useMemo(() => {
@@ -99,7 +107,7 @@ function BidNoticesPage({ session }) {
     setLoading(true);
     setListError("");
     bidNoticesApi
-      .list({ page, page_size: pageSize, q: query || undefined })
+      .list({ page, page_size: pageSize, q: query || undefined, work_type: workType })
       .then((response) => {
         if (requestId.current !== nextRequestId) return;
         setRows(response.data.items || []);
@@ -133,11 +141,15 @@ function BidNoticesPage({ session }) {
 
   useEffect(() => {
     loadList();
-  }, [page, pageSize, query]);
+  }, [page, pageSize, query, workType]);
 
   useEffect(() => {
     loadProfile();
   }, []);
+
+  useEffect(() => {
+    if (archiveOpen) loadArchive(archivePage);
+  }, [archiveOpen, archivePage]);
 
   const saveProfile = async () => {
     if (profileEnabled && !keywords.length) {
@@ -170,6 +182,12 @@ function BidNoticesPage({ session }) {
       message.warning("수집 기간을 선택하세요.");
       return;
     }
+    if (!profileEnabled || !keywords.length) {
+      message.warning("수집하려면 조건 설정에서 포함 키워드를 저장하고 조건 사용을 켜세요.");
+      setCollectOpen(false);
+      setProfileOpen(true);
+      return;
+    }
     setCollecting(true);
     try {
       const response = await bidNoticesApi.collect({
@@ -185,6 +203,50 @@ function BidNoticesPage({ session }) {
       message.error(formatApiError(error, "입찰공고 수집에 실패했습니다."));
     } finally {
       setCollecting(false);
+    }
+  };
+
+  const refreshReview = async () => {
+    setSelectedRowKeys([]);
+    await Promise.all([loadList(), loadProfile()]);
+    message.success("내 검토 목록을 새로고침했습니다.");
+  };
+
+  const loadArchive = async (nextPage = archivePage) => {
+    setArchiveLoading(true);
+    try {
+      const response = await bidNoticesApi.listArchive({ page: nextPage, page_size: pageSize });
+      setArchiveRows(response.data.items || []);
+      setArchiveTotal(response.data.total || 0);
+    } catch (error) {
+      message.error(formatApiError(error, "14일 보관함을 불러오지 못했습니다."));
+    } finally {
+      setArchiveLoading(false);
+    }
+  };
+
+  const dismissNotice = async (noticeId) => {
+    try {
+      await bidNoticesApi.dismiss(noticeId);
+      setSelectedRowKeys((current) => current.filter((id) => id !== noticeId));
+      setRows((current) => current.filter((row) => row.id !== noticeId));
+      setTotal((current) => Math.max(0, current - 1));
+      message.success("내 검토함에서 제외했습니다. 14일 보관함에서 복구할 수 있습니다.");
+    } catch (error) {
+      message.error(formatApiError(error, "입찰공고 제외에 실패했습니다."));
+    }
+  };
+
+  const restoreNotice = async (noticeId) => {
+    setRestoringId(noticeId);
+    try {
+      await bidNoticesApi.restore(noticeId);
+      await Promise.all([loadArchive(archivePage), loadList()]);
+      message.success("검토 목록으로 복구했습니다.");
+    } catch (error) {
+      message.error(formatApiError(error, "입찰공고 복구에 실패했습니다."));
+    } finally {
+      setRestoringId(null);
     }
   };
 
@@ -281,6 +343,22 @@ function BidNoticesPage({ session }) {
     }
   };
 
+  const deleteDestination = async (target) => {
+    try {
+      await bidNoticesApi.deleteSheetDestination(target.id);
+      setDestinationId((current) => (current === target.id ? undefined : current));
+      await loadDestinations();
+      message.success("개인 Google Sheet 연결을 제거했습니다.");
+    } catch (error) {
+      message.error(formatApiError(error, "Google Sheet 연결 제거에 실패했습니다."));
+    }
+  };
+
+  const openDestinationManager = async () => {
+    await loadDestinations();
+    setConnectOpen(true);
+  };
+
   const columns = [
     {
       title: "공고명",
@@ -319,6 +397,26 @@ function BidNoticesPage({ session }) {
         </Space>
       ),
     },
+    {
+      title: "작업",
+      key: "actions",
+      width: 86,
+      render: (_, row) => (
+        <Popconfirm title="이 공고를 검토함에서 제외할까요?" onConfirm={() => dismissNotice(row.id)} okText="제외" cancelText="취소">
+          <Button type="link" danger>제외</Button>
+        </Popconfirm>
+      ),
+    },
+  ];
+
+  const archiveColumns = [
+    ...columns.slice(0, -1),
+    {
+      title: "작업",
+      key: "restore",
+      width: 92,
+      render: (_, row) => <Button type="link" loading={restoringId === row.id} onClick={() => restoreNotice(row.id)}>복구</Button>,
+    },
   ];
 
   return (
@@ -331,6 +429,9 @@ function BidNoticesPage({ session }) {
         </div>
         <Space wrap>
           <Button onClick={() => setProfileOpen(true)}>조건 설정</Button>
+          <Button onClick={refreshReview} loading={loading}>새로고침</Button>
+          <Button onClick={() => setArchiveOpen(true)}>14일 보관함</Button>
+          <Button onClick={openDestinationManager}>Sheet 연결 관리</Button>
           <Button onClick={openExport}>Sheet 반영 ({selectedRowKeys.length})</Button>
           {canCollect ? <Button type="primary" onClick={() => setCollectOpen(true)}>입찰공고 수집</Button> : null}
         </Space>
@@ -350,8 +451,15 @@ function BidNoticesPage({ session }) {
             onChange={(event) => setQueryDraft(event.target.value)}
             onSearch={() => { setPage(1); setQuery(queryDraft.trim()); }}
           />
-          <Button onClick={() => { setQueryDraft(""); setQuery(""); setPage(1); }}>초기화</Button>
-          <Button onClick={loadList} loading={loading}>새로고침</Button>
+          <Select
+            allowClear
+            value={workType}
+            placeholder="업무구분 전체"
+            style={{ width: 140 }}
+            options={BUSINESS_TYPE_OPTIONS.map((item) => ({ value: item.label, label: item.label }))}
+            onChange={(value) => { setWorkType(value); setPage(1); }}
+          />
+          <Button onClick={() => { setQueryDraft(""); setQuery(""); setWorkType(undefined); setPage(1); }}>필터 초기화</Button>
         </Space>
       </Card>
 
@@ -415,13 +523,32 @@ function BidNoticesPage({ session }) {
             onChange={(value) => { setDestinationId(value); setExportPreview(null); }}
             options={destinations.map((item) => ({ value: item.id, label: `${item.label} · ${item.tab_name}` }))}
           />
-          <Button type="link" onClick={() => setConnectOpen(true)}>새 개인 Sheet 연결</Button>
+          <Button type="link" onClick={openDestinationManager}>새 개인 Sheet 연결</Button>
           {exportPreview ? <Alert type="info" showIcon message={`${exportPreview.row_count}건 미리보기 완료`} description={`대상: ${exportPreview.destination_label} · ${exportPreview.destination_tab_name}`} /> : null}
         </div>
       </Modal>
 
-      <Modal title="개인 Google Sheet 연결" open={connectOpen} onCancel={() => setConnectOpen(false)} onOk={saveDestination} confirmLoading={connecting} okText="연결 확인 후 저장">
+      <Modal title="14일 보관함" open={archiveOpen} onCancel={() => setArchiveOpen(false)} footer={null} width={1180}>
+        <Table
+          rowKey="id"
+          loading={archiveLoading}
+          columns={archiveColumns}
+          dataSource={archiveRows}
+          locale={{ emptyText: <Empty description="보관된 입찰공고가 없습니다." /> }}
+          scroll={{ x: 1300 }}
+          pagination={{
+            current: archivePage,
+            pageSize,
+            total: archiveTotal,
+            showSizeChanger: false,
+            onChange: (nextPage) => setArchivePage(nextPage),
+          }}
+        />
+      </Modal>
+
+      <Modal title="개인 Google Sheet 연결 관리" open={connectOpen} onCancel={() => setConnectOpen(false)} onOk={saveDestination} confirmLoading={connecting} okText="연결 확인 후 저장">
         <div className="bid-notices-export-form">
+          {destinations.length ? <div className="bid-notices-destination-list">{destinations.map((item) => <Space key={item.id} className="bid-notices-destination-item"><Button type={destinationId === item.id ? "primary" : "default"} onClick={() => setDestinationId(item.id)}>{item.label} · {item.tab_name}</Button><Popconfirm title="이 개인 Sheet 연결을 제거할까요?" onConfirm={() => deleteDestination(item)} okText="제거" cancelText="취소"><Button type="link" danger>제거</Button></Popconfirm></Space>)}</div> : <Text type="secondary">저장된 개인 Sheet 연결이 없습니다.</Text>}
           <Input value={destinationDraft.label} placeholder="연결 이름" onChange={(event) => setDestinationDraft((draft) => ({ ...draft, label: event.target.value }))} />
           <Input value={destinationDraft.spreadsheet_id} placeholder="Google Sheet URL 또는 ID" onChange={(event) => setDestinationDraft((draft) => ({ ...draft, spreadsheet_id: event.target.value }))} />
           <Input value={destinationDraft.tab_name} placeholder="탭 이름" onChange={(event) => setDestinationDraft((draft) => ({ ...draft, tab_name: event.target.value }))} />
