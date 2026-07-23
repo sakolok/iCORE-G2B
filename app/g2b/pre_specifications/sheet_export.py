@@ -381,9 +381,13 @@ def claim_sheet_exports(
                 "이미 이 Google Sheet에 반영된 사전규격이 포함되어 있습니다."
             )
         claimed_at = export.claimed_at
-        if claimed_at.tzinfo is None:
+        if claimed_at is not None and claimed_at.tzinfo is None:
             claimed_at = claimed_at.replace(tzinfo=timezone.utc)
-        if export.status == "PENDING" and claimed_at > stale_before:
+        if (
+            export.status == "PENDING"
+            and claimed_at is not None
+            and claimed_at > stale_before
+        ):
             db.rollback()
             raise PreSpecificationSheetExportConflictError(
                 "같은 Sheet 반영 작업이 이미 진행 중입니다."

@@ -108,7 +108,7 @@ class FailingSession:
 
 
 class PreSpecificationSchemaCompatibilityTest(unittest.TestCase):
-    def test_adds_missing_sheet_export_attempt_count(self):
+    def test_adds_missing_sheet_export_history_columns(self):
         engine = create_engine("sqlite+pysqlite:///:memory:")
         with engine.begin() as connection:
             connection.execute(
@@ -126,7 +126,16 @@ class PreSpecificationSchemaCompatibilityTest(unittest.TestCase):
                 "g2b_pre_specification_sheet_exports"
             )
         }
-        self.assertIn("attempt_count", columns)
+        self.assertTrue(
+            {
+                "attempt_count",
+                "error_message",
+                "claimed_at",
+                "succeeded_at",
+                "created_at",
+                "updated_at",
+            }.issubset(columns)
+        )
         self.assertFalse(columns["attempt_count"]["nullable"])
 
 
