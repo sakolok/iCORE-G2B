@@ -11,3 +11,6 @@ requests==2.32.3
 beautifulsoup4==4.12.3
 google-api-python-client==2.151.0
 google-auth==2.36.0
+pypdf==4.3.1
+olefile==0.47
+xlrd==2.0.1
