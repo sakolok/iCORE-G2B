@@ -1,4 +1,4 @@
-from sqlalchemy import inspect, select, text, update
+from sqlalchemy import delete, inspect, select, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
@@ -17,8 +17,8 @@ from app.services.auth_service import hash_password, verify_password
 
 ORGANIZATION_MEMBERSHIP_BACKFILL_KEY = "2026-07-organization-membership-backfill"
 USER_RESULT_PROFILE_BACKFILL_KEY = "2026-07-user-result-profile-backfill"
-LEGACY_ORGANIZATION_SHEET_DESTINATIONS_DISABLED_KEY = (
-    "2026-07-legacy-organization-sheet-destinations-disabled"
+LEGACY_ORGANIZATION_SHEET_DESTINATIONS_PURGED_KEY = (
+    "2026-07-legacy-organization-sheet-destinations-purged"
 )
 LEGACY_DEFAULT_ADMIN_PASSWORD = "icore1234!"
 
@@ -344,17 +344,17 @@ def seed_defaults(db: Session) -> None:
 
     legacy_destinations = db.get(
         SystemMigrationModel,
-        LEGACY_ORGANIZATION_SHEET_DESTINATIONS_DISABLED_KEY,
+        LEGACY_ORGANIZATION_SHEET_DESTINATIONS_PURGED_KEY,
     )
     if legacy_destinations is None:
         db.execute(
-            update(SheetDestinationModel)
-            .where(SheetDestinationModel.owner_user_id.is_(None))
-            .values(is_active=False, is_default=False)
+            delete(SheetDestinationModel).where(
+                SheetDestinationModel.owner_user_id.is_(None)
+            )
         )
         db.add(
             SystemMigrationModel(
-                key=LEGACY_ORGANIZATION_SHEET_DESTINATIONS_DISABLED_KEY
+                key=LEGACY_ORGANIZATION_SHEET_DESTINATIONS_PURGED_KEY
             )
         )
 

@@ -89,12 +89,10 @@ def _sheet_datetime(value: datetime | None) -> str:
     return value.astimezone(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d %H:%M")
 
 
-def _sheet_number(value: Decimal | None) -> str | int | float:
+def _sheet_number(value: Decimal | None) -> str:
     if value is None:
         return ""
-    if value == value.to_integral_value():
-        return int(value)
-    return float(value)
+    return f"{value:,.2f}".rstrip("0").rstrip(".")
 
 
 def _attachment_urls(row: PreSpecificationModel) -> str:
@@ -134,7 +132,7 @@ def _has_sheet_rows(rows: list[list[object]]) -> bool:
 
 def build_sheet_rows(
     rows: list[PreSpecificationModel],
-) -> list[list[str | int | float]]:
+) -> list[list[str]]:
     return [
         [
             row.bf_spec_rgst_no,

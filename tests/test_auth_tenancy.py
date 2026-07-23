@@ -61,7 +61,7 @@ class AuthTenancyTests(unittest.TestCase):
         self.db.close()
         self.engine.dispose()
 
-    def test_seed_defaults_disables_legacy_organization_sheet_destinations(self):
+    def test_seed_defaults_purges_legacy_organization_sheet_destinations(self):
         destination = SheetDestinationModel(
             organization_id=self.organization.id,
             owner_user_id=None,
@@ -73,12 +73,11 @@ class AuthTenancyTests(unittest.TestCase):
         )
         self.db.add(destination)
         self.db.commit()
+        destination_id = destination.id
 
         seed_defaults(self.db)
 
-        self.db.refresh(destination)
-        self.assertFalse(destination.is_active)
-        self.assertFalse(destination.is_default)
+        self.assertIsNone(self.db.get(SheetDestinationModel, destination_id))
 
     def make_token(self) -> str:
         return create_access_token(
