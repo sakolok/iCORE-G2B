@@ -31,6 +31,7 @@ OPERATIONS = {
     "GOODS": ("getBidPblancListInfoThngPPSSrch", "물품"),
     "CONSTRUCTION": ("getBidPblancListInfoCnstwkPPSSrch", "공사"),
 }
+MAX_PAGES_PER_KEYWORD = 5
 
 
 class BidNoticeCollectionError(RuntimeError):
@@ -75,6 +76,7 @@ def _fetch_operation(
     operation: str,
     start_at: datetime,
     end_at: datetime,
+    keyword: str,
 ) -> list[dict[str, Any]]:
     service_key = settings.g2b_award_service_key.strip()
     if not service_key:
@@ -87,6 +89,7 @@ def _fetch_operation(
         "inqryDiv": "1",
         "inqryBgnDt": start_at.strftime("%Y%m%d%H%M"),
         "inqryEndDt": end_at.strftime("%Y%m%d%H%M"),
+        "bidNtceNm": keyword,
     }
     url = f"{G2B_BID_NOTICE_API_BASE}/{operation}"
     try:
@@ -102,10 +105,10 @@ def _fetch_operation(
     if total_count is None:
         return items
     page_count = (total_count + 99) // 100
-    # A manual collection is bounded to the requested 14-day window.  The cap
-    # protects Cloud Run from an unexpectedly broad upstream result set.
-    if page_count > 20:
-        raise BidNoticeCollectionError("수집 결과가 너무 많습니다. 기간 또는 업무구분을 줄여주세요.")
+    if page_count > MAX_PAGES_PER_KEYWORD:
+        raise BidNoticeCollectionError(
+            f"'{keyword}' 공고명 수집 결과가 너무 많습니다. 더 구체적인 포함 키워드를 설정하세요."
+        )
     for page_no in range(2, page_count + 1):
         try:
             page_response = requests.get(
@@ -194,7 +197,11 @@ def collect_bid_notices(
     start_date: date,
     end_date: date,
     business_types: list[str],
+    keywords: list[str],
 ) -> dict[str, int | str]:
+    normalized_keywords = [str(keyword).strip() for keyword in keywords if str(keyword).strip()]
+    if not normalized_keywords:
+        raise BidNoticeCollectionError("수집하려면 조건 설정에 포함 키워드를 한 개 이상 저장하세요.")
     start_at = datetime.combine(start_date, time.min, tzinfo=KST)
     end_at = datetime.combine(end_date, time(23, 59), tzinfo=KST)
     run = BidNoticeCollectionRunModel(
@@ -209,14 +216,20 @@ def collect_bid_notices(
         seen: set[str] = set()
         for business_type in business_types:
             operation, label = OPERATIONS[business_type]
-            for item in _fetch_operation(operation=operation, start_at=start_at, end_at=end_at):
-                identity = canonical_bid_notice_identity(item.get("bidNtceNo"), item.get("bidNtceOrd"))
-                if identity is None:
-                    continue
-                key = f"{identity[0]}|{identity[1]}"
-                if key not in seen:
-                    seen.add(key)
-                    rows.append((item, label))
+            for keyword in normalized_keywords:
+                for item in _fetch_operation(
+                    operation=operation,
+                    start_at=start_at,
+                    end_at=end_at,
+                    keyword=keyword,
+                ):
+                    identity = canonical_bid_notice_identity(item.get("bidNtceNo"), item.get("bidNtceOrd"))
+                    if identity is None:
+                        continue
+                    key = f"{identity[0]}|{identity[1]}"
+                    if key not in seen:
+                        seen.add(key)
+                        rows.append((item, label))
         now = datetime.now(timezone.utc)
         inserted = 0
         for item, label in rows:

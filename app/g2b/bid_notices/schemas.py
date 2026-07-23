@@ -43,6 +43,12 @@ class BidNoticeProfileUpdateRequest(BaseModel):
     def normalize_keyword_values(cls, values):
         return normalize_keywords(values)
 
+    @model_validator(mode="after")
+    def validate_enabled_keywords(self):
+        if self.enabled and not self.keywords:
+            raise ValueError("조건 사용을 켜려면 포함 키워드를 한 개 이상 입력하세요.")
+        return self
+
 
 class BidNoticeProfileResponse(BidNoticeProfileUpdateRequest):
     pass
@@ -85,6 +91,20 @@ class BidNoticeListResponse(BaseModel):
     total: int
     page: int
     page_size: int
+
+
+class BidNoticeArchiveResponse(BidNoticeListResponse):
+    pass
+
+
+class DismissBidNoticeResponse(BaseModel):
+    notice_id: int
+    state: Literal["DISMISSED"] = "DISMISSED"
+
+
+class RestoreBidNoticeResponse(BaseModel):
+    notice_id: int
+    state: Literal["RESTORED"] = "RESTORED"
 
 
 class BidNoticeSheetDestinationRequest(BaseModel):
