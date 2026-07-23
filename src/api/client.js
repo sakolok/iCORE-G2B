@@ -175,3 +175,19 @@ export const preSpecificationsApi = {
   exportSheet: (payload) =>
     api.post("/v1/pre-specifications/export/sheet", payload, { timeout: 60000 }),
 };
+
+export const bidNoticesApi = {
+  list: (params) => api.get("/v1/bid-notices", { params }),
+  collect: (payload) => api.post("/v1/bid-notices/collect", payload, { timeout: 60000 }),
+  settings: () => api.get("/v1/bid-notices/settings"),
+  updateProfile: (payload) => api.put("/v1/bid-notices/settings/profile", payload),
+  listSheetDestinations: () => api.get("/v1/bid-notices/sheet-destinations"),
+  verifySheetDestination: (payload) =>
+    api.post("/v1/bid-notices/sheet-destinations/verify", payload, { timeout: 30000 }),
+  saveSheetDestination: (payload) =>
+    api.post("/v1/bid-notices/sheet-destinations", payload),
+  deleteSheetDestination: (destinationId) =>
+    api.delete(`/v1/bid-notices/sheet-destinations/${destinationId}`),
+  exportSheet: (payload) =>
+    api.post("/v1/bid-notices/export/sheet", payload, { timeout: 60000 }),
+};
