@@ -150,3 +150,20 @@ export const openingResultsApi = {
   exportSheet: (payload) =>
     api.post("/v1/results/export/sheet", payload, { timeout: 60000 }),
 };
+
+export const preSpecificationsApi = {
+  list: (params) => api.get("/v1/pre-specifications", { params }),
+  detail: (registrationNumber) =>
+    api.get(`/v1/pre-specifications/${encodeURIComponent(registrationNumber)}`),
+  listArchive: (params) => api.get("/v1/pre-specifications/archive", { params }),
+  archiveDetail: (registrationNumber) =>
+    api.get(`/v1/pre-specifications/archive/${encodeURIComponent(registrationNumber)}`),
+  collect: (payload) =>
+    api.post("/v1/pre-specifications/collect", payload, { timeout: 60000 }),
+  dismiss: (registrationNumber) =>
+    api.delete(`/v1/pre-specifications/${encodeURIComponent(registrationNumber)}`),
+  restore: (registrationNumber) =>
+    api.post(`/v1/pre-specifications/${encodeURIComponent(registrationNumber)}/restore`),
+  exportSheet: (payload) =>
+    api.post("/v1/pre-specifications/export/sheet", payload, { timeout: 60000 }),
+};
