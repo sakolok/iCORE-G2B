@@ -51,6 +51,7 @@ from app.g2b.pre_specifications.schemas import (
 )
 from app.g2b.pre_specifications.sheet_export import (
     SHEET_HEADERS,
+    PreSpecificationSheetError,
     PreSpecificationSheetWriter,
     build_sheet_rows,
 )
@@ -167,6 +168,7 @@ class FakePreSpecificationSheetService:
         self.header = list(SHEET_HEADERS)
         self.existing_rows = [["R001", "기존 값"]]
         self.write_data = []
+        self.header_writes = []
         self.added_tabs = []
 
     def spreadsheets(self):
@@ -191,6 +193,8 @@ class FakePreSpecificationSheetService:
         return FakeSheetRequest({"values": self.existing_rows})
 
     def update(self, **kwargs):
+        self.header_writes.append(kwargs)
+        self.header = list((kwargs.get("body") or {}).get("values", [[]])[0])
         return FakeSheetRequest()
 
     def batchUpdate(self, *, spreadsheetId, body):
@@ -1045,6 +1049,50 @@ class PreSpecificationTests(unittest.TestCase):
         writer.upsert([])
 
         self.assertEqual(service.added_tabs, ["내 사전규격"])
+
+    def test_sheet_writer_accepts_headers_with_spacing_differences(self):
+        service = FakePreSpecificationSheetService()
+        service.header = [
+            "사전규격 등록번호 ",
+            "사업 명",
+            "수요기관",
+            "공고 기관",
+            "사업구분",
+            "배정예산",
+            "등록일",
+            "의견 마감일",
+            "의견마감 상태",
+            "담당자",
+            "연락처",
+            "첨부문서URL",
+        ]
+
+        result = PreSpecificationSheetWriter("sheet-id", service).upsert([])
+
+        self.assertEqual(result.inserted_count, 0)
+        self.assertEqual(service.header_writes, [])
+
+    def test_sheet_writer_creates_headers_for_empty_mismatched_tab(self):
+        service = FakePreSpecificationSheetService()
+        service.header = ["자유 입력"]
+        service.existing_rows = []
+
+        PreSpecificationSheetWriter("sheet-id", service).upsert(
+            [["R002", *("" for _ in range(11))]]
+        )
+
+        self.assertEqual(service.header_writes[0]["body"]["values"], [SHEET_HEADERS])
+        self.assertEqual(service.write_data[0]["range"], "'사전규격'!A2:L2")
+
+    def test_sheet_writer_preserves_mismatched_tab_with_existing_rows(self):
+        service = FakePreSpecificationSheetService()
+        service.header = ["다른 형식"]
+        service.existing_rows = [["기존 데이터"]]
+
+        with self.assertRaises(PreSpecificationSheetError):
+            PreSpecificationSheetWriter("sheet-id", service).upsert([])
+
+        self.assertEqual(service.header_writes, [])
 
 
 if __name__ == "__main__":
