@@ -99,17 +99,13 @@ from app.services.auth_service import (
 router = APIRouter(prefix="/api/v1/results", tags=["g2b-results"])
 
 
-def _can_manage_organization(auth: dict) -> bool:
-    return auth.get("organization_role") == "admin" or auth.get("role") == "admin"
-
-
 def _destination_response(destination) -> SheetDestinationResponse:
     return SheetDestinationResponse(
         id=destination.id,
         label=destination.label,
         spreadsheet_id=destination.spreadsheet_id,
         tab_name=destination.tab_name,
-        scope="PERSONAL" if destination.owner_user_id is not None else "ORGANIZATION",
+        scope="PERSONAL",
         is_default=destination.is_default,
     )
 
@@ -389,7 +385,6 @@ def fetch_result_settings(
         db,
         organization_id=auth["organization_id"],
         user_id=auth["user_id"],
-        include_organization=_can_manage_organization(auth),
     )
     return OpeningResultSettingsResponse(
         organization_id=auth["organization_id"],
@@ -435,7 +430,6 @@ def fetch_sheet_destinations(
         db,
         organization_id=auth["organization_id"],
         user_id=auth["user_id"],
-        include_organization=_can_manage_organization(auth),
     )
     return [_destination_response(item) for item in rows]
 
@@ -457,7 +451,6 @@ def verify_sheet_destination(
             user_id=auth["user_id"],
             spreadsheet_id=spreadsheet_id,
             tab_name=request.tab_name,
-            include_organization=_can_manage_organization(auth),
         )
         writer = GoogleSheetWriter.from_env(
             spreadsheet_id=spreadsheet_id,
@@ -504,12 +497,8 @@ def upsert_sheet_destination(
             label=request.label,
             spreadsheet_id=request.spreadsheet_id,
             tab_name=request.tab_name,
-            scope=request.scope,
             is_default=request.is_default,
-            can_manage_organization=_can_manage_organization(auth),
         )
-    except PermissionError as error:
-        raise HTTPException(status_code=403, detail=str(error)) from error
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
     except SheetDestinationAccessError as error:
@@ -531,7 +520,6 @@ def delete_sheet_destination(
             organization_id=auth["organization_id"],
             user_id=auth["user_id"],
             destination_id=destination_id,
-            can_manage_organization=_can_manage_organization(auth),
         )
     except SheetDestinationAccessError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
@@ -543,27 +531,19 @@ def export_results_sheet(
     auth: dict = Depends(require_organization_auth),
     db: Session = Depends(get_db),
 ) -> ExportOpeningResultsSheetResponse:
-    can_manage_organization = _can_manage_organization(auth)
     try:
         destination = resolve_sheet_destination(
             db,
             organization_id=auth["organization_id"],
             user_id=auth["user_id"],
             destination_id=request.destination_id,
-            include_organization=(
-                can_manage_organization or request.destination_id is not None
-            ),
         )
-        if destination.owner_user_id is None and not can_manage_organization:
-            raise PermissionError("조직 관리자만 조직 공용 Sheet에 반영할 수 있습니다.")
         selected_rounds = load_visible_results(
             db,
             organization_id=auth["organization_id"],
             user_id=auth["user_id"],
             result_ids=request.result_ids,
         )
-    except PermissionError as error:
-        raise HTTPException(status_code=403, detail=str(error)) from error
     except SheetDestinationAccessError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
     except ResultAccessError as error:
@@ -710,7 +690,7 @@ def export_results_sheet(
         preview_rows=rows,
         destination_id=destination.id,
         destination_label=destination.label,
-        destination_scope="PERSONAL" if destination.owner_user_id is not None else "ORGANIZATION",
+        destination_scope="PERSONAL",
         destination_tab_name=destination.tab_name,
         preview_token=preview_token,
     )

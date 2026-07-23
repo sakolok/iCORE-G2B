@@ -6,7 +6,7 @@ from uuid import uuid4
 
 from sqlalchemy import and_, exists, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session, aliased
+from sqlalchemy.orm import Session
 
 from app.data.models import (
     OrganizationMemberModel,
@@ -449,38 +449,11 @@ def visible_result_predicates(organization_id: int, user_id: int) -> tuple:
             UserOpeningResultStateModel.state.in_(USER_TERMINAL_STATES),
         )
     )
-    export_destination = aliased(SheetDestinationModel)
-    shared_destination_alias = aliased(SheetDestinationModel)
-    shared_exported = exists(
-        select(SheetExportModel.id)
-        .join(
-            export_destination,
-            export_destination.id == SheetExportModel.destination_id,
-        )
-        .where(
-            SheetExportModel.organization_id == organization_id,
-            SheetExportModel.result_external_key == BidOpeningRoundModel.external_key,
-            SheetExportModel.status == "SUCCEEDED",
-            or_(
-                export_destination.owner_user_id.is_(None),
-                exists(
-                    select(shared_destination_alias.id).where(
-                        shared_destination_alias.organization_id == organization_id,
-                        shared_destination_alias.spreadsheet_id
-                        == export_destination.spreadsheet_id,
-                        shared_destination_alias.tab_name == export_destination.tab_name,
-                        shared_destination_alias.owner_user_id.is_(None),
-                    )
-                ),
-            ),
-        )
-    )
     return (
         UserOpeningResultMatchModel.organization_id == organization_id,
         UserOpeningResultMatchModel.user_id == user_id,
         UserOpeningResultMatchModel.is_current_match.is_(True),
         ~user_handled,
-        ~shared_exported,
     )
 
 
@@ -574,8 +547,6 @@ def list_archived_results(
             can_restore=state.state == "DISMISSED",
         )
 
-    export_destination = aliased(SheetDestinationModel)
-    shared_destination_alias = aliased(SheetDestinationModel)
     export_statement = (
         select(BidOpeningRoundModel, SheetExportModel)
         .join(
@@ -586,10 +557,6 @@ def list_archived_results(
             SheetExportModel,
             SheetExportModel.result_external_key == BidOpeningRoundModel.external_key,
         )
-        .join(
-            export_destination,
-            export_destination.id == SheetExportModel.destination_id,
-        )
         .where(
             UserOpeningResultMatchModel.organization_id == organization_id,
             UserOpeningResultMatchModel.user_id == user_id,
@@ -597,18 +564,7 @@ def list_archived_results(
             SheetExportModel.status == "SUCCEEDED",
             SheetExportModel.succeeded_at.is_not(None),
             SheetExportModel.succeeded_at >= cutoff,
-            or_(
-                export_destination.owner_user_id.is_(None),
-                exists(
-                    select(shared_destination_alias.id).where(
-                        shared_destination_alias.organization_id == organization_id,
-                        shared_destination_alias.spreadsheet_id
-                        == export_destination.spreadsheet_id,
-                        shared_destination_alias.tab_name == export_destination.tab_name,
-                        shared_destination_alias.owner_user_id.is_(None),
-                    )
-                ),
-            ),
+            SheetExportModel.exported_by_user_id == user_id,
         )
     )
     if result_id is not None:
@@ -756,20 +712,13 @@ def list_sheet_destinations(
     *,
     organization_id: int,
     user_id: int,
-    include_organization: bool = True,
 ) -> list[SheetDestinationModel]:
-    ownership_filter = SheetDestinationModel.owner_user_id == user_id
-    if include_organization:
-        ownership_filter = or_(
-            SheetDestinationModel.owner_user_id.is_(None),
-            ownership_filter,
-        )
     rows = (
         db.execute(
             select(SheetDestinationModel).where(
                 SheetDestinationModel.organization_id == organization_id,
                 SheetDestinationModel.is_active.is_(True),
-                ownership_filter,
+                SheetDestinationModel.owner_user_id == user_id,
             )
         )
         .scalars()
@@ -779,7 +728,6 @@ def list_sheet_destinations(
         rows,
         key=lambda row: (
             not row.is_default,
-            row.owner_user_id is None,
             row.label.casefold(),
             row.id,
         ),
@@ -793,24 +741,18 @@ def ensure_sheet_target_access(
     user_id: int,
     spreadsheet_id: str,
     tab_name: str,
-    include_organization: bool = True,
 ) -> None:
+    # 다른 사용자의 연결 여부는 확인 요청에서 노출하지 않는다.
     destination = db.execute(
         select(SheetDestinationModel).where(
+            SheetDestinationModel.organization_id == organization_id,
+            SheetDestinationModel.owner_user_id == user_id,
             SheetDestinationModel.spreadsheet_id == spreadsheet_id,
             SheetDestinationModel.tab_name == tab_name,
         )
     ).scalar_one_or_none()
     if destination is None:
         return
-    allowed = destination.organization_id == organization_id and (
-        destination.owner_user_id == user_id
-        or (destination.owner_user_id is None and include_organization)
-    )
-    if not allowed:
-        raise SheetDestinationAccessError(
-            "다른 사용자 또는 조직이 등록한 Google Sheet 목적지는 확인할 수 없습니다."
-        )
 
 
 def resolve_sheet_destination(
@@ -819,13 +761,11 @@ def resolve_sheet_destination(
     organization_id: int,
     user_id: int,
     destination_id: int | None,
-    include_organization: bool = True,
 ) -> SheetDestinationModel:
     destinations = list_sheet_destinations(
         db,
         organization_id=organization_id,
         user_id=user_id,
-        include_organization=include_organization,
     )
     if destination_id is None:
         if not destinations:
@@ -838,18 +778,6 @@ def resolve_sheet_destination(
         )
         if destination is None:
             raise SheetDestinationAccessError("사용할 수 없는 Google Sheet 목적지입니다.")
-    conflicting_organization = db.scalar(
-        select(SheetDestinationModel.id).where(
-            SheetDestinationModel.id != destination.id,
-            SheetDestinationModel.organization_id != organization_id,
-            SheetDestinationModel.spreadsheet_id == destination.spreadsheet_id,
-            SheetDestinationModel.tab_name == destination.tab_name,
-        )
-    )
-    if conflicting_organization is not None:
-        raise SheetDestinationAccessError(
-            "이 Google Sheet와 탭은 여러 조직에 중복 등록되어 있어 사용할 수 없습니다."
-        )
     return destination
 
 
@@ -862,31 +790,25 @@ def save_sheet_destination(
     label: str,
     spreadsheet_id: str,
     tab_name: str,
-    scope: str,
     is_default: bool,
-    can_manage_organization: bool,
 ) -> SheetDestinationModel:
-    owner_user_id = None if scope == "ORGANIZATION" else user_id
+    owner_user_id = user_id
     normalized_spreadsheet_id = normalize_spreadsheet_id(spreadsheet_id)
     normalized_tab_name = tab_name.strip() or "개찰결과"
-    if owner_user_id is None and not can_manage_organization:
-        raise PermissionError("조직 관리자만 조직 공용 Sheet를 설정할 수 있습니다.")
 
     row = db.get(SheetDestinationModel, destination_id) if destination_id else None
     if row is not None:
-        allowed = row.organization_id == organization_id and (
-            row.owner_user_id == user_id
-            or (row.owner_user_id is None and can_manage_organization)
+        allowed = (
+            row.organization_id == organization_id and row.owner_user_id == user_id
         )
         if not allowed:
             raise SheetDestinationAccessError("수정할 수 없는 Google Sheet 목적지입니다.")
         if (
-            row.owner_user_id != owner_user_id
-            or row.spreadsheet_id != normalized_spreadsheet_id
+            row.spreadsheet_id != normalized_spreadsheet_id
             or row.tab_name != normalized_tab_name
         ):
             raise SheetDestinationConflictError(
-                "사용 이력이 연결된 Sheet ID, 탭, 개인/조직 범위는 변경할 수 없습니다. 새 목적지를 추가하세요."
+                "사용 이력이 연결된 Sheet ID와 탭은 변경할 수 없습니다. 새 목적지를 추가하세요."
             )
     duplicate_target = db.execute(
         select(SheetDestinationModel).where(
@@ -918,16 +840,11 @@ def save_sheet_destination(
         db.add(row)
 
     if is_default:
-        default_scope_filter = (
-            SheetDestinationModel.owner_user_id.is_(None)
-            if owner_user_id is None
-            else SheetDestinationModel.owner_user_id == owner_user_id
-        )
         db.execute(
             update(SheetDestinationModel)
             .where(
                 SheetDestinationModel.organization_id == organization_id,
-                default_scope_filter,
+                SheetDestinationModel.owner_user_id == user_id,
             )
             .values(is_default=False)
         )
@@ -942,7 +859,7 @@ def save_sheet_destination(
     except IntegrityError as error:
         db.rollback()
         raise SheetDestinationConflictError(
-            "같은 Google Sheet와 탭이 이미 이 조직에 등록되어 있습니다."
+            "같은 Google Sheet와 탭이 이미 등록되어 있습니다."
         ) from error
     db.refresh(row)
     return row
@@ -954,12 +871,12 @@ def deactivate_sheet_destination(
     organization_id: int,
     user_id: int,
     destination_id: int,
-    can_manage_organization: bool,
 ) -> None:
     row = db.get(SheetDestinationModel, destination_id)
-    allowed = row is not None and row.organization_id == organization_id and (
-        row.owner_user_id == user_id
-        or (row.owner_user_id is None and can_manage_organization)
+    allowed = (
+        row is not None
+        and row.organization_id == organization_id
+        and row.owner_user_id == user_id
     )
     if not allowed:
         raise SheetDestinationAccessError("삭제할 수 없는 Google Sheet 목적지입니다.")

@@ -7,6 +7,7 @@ from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 
 from app.g2b.bid_notice import canonical_bid_notice_order, parse_g2b_datetime
 from app.g2b.keyword_policy import normalize_keywords
+from app.g2b.opening_results.schemas import SheetDestinationResponse
 
 
 KST = ZoneInfo("Asia/Seoul")
@@ -182,6 +183,64 @@ class RestorePreSpecificationResponse(BaseModel):
     visible: bool
 
 
+class PreSpecificationProfileUpdateRequest(BaseModel):
+    enabled: bool = True
+    keywords: list[str] = Field(default_factory=list, max_length=100)
+    excluded_keywords: list[str] = Field(default_factory=list, max_length=100)
+
+    @field_validator("keywords", "excluded_keywords", mode="before")
+    @classmethod
+    def normalize_keyword_values(cls, values):
+        return normalize_keywords(values)
+
+    @model_validator(mode="after")
+    def validate_enabled_keywords(self):
+        if self.enabled and not self.keywords:
+            raise ValueError("활성화할 때는 포함 키워드를 한 개 이상 입력해야 합니다.")
+        return self
+
+
+class PreSpecificationProfileResponse(BaseModel):
+    enabled: bool
+    keywords: list[str]
+    excluded_keywords: list[str]
+
+
+class PreSpecificationSettingsResponse(BaseModel):
+    sheet_service_account_email: str | None = None
+    profile: PreSpecificationProfileResponse
+    sheet_destinations: list[SheetDestinationResponse]
+
+
+class PreSpecificationSheetDestinationUpsertRequest(BaseModel):
+    destination_id: int | None = Field(default=None, ge=1)
+    label: str = Field(min_length=1, max_length=120)
+    spreadsheet_id: str = Field(min_length=1, max_length=240)
+    tab_name: str = Field(default="사전규격", min_length=1, max_length=120)
+    is_default: bool = True
+
+    @field_validator("label", "spreadsheet_id", "tab_name")
+    @classmethod
+    def strip_destination_values(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("빈 값은 사용할 수 없습니다.")
+        return cleaned
+
+
+class PreSpecificationSheetDestinationVerifyRequest(BaseModel):
+    spreadsheet_id: str = Field(min_length=1, max_length=500)
+    tab_name: str = Field(default="사전규격", min_length=1, max_length=120)
+
+    @field_validator("spreadsheet_id", "tab_name")
+    @classmethod
+    def strip_destination_values(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("빈 값은 사용할 수 없습니다.")
+        return cleaned
+
+
 class ExportPreSpecificationsSheetRequest(BaseModel):
     bf_spec_rgst_nos: list[str] = Field(min_length=1, max_length=100)
     destination_id: int = Field(ge=1)
@@ -212,7 +271,7 @@ class ExportPreSpecificationsSheetResponse(BaseModel):
     preview_rows: list[list[str | int | float]]
     destination_id: int
     destination_label: str
-    destination_scope: Literal["PERSONAL", "ORGANIZATION"]
+    destination_scope: Literal["PERSONAL"]
     destination_tab_name: str
     preview_token: str
 
