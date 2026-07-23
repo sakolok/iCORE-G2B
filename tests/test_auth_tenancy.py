@@ -17,6 +17,7 @@ from app.data.models import (
 from app.data.bootstrap import ensure_schema_compatibility, seed_defaults
 from app.core.config import Settings, settings, validate_runtime_settings
 from app.g2b.opening_results import models as opening_result_models  # noqa: F401
+from app.g2b.opening_results.models import SheetDestinationModel
 from app.routers.auth import google_login, login, single_user_session
 from app.schemas import GoogleLoginRequest, LoginRequest
 from app.services.auth_service import (
@@ -59,6 +60,25 @@ class AuthTenancyTests(unittest.TestCase):
     def tearDown(self):
         self.db.close()
         self.engine.dispose()
+
+    def test_seed_defaults_disables_legacy_organization_sheet_destinations(self):
+        destination = SheetDestinationModel(
+            organization_id=self.organization.id,
+            owner_user_id=None,
+            label="기존 조직 공용 Sheet",
+            spreadsheet_id="legacy-organization-sheet",
+            tab_name="개찰결과",
+            is_default=True,
+            is_active=True,
+        )
+        self.db.add(destination)
+        self.db.commit()
+
+        seed_defaults(self.db)
+
+        self.db.refresh(destination)
+        self.assertFalse(destination.is_active)
+        self.assertFalse(destination.is_default)
 
     def make_token(self) -> str:
         return create_access_token(

@@ -377,8 +377,8 @@ class OpeningResultServiceTests(unittest.TestCase):
         )
         self.destination = SheetDestinationModel(
             organization_id=self.organization.id,
-            owner_user_id=None,
-            label="테스트 공용 Sheet",
+            owner_user_id=self.user.id,
+            label="테스트 개인 Sheet",
             spreadsheet_id="sheet-id",
             tab_name="개찰결과",
             is_default=True,
@@ -1730,7 +1730,7 @@ class OpeningResultServiceTests(unittest.TestCase):
 
         self.assertEqual(
             {row.label for row in admin_rows},
-            {"테스트 공용 Sheet", "관리자 개인 Sheet"},
+            {"테스트 개인 Sheet", "관리자 개인 Sheet"},
         )
         self.assertEqual(
             [row.label for row in member_settings.sheet_destinations],
@@ -1741,7 +1741,7 @@ class OpeningResultServiceTests(unittest.TestCase):
             ["구성원 개인 Sheet"],
         )
 
-    def test_member_can_register_personal_but_not_organization_destination(self):
+    def test_sheet_destination_is_personal_for_every_member(self):
         teammate = UserModel(
             username="sheet-register-member",
             password_salt="salt",
@@ -1774,7 +1774,6 @@ class OpeningResultServiceTests(unittest.TestCase):
                 label="내 개인 Sheet",
                 spreadsheet_id="member-created-personal-sheet",
                 tab_name="개찰결과",
-                scope="PERSONAL",
                 is_default=True,
             ),
             auth=member_auth,
@@ -1786,21 +1785,23 @@ class OpeningResultServiceTests(unittest.TestCase):
             self.db.get(SheetDestinationModel, personal.id).owner_user_id,
             teammate.id,
         )
-        with self.assertRaises(HTTPException) as raised:
-            upsert_sheet_destination(
-                SheetDestinationUpsertRequest(
-                    label="권한 없는 공용 Sheet",
-                    spreadsheet_id="member-created-organization-sheet",
-                    tab_name="개찰결과",
-                    scope="ORGANIZATION",
-                    is_default=True,
-                ),
-                auth=member_auth,
-                db=self.db,
-            )
-        self.assertEqual(raised.exception.status_code, 403)
+        second_personal = upsert_sheet_destination(
+            SheetDestinationUpsertRequest(
+                label="두 번째 개인 Sheet",
+                spreadsheet_id="member-created-organization-sheet",
+                tab_name="개찰결과",
+                is_default=True,
+            ),
+            auth=member_auth,
+            db=self.db,
+        )
+        self.assertEqual(second_personal.scope, "PERSONAL")
+        self.assertEqual(
+            self.db.get(SheetDestinationModel, second_personal.id).owner_user_id,
+            teammate.id,
+        )
 
-    def test_member_cannot_verify_registered_organization_destination(self):
+    def test_sheet_verification_does_not_expose_another_users_destination(self):
         teammate = UserModel(
             username="sheet-verify-member",
             password_salt="salt",
@@ -1818,6 +1819,7 @@ class OpeningResultServiceTests(unittest.TestCase):
                 is_active=True,
             )
         )
+        self.add_user_result_profile(teammate.id)
         self.db.commit()
         member_auth = {
             "user_id": teammate.id,
@@ -1829,7 +1831,7 @@ class OpeningResultServiceTests(unittest.TestCase):
         }
         writer_factory = Mock()
         writer_factory.return_value.verify_connection.return_value = Mock(
-            spreadsheet_title="조직 공용 Sheet",
+            spreadsheet_title="개인 Sheet",
             tab_exists=True,
             header_status="MATCH",
         )
@@ -1838,18 +1840,17 @@ class OpeningResultServiceTests(unittest.TestCase):
             "app.g2b.opening_results.router.GoogleSheetWriter.from_env",
             writer_factory,
         ):
-            with self.assertRaises(HTTPException) as raised:
-                verify_sheet_destination(
-                    SheetDestinationVerifyRequest(
-                        spreadsheet_id=self.destination.spreadsheet_id,
-                        tab_name=self.destination.tab_name,
-                    ),
-                    auth=member_auth,
-                    db=self.db,
-                )
+            response = verify_sheet_destination(
+                SheetDestinationVerifyRequest(
+                    spreadsheet_id=self.destination.spreadsheet_id,
+                    tab_name=self.destination.tab_name,
+                ),
+                auth=member_auth,
+                db=self.db,
+            )
 
-        self.assertEqual(raised.exception.status_code, 404)
-        writer_factory.assert_not_called()
+        self.assertTrue(response.connection_ready)
+        writer_factory.assert_called_once()
 
     def test_scheduled_collection_runs_once_per_configured_slot(self):
         client = self.make_client()
@@ -2322,11 +2323,11 @@ class OpeningResultServiceTests(unittest.TestCase):
         self.assertEqual(response.preview_rows[0][3], 165000000)
         self.assertEqual(response.preview_rows[0][6], "Y")
         self.assertEqual(response.preview_rows[0][8], "19.5+75=94.50")
-        self.assertEqual(response.destination_scope, "ORGANIZATION")
+        self.assertEqual(response.destination_scope, "PERSONAL")
         self.assertEqual(response.destination_tab_name, "개찰결과")
         self.assertEqual(len(response.preview_token), 64)
 
-    def test_organization_sheet_export_requires_organization_admin(self):
+    def test_sheet_export_rejects_another_users_destination(self):
         teammate = UserModel(
             username="member-sheet-export",
             password_salt="salt",
@@ -2365,8 +2366,8 @@ class OpeningResultServiceTests(unittest.TestCase):
                 db=self.db,
             )
 
-        self.assertEqual(raised.exception.status_code, 403)
-        self.assertIn("조직 관리자", str(raised.exception.detail))
+        self.assertEqual(raised.exception.status_code, 409)
+        self.assertIn("사용할 수 없는", str(raised.exception.detail))
 
     def test_member_default_sheet_export_resolves_own_personal_destination(self):
         teammate = UserModel(
@@ -2792,7 +2793,7 @@ class OpeningResultServiceTests(unittest.TestCase):
                 ),
                 SheetDestinationModel(
                     organization_id=second_organization.id,
-                    owner_user_id=None,
+                    owner_user_id=second_user.id,
                     label="다른 조직 Sheet",
                     spreadsheet_id="other-org-sheet",
                     tab_name="개찰결과",
@@ -3102,7 +3103,7 @@ class OpeningResultServiceTests(unittest.TestCase):
             "EXPORTED",
         )
 
-    def test_restore_reports_not_visible_after_organization_export(self):
+    def test_restore_ignores_another_export_record_without_personal_state(self):
         collect_opening_results(self.db, self.request, self.make_client())
         round_row = self.db.scalar(select(BidOpeningRoundModel))
         dismiss_result(
@@ -3139,8 +3140,8 @@ class OpeningResultServiceTests(unittest.TestCase):
         )
 
         self.assertEqual(response.state, "RESTORED")
-        self.assertFalse(response.visible)
-        self.assertEqual(total, 0)
+        self.assertTrue(response.visible)
+        self.assertEqual(total, 1)
 
     def test_dismiss_tombstone_survives_canonical_row_recreation(self):
         collect_opening_results(self.db, self.request, self.make_client())
@@ -3192,7 +3193,7 @@ class OpeningResultServiceTests(unittest.TestCase):
             "DISMISSED",
         )
 
-    def test_successful_shared_sheet_export_hides_result_for_whole_organization(self):
+    def test_successful_personal_sheet_export_hides_only_owner_result(self):
         teammate = UserModel(
             username="sheet-teammate",
             password_salt="salt",
@@ -3271,7 +3272,7 @@ class OpeningResultServiceTests(unittest.TestCase):
 
         self.assertTrue(response.written)
         self.assertEqual(my_total, 0)
-        self.assertEqual(teammate_total, 0)
+        self.assertEqual(teammate_total, 1)
         self.assertEqual(export_record.status, "SUCCEEDED")
         self.assertEqual(
             self.db.scalar(select(UserOpeningResultStateModel.state)),
@@ -3280,9 +3281,7 @@ class OpeningResultServiceTests(unittest.TestCase):
         self.assertEqual(archive.total, 1)
         self.assertEqual(archive.items[0].handled_state, "EXPORTED")
         self.assertFalse(archive.items[0].can_restore)
-        self.assertEqual(teammate_archive.total, 1)
-        self.assertEqual(teammate_archive.items[0].handled_state, "EXPORTED")
-        self.assertFalse(teammate_archive.items[0].can_restore)
+        self.assertEqual(teammate_archive.total, 0)
 
         teammate_profile = self.db.scalar(
             select(UserResultProfileModel).where(
@@ -3309,13 +3308,9 @@ class OpeningResultServiceTests(unittest.TestCase):
             db=self.db,
         )
 
-        self.assertEqual(teammate_archive_after_profile_change.total, 1)
-        self.assertEqual(
-            teammate_archive_after_profile_change.items[0].handled_state,
-            "EXPORTED",
-        )
+        self.assertEqual(teammate_archive_after_profile_change.total, 0)
 
-    def test_shared_sheet_export_stays_hidden_after_next_collection_slot(self):
+    def test_personal_sheet_export_stays_hidden_only_for_owner_after_collection(self):
         teammate = UserModel(
             username="scheduled-export-teammate",
             password_salt="salt",
@@ -3333,6 +3328,7 @@ class OpeningResultServiceTests(unittest.TestCase):
                 is_active=True,
             )
         )
+        self.add_user_result_profile(teammate.id)
         self.db.commit()
         client = self.make_client()
         first_now = datetime(2026, 7, 15, 2, 0, tzinfo=timezone.utc)
@@ -3386,7 +3382,7 @@ class OpeningResultServiceTests(unittest.TestCase):
             1,
         )
         self.assertEqual(admin_total, 0)
-        self.assertEqual(teammate_total, 0)
+        self.assertEqual(teammate_total, 1)
 
     def test_shared_sheet_export_does_not_hide_same_result_from_another_organization(
         self,
@@ -3843,23 +3839,21 @@ class OpeningResultServiceTests(unittest.TestCase):
             self.db.get(SheetDestinationModel, self.destination.id).export_lock_token
         )
 
-    def test_existing_sheet_destination_cannot_change_identity_or_scope(self):
+    def test_existing_sheet_destination_cannot_change_identity(self):
         with self.assertRaises(SheetDestinationConflictError):
             save_sheet_destination(
                 self.db,
                 organization_id=self.organization.id,
                 user_id=self.user.id,
                 destination_id=self.destination.id,
-                label="범위 변경 시도",
-                spreadsheet_id=self.destination.spreadsheet_id,
+                label="목적지 변경 시도",
+                spreadsheet_id="different-sheet-id",
                 tab_name=self.destination.tab_name,
-                scope="PERSONAL",
                 is_default=True,
-                can_manage_organization=True,
             )
 
         self.db.refresh(self.destination)
-        self.assertIsNone(self.destination.owner_user_id)
+        self.assertEqual(self.destination.owner_user_id, self.user.id)
 
     def test_same_physical_sheet_cannot_be_registered_with_personal_alias(self):
         with self.assertRaises(SheetDestinationConflictError):
@@ -3868,12 +3862,10 @@ class OpeningResultServiceTests(unittest.TestCase):
                 organization_id=self.organization.id,
                 user_id=self.user.id,
                 destination_id=None,
-                label="공용 Sheet의 개인 별칭",
+                label="기존 Sheet의 개인 별칭",
                 spreadsheet_id=self.destination.spreadsheet_id,
                 tab_name=self.destination.tab_name,
-                scope="PERSONAL",
                 is_default=True,
-                can_manage_organization=True,
             )
 
     def test_same_physical_sheet_cannot_be_registered_by_another_organization(self):
@@ -3894,12 +3886,10 @@ class OpeningResultServiceTests(unittest.TestCase):
                 organization_id=other_organization.id,
                 user_id=other_user.id,
                 destination_id=None,
-                label="다른 조직의 중복 Sheet",
+                label="다른 사용자의 중복 Sheet",
                 spreadsheet_id=self.destination.spreadsheet_id,
                 tab_name=self.destination.tab_name,
-                scope="ORGANIZATION",
                 is_default=True,
-                can_manage_organization=True,
             )
 
     def test_existing_sheet_destination_can_update_label_without_duplication(self):
@@ -3908,16 +3898,14 @@ class OpeningResultServiceTests(unittest.TestCase):
             organization_id=self.organization.id,
             user_id=self.user.id,
             destination_id=self.destination.id,
-            label="이름만 변경한 공용 Sheet",
+            label="이름만 변경한 개인 Sheet",
             spreadsheet_id=self.destination.spreadsheet_id,
             tab_name=self.destination.tab_name,
-            scope="ORGANIZATION",
             is_default=True,
-            can_manage_organization=True,
         )
 
         self.assertEqual(updated.id, self.destination.id)
-        self.assertEqual(updated.label, "이름만 변경한 공용 Sheet")
+        self.assertEqual(updated.label, "이름만 변경한 개인 Sheet")
         self.assertEqual(
             self.db.scalar(select(func.count(SheetDestinationModel.id))),
             1,
@@ -3935,15 +3923,13 @@ class OpeningResultServiceTests(unittest.TestCase):
                 f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}/edit#gid=0"
             ),
             tab_name="개인개찰결과",
-            scope="PERSONAL",
             is_default=True,
-            can_manage_organization=True,
         )
 
         self.assertEqual(destination.spreadsheet_id, spreadsheet_id)
         self.assertEqual(destination.owner_user_id, self.user.id)
 
-    def test_sheet_target_verification_blocks_another_users_personal_destination(self):
+    def test_sheet_target_verification_does_not_disclose_another_users_destination(self):
         other_user = UserModel(
             username="verify-owner",
             password_salt="salt",
@@ -3964,14 +3950,13 @@ class OpeningResultServiceTests(unittest.TestCase):
         self.db.add(destination)
         self.db.commit()
 
-        with self.assertRaises(SheetDestinationAccessError):
-            ensure_sheet_target_access(
-                self.db,
-                organization_id=self.organization.id,
-                user_id=self.user.id,
-                spreadsheet_id=destination.spreadsheet_id,
-                tab_name=destination.tab_name,
-            )
+        ensure_sheet_target_access(
+            self.db,
+            organization_id=self.organization.id,
+            user_id=self.user.id,
+            spreadsheet_id=destination.spreadsheet_id,
+            tab_name=destination.tab_name,
+        )
         ensure_sheet_target_access(
             self.db,
             organization_id=self.organization.id,
@@ -3987,7 +3972,6 @@ class OpeningResultServiceTests(unittest.TestCase):
             organization_id=self.organization.id,
             user_id=self.user.id,
             destination_id=original_id,
-            can_manage_organization=True,
         )
 
         reactivated = save_sheet_destination(
@@ -3995,12 +3979,10 @@ class OpeningResultServiceTests(unittest.TestCase):
             organization_id=self.organization.id,
             user_id=self.user.id,
             destination_id=None,
-            label="다시 연결한 공용 Sheet",
+            label="다시 연결한 개인 Sheet",
             spreadsheet_id=self.destination.spreadsheet_id,
             tab_name=self.destination.tab_name,
-            scope="ORGANIZATION",
             is_default=True,
-            can_manage_organization=True,
         )
 
         self.assertEqual(reactivated.id, original_id)
@@ -4043,7 +4025,6 @@ class OpeningResultServiceTests(unittest.TestCase):
             organization_id=self.organization.id,
             user_id=self.user.id,
             destination_id=destination_id,
-            can_manage_organization=True,
         )
 
         with self.assertRaises(SheetExportConflictError):

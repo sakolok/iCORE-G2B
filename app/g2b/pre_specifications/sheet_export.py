@@ -64,6 +64,13 @@ class PreSpecificationSheetExportConflictError(RuntimeError):
 
 
 @dataclass(frozen=True)
+class PreSpecificationSheetConnectionVerification:
+    spreadsheet_title: str | None
+    tab_exists: bool
+    header_status: str
+
+
+@dataclass(frozen=True)
 class PreSpecificationSheetClaimBatch:
     lock_token: str
     records: list[PreSpecificationSheetExportModel]
@@ -128,6 +135,7 @@ def build_sheet_preview_token(
     *,
     destination_id: int,
     spreadsheet_id: str,
+    tab_name: str,
     bf_spec_rgst_nos: list[str],
     rows: list[list[str | int | float]],
 ) -> str:
@@ -135,7 +143,7 @@ def build_sheet_preview_token(
         {
             "destination_id": destination_id,
             "spreadsheet_id": spreadsheet_id,
-            "tab_name": PRE_SPECIFICATION_TAB_NAME,
+            "tab_name": tab_name,
             "bf_spec_rgst_nos": bf_spec_rgst_nos,
             "headers": SHEET_HEADERS,
             "rows": rows,
@@ -148,22 +156,73 @@ def build_sheet_preview_token(
 
 
 class PreSpecificationSheetWriter:
-    def __init__(self, spreadsheet_id: str, service: Any) -> None:
+    def __init__(self, spreadsheet_id: str, service: Any, tab_name: str = PRE_SPECIFICATION_TAB_NAME) -> None:
         self.spreadsheet_id = spreadsheet_id.strip()
         if not self.spreadsheet_id:
             raise PreSpecificationSheetError("Google Spreadsheet ID가 필요합니다.")
         self.service = service
+        self.tab_name = tab_name.strip() or PRE_SPECIFICATION_TAB_NAME
 
     @classmethod
-    def from_env(cls, spreadsheet_id: str) -> "PreSpecificationSheetWriter":
+    def from_env(
+        cls,
+        spreadsheet_id: str,
+        tab_name: str = PRE_SPECIFICATION_TAB_NAME,
+    ) -> "PreSpecificationSheetWriter":
         try:
             shared_writer = GoogleSheetWriter.from_env(
                 spreadsheet_id=spreadsheet_id,
-                tab_name=PRE_SPECIFICATION_TAB_NAME,
+                tab_name=tab_name,
             )
         except Exception as error:
             raise PreSpecificationSheetError(str(error)) from error
-        return cls(spreadsheet_id, shared_writer.service)
+        return cls(spreadsheet_id, shared_writer.service, tab_name)
+
+    def verify_connection(self) -> PreSpecificationSheetConnectionVerification:
+        metadata = (
+            self.service.spreadsheets()
+            .get(
+                spreadsheetId=self.spreadsheet_id,
+                fields="properties.title,sheets.properties.title",
+            )
+            .execute()
+        )
+        spreadsheet_title = str(
+            (metadata.get("properties") or {}).get("title") or ""
+        ).strip() or None
+        tab_titles = {
+            str((sheet.get("properties") or {}).get("title") or "").strip()
+            for sheet in metadata.get("sheets") or []
+        }
+        if self.tab_name not in tab_titles:
+            return PreSpecificationSheetConnectionVerification(
+                spreadsheet_title=spreadsheet_title,
+                tab_exists=False,
+                header_status="NOT_CHECKED",
+            )
+        tab = self.tab_name.replace("'", "''")
+        header = (
+            self.service.spreadsheets()
+            .values()
+            .get(
+                spreadsheetId=self.spreadsheet_id,
+                range=f"'{tab}'!A1:L1",
+            )
+            .execute()
+            .get("values")
+            or []
+        )
+        if not header or not any(str(value).strip() for value in header[0]):
+            header_status = "EMPTY"
+        elif header[0][: len(SHEET_HEADERS)] in (SHEET_HEADERS, LEGACY_SHEET_HEADERS):
+            header_status = "MATCH"
+        else:
+            header_status = "MISMATCH"
+        return PreSpecificationSheetConnectionVerification(
+            spreadsheet_title=spreadsheet_title,
+            tab_exists=True,
+            header_status=header_status,
+        )
 
     def _ensure_tab(self) -> None:
         spreadsheets = self.service.spreadsheets()
@@ -175,14 +234,14 @@ class PreSpecificationSheetWriter:
             str((sheet.get("properties") or {}).get("title") or "").strip()
             for sheet in metadata.get("sheets") or []
         }
-        if PRE_SPECIFICATION_TAB_NAME not in titles:
+        if self.tab_name not in titles:
             spreadsheets.batchUpdate(
                 spreadsheetId=self.spreadsheet_id,
                 body={
                     "requests": [
                         {
                             "addSheet": {
-                                "properties": {"title": PRE_SPECIFICATION_TAB_NAME}
+                                "properties": {"title": self.tab_name}
                             }
                         }
                     ]
@@ -194,7 +253,7 @@ class PreSpecificationSheetWriter:
         rows: list[list[str | int | float]],
     ) -> SheetUpsertResult:
         self._ensure_tab()
-        tab = PRE_SPECIFICATION_TAB_NAME.replace("'", "''")
+        tab = self.tab_name.replace("'", "''")
         values = self.service.spreadsheets().values()
         header_response = values.get(
             spreadsheetId=self.spreadsheet_id,
@@ -276,6 +335,7 @@ def claim_sheet_exports(
     lock_token = str(uuid4())
     target_filter = (
         SheetDestinationModel.spreadsheet_id == destination.spreadsheet_id,
+        SheetDestinationModel.tab_name == destination.tab_name,
         SheetDestinationModel.is_active.is_(True),
     )
     destination_count = db.scalar(
@@ -310,6 +370,7 @@ def claim_sheet_exports(
         )
         .where(
             SheetDestinationModel.spreadsheet_id == destination.spreadsheet_id,
+            SheetDestinationModel.tab_name == destination.tab_name,
             PreSpecificationSheetExportModel.bf_spec_rgst_no.in_(item_ids),
         )
     ).all()

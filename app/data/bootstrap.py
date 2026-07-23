@@ -1,4 +1,4 @@
-from sqlalchemy import inspect, select, text
+from sqlalchemy import inspect, select, text, update
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
@@ -17,6 +17,9 @@ from app.services.auth_service import hash_password, verify_password
 
 ORGANIZATION_MEMBERSHIP_BACKFILL_KEY = "2026-07-organization-membership-backfill"
 USER_RESULT_PROFILE_BACKFILL_KEY = "2026-07-user-result-profile-backfill"
+LEGACY_ORGANIZATION_SHEET_DESTINATIONS_DISABLED_KEY = (
+    "2026-07-legacy-organization-sheet-destinations-disabled"
+)
 LEGACY_DEFAULT_ADMIN_PASSWORD = "icore1234!"
 
 
@@ -193,6 +196,11 @@ def ensure_schema_compatibility(engine: Engine) -> None:
         "g2b_opening_rounds",
         {"entries_collected_at": "DATETIME NULL"},
     )
+    _ensure_columns(
+        engine,
+        "g2b_pre_specification_sheet_exports",
+        {"attempt_count": "INTEGER NOT NULL DEFAULT 1"},
+    )
     _ensure_unique_index(
         engine,
         "sheet_destinations",
@@ -327,37 +335,21 @@ def seed_defaults(db: Session) -> None:
         db.add(SystemMigrationModel(key=USER_RESULT_PROFILE_BACKFILL_KEY))
         db.flush()
 
-    opening_sheet_id = settings.gsheet_opening_result_id.strip()
-    if not opening_sheet_id:
-        opening_sheet_id = next(
-            (
-                item.strip()
-                for item in (config.gsheet_ids or "").split(",")
-                if item.strip()
-            ),
-            "",
+    legacy_destinations = db.get(
+        SystemMigrationModel,
+        LEGACY_ORGANIZATION_SHEET_DESTINATIONS_DISABLED_KEY,
+    )
+    if legacy_destinations is None:
+        db.execute(
+            update(SheetDestinationModel)
+            .where(SheetDestinationModel.owner_user_id.is_(None))
+            .values(is_active=False, is_default=False)
         )
-    if opening_sheet_id:
-        destination = db.execute(
-            select(SheetDestinationModel).where(
-                SheetDestinationModel.organization_id == organization.id,
-                SheetDestinationModel.owner_user_id.is_(None),
-                SheetDestinationModel.spreadsheet_id == opening_sheet_id,
-                SheetDestinationModel.tab_name == "개찰결과",
+        db.add(
+            SystemMigrationModel(
+                key=LEGACY_ORGANIZATION_SHEET_DESTINATIONS_DISABLED_KEY
             )
-        ).scalar_one_or_none()
-        if destination is None:
-            db.add(
-                SheetDestinationModel(
-                    organization_id=organization.id,
-                    owner_user_id=None,
-                    label="조직 공용 개찰결과",
-                    spreadsheet_id=opening_sheet_id,
-                    tab_name="개찰결과",
-                    is_default=True,
-                    is_active=True,
-                )
-            )
+        )
 
     from app.g2b.opening_results.matching import (
         sync_organization_matches,

@@ -5,9 +5,10 @@ from unittest.mock import Mock, patch
 
 import requests
 from fastapi import HTTPException
-from sqlalchemy import create_engine, func, select
+from sqlalchemy import create_engine, func, inspect, select, text
 from sqlalchemy.orm import Session
 
+from app.data.bootstrap import ensure_schema_compatibility
 from app.data.models import Base, OrganizationModel, UserModel
 from app.g2b.opening_results.models import SheetDestinationModel
 from app.g2b.opening_results.sheet_export import SheetUpsertResult
@@ -24,6 +25,7 @@ from app.g2b.pre_specifications.models import (
     PreSpecificationSheetExportModel,
     PreSpecificationSnapshotModel,
     UserPreSpecificationStateModel,
+    UserPreSpecificationProfileModel,
 )
 from app.g2b.pre_specifications.router import (
     collect_pre_specification_data,
@@ -34,13 +36,18 @@ from app.g2b.pre_specifications.router import (
     fetch_archived_pre_specifications,
     fetch_pre_specification_detail,
     fetch_pre_specifications,
+    fetch_pre_specification_settings,
     restore_pre_specification_to_inbox,
+    save_pre_specification_profile,
+    save_pre_specification_sheet_destination,
     router,
 )
 from app.g2b.pre_specifications.schemas import (
     CollectPreSpecificationsRequest,
     ExportPreSpecificationsSheetRequest,
     PreSpecificationListQuery,
+    PreSpecificationProfileUpdateRequest,
+    PreSpecificationSheetDestinationUpsertRequest,
 )
 from app.g2b.pre_specifications.sheet_export import (
     SHEET_HEADERS,
@@ -98,6 +105,29 @@ class FakeSession:
 class FailingSession:
     def get(self, url, *, params, headers, timeout):
         raise requests.Timeout("timeout")
+
+
+class PreSpecificationSchemaCompatibilityTest(unittest.TestCase):
+    def test_adds_missing_sheet_export_attempt_count(self):
+        engine = create_engine("sqlite+pysqlite:///:memory:")
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "CREATE TABLE g2b_pre_specification_sheet_exports "
+                    "(id INTEGER PRIMARY KEY)"
+                )
+            )
+
+        ensure_schema_compatibility(engine)
+
+        columns = {
+            column["name"]: column
+            for column in inspect(engine).get_columns(
+                "g2b_pre_specification_sheet_exports"
+            )
+        }
+        self.assertIn("attempt_count", columns)
+        self.assertFalse(columns["attempt_count"]["nullable"])
 
 
 class StubClient:
@@ -509,6 +539,87 @@ class PreSpecificationTests(unittest.TestCase):
             fetch_pre_specification_detail("UNKNOWN", auth=self.auth, db=self.db)
         self.assertEqual(raised.exception.status_code, 404)
 
+    def test_personal_conditions_and_sheet_destinations_are_scoped_to_owner(self):
+        other_user = UserModel(
+            username="pre-spec-other-user",
+            password_salt="salt",
+            password_hash="hash",
+            role="viewer",
+            is_active=True,
+        )
+        self.db.add(other_user)
+        self.db.flush()
+        self.db.add(
+            SheetDestinationModel(
+                organization_id=self.organization.id,
+                owner_user_id=other_user.id,
+                label="다른 사용자 Sheet",
+                spreadsheet_id="other-sheet-id",
+                tab_name="사전규격",
+                is_default=True,
+                is_active=True,
+            )
+        )
+        upsert_pre_specifications(
+            self.db,
+            [
+                {"bf_spec_rgst_no": "R001", "business_name": "AI 교육"},
+                {"bf_spec_rgst_no": "R002", "business_name": "AI 제외 사업"},
+                {"bf_spec_rgst_no": "R003", "business_name": "클라우드 사업"},
+            ],
+        )
+
+        profile = save_pre_specification_profile(
+            PreSpecificationProfileUpdateRequest(
+                enabled=True,
+                keywords=["AI"],
+                excluded_keywords=["제외"],
+            ),
+            auth=self.auth,
+            db=self.db,
+        )
+        settings = fetch_pre_specification_settings(auth=self.auth, db=self.db)
+        response = fetch_pre_specifications(
+            q=None,
+            keywords=[],
+            keyword_mode="OR",
+            excluded_keywords=[],
+            registered_from=None,
+            registered_to=None,
+            demand_agency=None,
+            min_budget=None,
+            max_budget=None,
+            attachment="ALL",
+            deadline_status="ALL",
+            page=1,
+            page_size=30,
+            auth=self.auth,
+            db=self.db,
+        )
+        destination = save_pre_specification_sheet_destination(
+            PreSpecificationSheetDestinationUpsertRequest(
+                label="내 사전규격 Sheet",
+                spreadsheet_id="my-pre-spec-sheet",
+                tab_name="사전규격",
+            ),
+            auth=self.auth,
+            db=self.db,
+        )
+
+        self.assertTrue(profile.enabled)
+        self.assertEqual(profile.keywords, ["AI"])
+        self.assertEqual(profile.excluded_keywords, ["제외"])
+        self.assertEqual([row.bf_spec_rgst_no for row in response.items], ["R001"])
+        self.assertEqual(
+            [item.label for item in settings.sheet_destinations],
+            ["내 프로젝트 Sheet"],
+        )
+        self.assertEqual(destination.scope, "PERSONAL")
+        self.assertEqual(
+            self.db.get(UserPreSpecificationProfileModel, 1).user_id,
+            self.user.id,
+        )
+
     def test_api_manual_collection_requires_system_admin(self):
         request = CollectPreSpecificationsRequest(
             start_date=date(2026, 7, 20),
@@ -740,8 +851,8 @@ class PreSpecificationTests(unittest.TestCase):
                 db=self.db,
             )
 
-        writer_factory.assert_called_once_with("sheet-id")
-        self.assertEqual(preview.destination_tab_name, "사전규격")
+        writer_factory.assert_called_once_with("sheet-id", "개찰결과")
+        self.assertEqual(preview.destination_tab_name, "개찰결과")
         self.assertEqual(len(preview.headers), 12)
         self.assertEqual(preview.preview_rows[0][0], "R001")
         self.assertTrue(written.written)
@@ -811,7 +922,7 @@ class PreSpecificationTests(unittest.TestCase):
         )
         self.assertEqual(total, 1)
 
-    def test_shared_sheet_export_hides_item_for_organization_members(self):
+    def test_personal_sheet_export_hides_item_only_for_owner(self):
         teammate = UserModel(
             username="pre-spec-teammate",
             password_salt="salt",
@@ -820,7 +931,6 @@ class PreSpecificationTests(unittest.TestCase):
             is_active=True,
         )
         self.db.add(teammate)
-        self.destination.owner_user_id = None
         self.db.commit()
         upsert_pre_specifications(
             self.db,
@@ -841,7 +951,7 @@ class PreSpecificationTests(unittest.TestCase):
                 auth=member_auth,
                 db=self.db,
             )
-        self.assertEqual(raised.exception.status_code, 403)
+        self.assertEqual(raised.exception.status_code, 409)
 
         preview = export_pre_specifications_sheet(
             ExportPreSpecificationsSheetRequest(
@@ -883,9 +993,8 @@ class PreSpecificationTests(unittest.TestCase):
             auth=member_auth,
             db=self.db,
         )
-        self.assertEqual(teammate_total, 0)
-        self.assertEqual(teammate_archive.total, 1)
-        self.assertEqual(teammate_archive.items[0].handled_state, "EXPORTED")
+        self.assertEqual(teammate_total, 1)
+        self.assertEqual(teammate_archive.total, 0)
 
     def test_sheet_writer_updates_existing_row_and_inserts_new_row(self):
         upsert_pre_specifications(
@@ -919,6 +1028,14 @@ class PreSpecificationTests(unittest.TestCase):
         writer.upsert([])
 
         self.assertEqual(service.added_tabs, ["사전규격"])
+
+    def test_sheet_writer_uses_saved_destination_tab_name(self):
+        service = FakePreSpecificationSheetService(tab_exists=False)
+        writer = PreSpecificationSheetWriter("sheet-id", service, "내 사전규격")
+
+        writer.upsert([])
+
+        self.assertEqual(service.added_tabs, ["내 사전규격"])
 
 
 if __name__ == "__main__":

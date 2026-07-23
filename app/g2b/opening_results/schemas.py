@@ -272,7 +272,7 @@ class ExportOpeningResultsSheetResponse(BaseModel):
     preview_rows: list[list[str | int | float]]
     destination_id: int
     destination_label: str
-    destination_scope: Literal["PERSONAL", "ORGANIZATION"]
+    destination_scope: Literal["PERSONAL"]
     destination_tab_name: str
     preview_token: str
 
@@ -305,7 +305,6 @@ class SheetDestinationUpsertRequest(BaseModel):
     label: str = Field(min_length=1, max_length=120)
     spreadsheet_id: str = Field(min_length=1, max_length=240)
     tab_name: str = Field(default="개찰결과", min_length=1, max_length=120)
-    scope: Literal["PERSONAL", "ORGANIZATION"] = "PERSONAL"
     is_default: bool = True
 
     @field_validator("label", "spreadsheet_id", "tab_name")
@@ -345,7 +344,7 @@ class SheetDestinationResponse(BaseModel):
     label: str
     spreadsheet_id: str
     tab_name: str
-    scope: Literal["PERSONAL", "ORGANIZATION"]
+    scope: Literal["PERSONAL"]
     is_default: bool
 
 

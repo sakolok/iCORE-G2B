@@ -8,10 +8,9 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy import exists, or_, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session, aliased
+from sqlalchemy.orm import Session
 
-from app.g2b.keyword_policy import evaluate_keyword_title
-from app.g2b.opening_results.models import SheetDestinationModel
+from app.g2b.keyword_policy import evaluate_keyword_title, normalize_keywords
 from app.g2b.pre_specifications.client import (
     PreSpecificationApiClient,
     PreSpecificationApiConfig,
@@ -22,6 +21,7 @@ from app.g2b.pre_specifications.models import (
     PreSpecificationModel,
     PreSpecificationSnapshotModel,
     PreSpecificationSheetExportModel,
+    UserPreSpecificationProfileModel,
     UserPreSpecificationStateModel,
 )
 from app.g2b.pre_specifications.schemas import (
@@ -56,6 +56,57 @@ def _as_utc(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc)
+
+
+def get_user_pre_specification_profile(
+    db: Session,
+    *,
+    organization_id: int,
+    user_id: int,
+    lock_for_update: bool = False,
+) -> UserPreSpecificationProfileModel:
+    statement = select(UserPreSpecificationProfileModel).where(
+        UserPreSpecificationProfileModel.user_id == user_id
+    )
+    if lock_for_update:
+        statement = statement.with_for_update()
+    profile = db.execute(statement).scalar_one_or_none()
+    if profile is None:
+        profile = UserPreSpecificationProfileModel(
+            organization_id=organization_id,
+            user_id=user_id,
+            enabled=False,
+            keywords="",
+            excluded_keywords="",
+        )
+        db.add(profile)
+        db.flush()
+    return profile
+
+
+def update_user_pre_specification_profile(
+    db: Session,
+    *,
+    organization_id: int,
+    user_id: int,
+    enabled: bool,
+    keywords: list[str],
+    excluded_keywords: list[str],
+) -> UserPreSpecificationProfileModel:
+    profile = get_user_pre_specification_profile(
+        db,
+        organization_id=organization_id,
+        user_id=user_id,
+        lock_for_update=True,
+    )
+    profile.organization_id = organization_id
+    profile.enabled = enabled
+    profile.keywords = ",".join(normalize_keywords(keywords))
+    profile.excluded_keywords = ",".join(normalize_keywords(excluded_keywords))
+    profile.updated_at = _utcnow()
+    db.commit()
+    db.refresh(profile)
+    return profile
 
 
 def _attachments(row: PreSpecificationModel) -> list[dict]:
@@ -295,6 +346,19 @@ def _matches_keywords(row: PreSpecificationModel, query: PreSpecificationListQue
     return all(matches) if query.keyword_mode == "AND" else any(matches)
 
 
+def _matches_profile(
+    row: PreSpecificationModel,
+    profile: UserPreSpecificationProfileModel,
+) -> bool:
+    if not profile.enabled:
+        return True
+    return evaluate_keyword_title(
+        row.business_name,
+        profile.keywords,
+        profile.excluded_keywords,
+    ).keep
+
+
 def list_pre_specifications(
     db: Session,
     query: PreSpecificationListQuery,
@@ -302,6 +366,11 @@ def list_pre_specifications(
     organization_id: int,
     user_id: int,
 ) -> tuple[list[PreSpecificationModel], int]:
+    profile = get_user_pre_specification_profile(
+        db,
+        organization_id=organization_id,
+        user_id=user_id,
+    )
     rows = db.scalars(
         _base_statement(query).where(
             *_visible_pre_specification_predicates(organization_id, user_id)
@@ -314,7 +383,8 @@ def list_pre_specifications(
     filtered = [
         row
         for row in rows
-        if _matches_keywords(row, query)
+        if _matches_profile(row, profile)
+        and _matches_keywords(row, query)
         and (
             query.deadline_status == "ALL"
             or deadline_status(row.opinion_deadline, now) == query.deadline_status
@@ -338,22 +408,7 @@ def _visible_pre_specification_predicates(
             UserPreSpecificationStateModel.state.in_(USER_TERMINAL_STATES),
         )
     )
-    destination = aliased(SheetDestinationModel)
-    shared_exported = exists(
-        select(PreSpecificationSheetExportModel.id)
-        .join(
-            destination,
-            destination.id == PreSpecificationSheetExportModel.destination_id,
-        )
-        .where(
-            PreSpecificationSheetExportModel.organization_id == organization_id,
-            PreSpecificationSheetExportModel.bf_spec_rgst_no
-            == PreSpecificationModel.bf_spec_rgst_no,
-            PreSpecificationSheetExportModel.status == "SUCCEEDED",
-            destination.owner_user_id.is_(None),
-        )
-    )
-    return (~user_handled, ~shared_exported)
+    return (~user_handled,)
 
 
 def get_visible_pre_specification(
@@ -363,12 +418,20 @@ def get_visible_pre_specification(
     user_id: int,
     bf_spec_rgst_no: str,
 ) -> PreSpecificationModel | None:
-    return db.scalar(
+    row = db.scalar(
         select(PreSpecificationModel).where(
             PreSpecificationModel.bf_spec_rgst_no == bf_spec_rgst_no,
             *_visible_pre_specification_predicates(organization_id, user_id),
         )
     )
+    if row is None:
+        return None
+    profile = get_user_pre_specification_profile(
+        db,
+        organization_id=organization_id,
+        user_id=user_id,
+    )
+    return row if _matches_profile(row, profile) else None
 
 
 def load_visible_pre_specifications(
@@ -385,7 +448,16 @@ def load_visible_pre_specifications(
             *_visible_pre_specification_predicates(organization_id, user_id),
         )
     ).all()
-    by_id = {row.bf_spec_rgst_no: row for row in rows}
+    profile = get_user_pre_specification_profile(
+        db,
+        organization_id=organization_id,
+        user_id=user_id,
+    )
+    by_id = {
+        row.bf_spec_rgst_no: row
+        for row in rows
+        if _matches_profile(row, profile)
+    }
     missing = [item_id for item_id in requested if item_id not in by_id]
     if missing:
         raise PreSpecificationAccessError(",".join(missing))
@@ -503,7 +575,6 @@ def list_archived_pre_specifications(
             can_restore=state.state == "DISMISSED",
         )
 
-    destination = aliased(SheetDestinationModel)
     export_statement = (
         select(PreSpecificationModel, PreSpecificationSheetExportModel)
         .join(
@@ -511,16 +582,12 @@ def list_archived_pre_specifications(
             PreSpecificationSheetExportModel.bf_spec_rgst_no
             == PreSpecificationModel.bf_spec_rgst_no,
         )
-        .join(
-            destination,
-            destination.id == PreSpecificationSheetExportModel.destination_id,
-        )
         .where(
             PreSpecificationSheetExportModel.organization_id == organization_id,
             PreSpecificationSheetExportModel.status == "SUCCEEDED",
             PreSpecificationSheetExportModel.succeeded_at.is_not(None),
             PreSpecificationSheetExportModel.succeeded_at >= cutoff,
-            destination.owner_user_id.is_(None),
+            PreSpecificationSheetExportModel.exported_by_user_id == user_id,
         )
     )
     if bf_spec_rgst_no is not None:
