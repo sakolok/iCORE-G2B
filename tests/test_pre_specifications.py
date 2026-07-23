@@ -1034,6 +1034,16 @@ class PreSpecificationTests(unittest.TestCase):
             ["'사전규격'!A2:L2", "'사전규격'!A3:L3"],
         )
 
+    def test_sheet_rows_format_allocated_budget_with_thousands_separator(self):
+        row = PreSpecificationModel(
+            bf_spec_rgst_no="R001",
+            allocated_budget=Decimal("1000000"),
+        )
+
+        sheet_rows = build_sheet_rows([row])
+
+        self.assertEqual(sheet_rows[0][5], "1,000,000")
+
     def test_sheet_writer_creates_dedicated_tab_when_missing(self):
         service = FakePreSpecificationSheetService(tab_exists=False)
         writer = PreSpecificationSheetWriter("sheet-id", service)
