@@ -199,7 +199,14 @@ def ensure_schema_compatibility(engine: Engine) -> None:
     _ensure_columns(
         engine,
         "g2b_pre_specification_sheet_exports",
-        {"attempt_count": "INTEGER NOT NULL DEFAULT 1"},
+        {
+            "attempt_count": "INTEGER NOT NULL DEFAULT 1",
+            "error_message": "TEXT NULL",
+            "claimed_at": "DATETIME NULL",
+            "succeeded_at": "DATETIME NULL",
+            "created_at": "DATETIME NULL",
+            "updated_at": "DATETIME NULL",
+        },
     )
     _ensure_unique_index(
         engine,
