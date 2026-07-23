@@ -823,6 +823,77 @@ class PreSpecificationTests(unittest.TestCase):
         )
         self.assertEqual(inbox_total, 0)
 
+    def test_stale_exported_state_without_active_personal_sheet_returns_to_inbox(self):
+        upsert_pre_specifications(
+            self.db,
+            [{"bf_spec_rgst_no": "R001", "business_name": "AI 교육"}],
+        )
+        self.db.add(
+            UserPreSpecificationStateModel(
+                organization_id=self.organization.id,
+                user_id=self.user.id,
+                bf_spec_rgst_no="R001",
+                state="EXPORTED",
+            )
+        )
+        self.db.commit()
+
+        _, inbox_total = list_pre_specifications(
+            self.db,
+            PreSpecificationListQuery(),
+            organization_id=self.organization.id,
+            user_id=self.user.id,
+        )
+        _, archive_total = list_archived_pre_specifications(
+            self.db,
+            organization_id=self.organization.id,
+            user_id=self.user.id,
+        )
+
+        self.assertEqual(inbox_total, 1)
+        self.assertEqual(archive_total, 0)
+
+    def test_sheet_archive_requires_active_personal_destination(self):
+        upsert_pre_specifications(
+            self.db,
+            [{"bf_spec_rgst_no": "R001", "business_name": "AI 교육"}],
+        )
+        self.db.add(
+            PreSpecificationSheetExportModel(
+                destination_id=self.destination.id,
+                organization_id=self.organization.id,
+                bf_spec_rgst_no="R001",
+                exported_by_user_id=self.user.id,
+                status="SUCCEEDED",
+                succeeded_at=datetime.now(timezone.utc),
+            )
+        )
+        self.db.commit()
+
+        _, archive_total = list_archived_pre_specifications(
+            self.db,
+            organization_id=self.organization.id,
+            user_id=self.user.id,
+        )
+        self.assertEqual(archive_total, 1)
+
+        self.destination.is_active = False
+        self.db.commit()
+        _, inbox_total = list_pre_specifications(
+            self.db,
+            PreSpecificationListQuery(),
+            organization_id=self.organization.id,
+            user_id=self.user.id,
+        )
+        _, archive_total = list_archived_pre_specifications(
+            self.db,
+            organization_id=self.organization.id,
+            user_id=self.user.id,
+        )
+
+        self.assertEqual(inbox_total, 1)
+        self.assertEqual(archive_total, 0)
+
     def test_sheet_preview_and_write_use_existing_connection_and_archive_result(self):
         upsert_pre_specifications(
             self.db,
