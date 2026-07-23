@@ -59,6 +59,12 @@ class Settings(BaseModel):
     g2b_award_service_key: str = os.getenv(
         "G2B_AWARD_SERVICE_KEY", os.getenv("G2B_SERVICE_KEY", "")
     )
+    g2b_pre_spec_service_key: str = os.getenv(
+        "G2B_PRE_SPEC_SERVICE_KEY", os.getenv("G2B_SERVICE_KEY", "")
+    )
+    g2b_pre_specifications_enabled: bool = _env_bool(
+        "G2B_PRE_SPECIFICATIONS_ENABLED", False
+    )
     g2b_award_scheduler_target_url: str = os.getenv(
         "G2B_AWARD_SCHEDULER_TARGET_URL", ""
     )
@@ -106,6 +112,13 @@ def validate_runtime_settings(value: Settings) -> None:
             errors.append("SCRAPER_INTERNAL_TOKEN은 32자 이상의 비밀값이어야 합니다.")
         if not value.g2b_award_service_key.strip():
             errors.append("G2B_AWARD_SERVICE_KEY 또는 G2B_SERVICE_KEY가 필요합니다.")
+        if (
+            value.g2b_pre_specifications_enabled
+            and not value.g2b_pre_spec_service_key.strip()
+        ):
+            errors.append(
+                "사전규격 기능 사용 시 G2B_PRE_SPEC_SERVICE_KEY 또는 G2B_SERVICE_KEY가 필요합니다."
+            )
         scheduler_target = value.g2b_award_scheduler_target_url.strip().rstrip("/")
         if (
             not scheduler_target.startswith("https://")

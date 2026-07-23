@@ -24,6 +24,10 @@ app.include_router(health_router)
 app.include_router(auth_router)
 app.include_router(scraper_router)
 app.include_router(opening_results_router)
+if settings.g2b_pre_specifications_enabled:
+    from app.g2b.pre_specifications.router import router as pre_specifications_router
+
+    app.include_router(pre_specifications_router)
 
 
 @app.on_event("startup")
