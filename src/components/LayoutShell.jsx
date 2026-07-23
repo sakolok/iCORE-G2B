@@ -2,6 +2,7 @@ import "./LayoutShell.css";
 
 const NAV_ITEMS = [
   { key: "pre-specifications", label: "사전규격", href: "#pre-specifications" },
+  { key: "bid-notices", label: "입찰공고", href: "#bid-notices" },
   { key: "opening-results", label: "개찰결과", href: "#opening-results" },
 ];
 

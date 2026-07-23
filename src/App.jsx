@@ -4,6 +4,7 @@ import LayoutShell from "./components/LayoutShell";
 import LoginPage from "./pages/LoginPage";
 import OpeningResultsPage from "./pages/OpeningResultsPage";
 import PreSpecificationsPage from "./pages/PreSpecificationsPage";
+import BidNoticesPage from "./pages/BidNoticesPage";
 import { authApi, AUTH_TOKEN_KEY, formatApiError } from "./api/client";
 
 const LOCAL_SINGLE_USER_ENABLED =
@@ -15,6 +16,7 @@ const LOCAL_SINGLE_USER_ENABLED =
 
 const PAGE_BY_HASH = {
   "#pre-specifications": "pre-specifications",
+  "#bid-notices": "bid-notices",
   "#opening-results": "opening-results",
 };
 
@@ -133,6 +135,8 @@ function App() {
     >
       {activePage === "pre-specifications" ? (
         <PreSpecificationsPage session={session} />
+      ) : activePage === "bid-notices" ? (
+        <BidNoticesPage session={session} />
       ) : (
         <OpeningResultsPage />
       )}
