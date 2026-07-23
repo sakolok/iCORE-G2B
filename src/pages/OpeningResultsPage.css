@@ -234,6 +234,10 @@
   padding-inline: 4px;
 }
 
+.opening-result-actions {
+  margin-inline-start: -8px;
+}
+
 .opening-result-business .ant-typography-secondary {
   color: var(--icore-text-muted);
   font-size: 12px;
@@ -256,17 +260,6 @@
 
 .opening-result-row-selected:hover td {
   background: #e5f2ff !important;
-}
-
-.opening-result-block-reason {
-  display: -webkit-box;
-  max-width: 160px;
-  overflow: hidden;
-  color: var(--icore-text-muted) !important;
-  font-size: 11px;
-  line-height: 1.4;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
 }
 
 .opening-status-tag,

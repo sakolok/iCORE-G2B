@@ -763,7 +763,7 @@ function OpeningResultsPage() {
       width: 120,
       render: (value) => (value ? dayjs(value).format("YYYY-MM-DD HH:mm") : "-"),
     },
-    { title: "공고번호", dataIndex: "bid_notice_no", width: 132 },
+    { title: "공고번호", dataIndex: "bid_notice_no", width: 144 },
     {
       title: "사업명 / 수요기관",
       key: "business",
@@ -821,18 +821,10 @@ function OpeningResultsPage() {
       width: 140,
       render: (value, row) => {
         const meta = exportStatusMeta(value, row);
-        const reason = exportBlockText(row);
         return (
-          <Space direction="vertical" size={2}>
-            <Tag className={`opening-export-tag is-${String(value || "unknown").toLowerCase()}`}>
-              {meta.label}
-            </Tag>
-            {reason ? (
-              <Typography.Text type="secondary" className="opening-result-block-reason">
-                {reason}
-              </Typography.Text>
-            ) : null}
-          </Space>
+          <Tag className={`opening-export-tag is-${String(value || "unknown").toLowerCase()}`}>
+            {meta.label}
+          </Tag>
         );
       },
     },
