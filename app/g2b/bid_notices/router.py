@@ -151,6 +151,7 @@ def save_bid_notice_profile(
 def list_bid_notices(
     q: str | None = Query(default=None, max_length=200),
     work_type: str | None = Query(default=None, max_length=40),
+    region: str | None = Query(default=None, max_length=80),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=30, ge=1, le=100),
     auth: dict = Depends(require_organization_auth),
@@ -186,6 +187,10 @@ def list_bid_notices(
         statement = statement.where(ScraperNoticeModel.title.like(f"%{q.strip()}%"))
     if work_type and work_type.strip():
         statement = statement.where(ScraperNoticeModel.work_type == work_type.strip())
+    if region and region.strip():
+        statement = statement.where(
+            ScraperNoticeModel.region_restriction.like(f"%{region.strip()}%")
+        )
     total = db.execute(select(func.count()).select_from(statement.subquery())).scalar_one()
     rows = db.execute(
         statement.order_by(ScraperNoticeModel.published_at.desc(), ScraperNoticeModel.id.desc())
