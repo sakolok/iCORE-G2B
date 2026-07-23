@@ -90,6 +90,15 @@ class ScraperNoticeModel(Base):
         String(20), nullable=True
     )
     is_two_stage_bid: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    # ``base_amount`` remains the existing opening-result business amount
+    # (estimated price + VAT).  The direct bid-notice collector stores an
+    # official base amount separately so the two meanings never overwrite.
+    work_type: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    procurement_type: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    official_base_amount: Mapped[Decimal | None] = mapped_column(
+        Numeric(20, 2), nullable=True
+    )
+    source_payload: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
     first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     last_run_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
