@@ -70,6 +70,21 @@ function BidNoticesPage({ session }) {
   const [collecting, setCollecting] = useState(false);
   const [collectionRange, setCollectionRange] = useState([dayjs().subtract(14, "day"), dayjs()]);
   const [businessTypes, setBusinessTypes] = useState(["SERVICE"]);
+  const [selectedRowKeys, setSelectedRowKeys] = useState([]);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [destinations, setDestinations] = useState([]);
+  const [destinationId, setDestinationId] = useState();
+  const [destinationsLoading, setDestinationsLoading] = useState(false);
+  const [previewing, setPreviewing] = useState(false);
+  const [writing, setWriting] = useState(false);
+  const [exportPreview, setExportPreview] = useState(null);
+  const [connectOpen, setConnectOpen] = useState(false);
+  const [connecting, setConnecting] = useState(false);
+  const [destinationDraft, setDestinationDraft] = useState({
+    label: "내 입찰공고 Sheet",
+    spreadsheet_id: "",
+    tab_name: "입찰공고",
+  });
 
   const canCollect = session?.role === "admin";
   const profileSummary = useMemo(() => {
@@ -173,6 +188,99 @@ function BidNoticesPage({ session }) {
     }
   };
 
+  const loadDestinations = async () => {
+    setDestinationsLoading(true);
+    try {
+      const response = await bidNoticesApi.listSheetDestinations();
+      const nextDestinations = response.data || [];
+      setDestinations(nextDestinations);
+      setDestinationId((current) => current || nextDestinations[0]?.id);
+    } catch (error) {
+      message.error(formatApiError(error, "내 Google Sheet 연결을 불러오지 못했습니다."));
+    } finally {
+      setDestinationsLoading(false);
+    }
+  };
+
+  const openExport = () => {
+    if (!selectedRowKeys.length) {
+      message.warning("Sheet에 반영할 입찰공고를 선택하세요.");
+      return;
+    }
+    setExportPreview(null);
+    setExportOpen(true);
+    loadDestinations();
+  };
+
+  const previewExport = async () => {
+    if (!destinationId) {
+      message.warning("내 Google Sheet 목적지를 선택하세요.");
+      return;
+    }
+    setPreviewing(true);
+    try {
+      const response = await bidNoticesApi.exportSheet({
+        destination_id: destinationId,
+        notice_ids: selectedRowKeys,
+        dry_run: true,
+      });
+      setExportPreview(response.data);
+    } catch (error) {
+      message.error(formatApiError(error, "Sheet 미리보기를 만들지 못했습니다."));
+    } finally {
+      setPreviewing(false);
+    }
+  };
+
+  const writeExport = async () => {
+    if (!exportPreview?.preview_token) {
+      message.warning("먼저 미리보기를 확인하세요.");
+      return;
+    }
+    setWriting(true);
+    try {
+      const response = await bidNoticesApi.exportSheet({
+        destination_id: destinationId,
+        notice_ids: selectedRowKeys,
+        dry_run: false,
+        expected_preview_token: exportPreview.preview_token,
+      });
+      setExportOpen(false);
+      setExportPreview(null);
+      setSelectedRowKeys([]);
+      message.success(`Sheet 반영 완료: 신규 ${response.data.inserted_count}건 · 갱신 ${response.data.updated_count}건`);
+    } catch (error) {
+      message.error(formatApiError(error, "Google Sheet 반영에 실패했습니다."));
+    } finally {
+      setWriting(false);
+    }
+  };
+
+  const saveDestination = async () => {
+    if (!destinationDraft.label || !destinationDraft.spreadsheet_id || !destinationDraft.tab_name) {
+      message.warning("이름, Sheet URL, 탭 이름을 입력하세요.");
+      return;
+    }
+    setConnecting(true);
+    try {
+      const verification = await bidNoticesApi.verifySheetDestination(destinationDraft);
+      if (!verification.data.connection_ready) {
+        message.error("지정한 탭이 없거나 헤더가 다른 형식입니다. 빈 탭 또는 입찰공고 헤더 탭을 선택하세요.");
+        return;
+      }
+      const saved = await bidNoticesApi.saveSheetDestination(destinationDraft);
+      setConnectOpen(false);
+      setDestinationId(saved.data.id);
+      setExportPreview(null);
+      message.success("개인 Google Sheet 연결을 저장했습니다.");
+      await loadDestinations();
+    } catch (error) {
+      message.error(formatApiError(error, "Google Sheet 연결 저장에 실패했습니다."));
+    } finally {
+      setConnecting(false);
+    }
+  };
+
   const columns = [
     {
       title: "공고명",
@@ -223,6 +331,7 @@ function BidNoticesPage({ session }) {
         </div>
         <Space wrap>
           <Button onClick={() => setProfileOpen(true)}>조건 설정</Button>
+          <Button onClick={openExport}>Sheet 반영 ({selectedRowKeys.length})</Button>
           {canCollect ? <Button type="primary" onClick={() => setCollectOpen(true)}>입찰공고 수집</Button> : null}
         </Space>
       </section>
@@ -254,6 +363,11 @@ function BidNoticesPage({ session }) {
           locale={{ emptyText: <Empty description="조건에 맞는 입찰공고가 없습니다." /> }}
           columns={columns}
           dataSource={rows}
+          rowSelection={{
+            selectedRowKeys,
+            onChange: (nextKeys) => { setSelectedRowKeys(nextKeys); setExportPreview(null); },
+            preserveSelectedRowKeys: true,
+          }}
           scroll={{ x: 1320 }}
           pagination={{
             current: page,
@@ -279,6 +393,39 @@ function BidNoticesPage({ session }) {
           <div><strong>게시일 기준 기간</strong><RangePicker value={collectionRange} onChange={setCollectionRange} allowClear={false} /></div>
           <div><strong>업무구분</strong><Select mode="multiple" value={businessTypes} onChange={setBusinessTypes} options={BUSINESS_TYPE_OPTIONS} /></div>
           <Alert type="info" showIcon message="첨부파일·문서 분석은 이번 수집에 포함하지 않습니다." />
+        </div>
+      </Modal>
+
+      <Modal
+        title="선택한 입찰공고를 Sheet에 반영"
+        open={exportOpen}
+        onCancel={() => setExportOpen(false)}
+        footer={[
+          <Button key="close" onClick={() => setExportOpen(false)}>닫기</Button>,
+          <Button key="preview" loading={previewing} onClick={previewExport}>미리보기</Button>,
+          <Button key="write" type="primary" disabled={!exportPreview} loading={writing} onClick={writeExport}>최종 반영</Button>,
+        ]}
+      >
+        <div className="bid-notices-export-form">
+          <Text>선택 {selectedRowKeys.length}건만 내 개인 Google Sheet에 반영합니다.</Text>
+          <Select
+            loading={destinationsLoading}
+            value={destinationId}
+            placeholder="개인 Sheet 선택"
+            onChange={(value) => { setDestinationId(value); setExportPreview(null); }}
+            options={destinations.map((item) => ({ value: item.id, label: `${item.label} · ${item.tab_name}` }))}
+          />
+          <Button type="link" onClick={() => setConnectOpen(true)}>새 개인 Sheet 연결</Button>
+          {exportPreview ? <Alert type="info" showIcon message={`${exportPreview.row_count}건 미리보기 완료`} description={`대상: ${exportPreview.destination_label} · ${exportPreview.destination_tab_name}`} /> : null}
+        </div>
+      </Modal>
+
+      <Modal title="개인 Google Sheet 연결" open={connectOpen} onCancel={() => setConnectOpen(false)} onOk={saveDestination} confirmLoading={connecting} okText="연결 확인 후 저장">
+        <div className="bid-notices-export-form">
+          <Input value={destinationDraft.label} placeholder="연결 이름" onChange={(event) => setDestinationDraft((draft) => ({ ...draft, label: event.target.value }))} />
+          <Input value={destinationDraft.spreadsheet_id} placeholder="Google Sheet URL 또는 ID" onChange={(event) => setDestinationDraft((draft) => ({ ...draft, spreadsheet_id: event.target.value }))} />
+          <Input value={destinationDraft.tab_name} placeholder="탭 이름" onChange={(event) => setDestinationDraft((draft) => ({ ...draft, tab_name: event.target.value }))} />
+          <Alert type="info" showIcon message="서비스계정에 편집 권한을 공유한 빈 탭 또는 입찰공고 형식 탭만 저장할 수 있습니다." />
         </div>
       </Modal>
     </div>

@@ -20,7 +20,7 @@
 .bid-notice-title-cell a, .bid-notice-title-cell strong { overflow: hidden; color: var(--icore-text); font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
 .bid-notice-title-cell a:hover { color: var(--icore-primary); }
 .bid-notice-title-cell span { color: var(--icore-text-muted); font-size: 12px; }
-.bid-notices-profile-form, .bid-notices-collect-form { display: grid; gap: 18px; }
+.bid-notices-profile-form, .bid-notices-collect-form, .bid-notices-export-form { display: grid; gap: 18px; }
 .bid-notices-profile-form > div:not(.bid-notices-condition-row), .bid-notices-collect-form > div:not(.ant-alert) { display: grid; gap: 7px; }
 .bid-notices-profile-form .ant-select, .bid-notices-collect-form .ant-select { width: 100%; }
 @media (max-width: 720px) { .bid-notices-hero { align-items: flex-start; flex-direction: column; } }
