@@ -177,6 +177,10 @@ def ensure_schema_compatibility(engine: Engine) -> None:
             "region_restriction": "VARCHAR(240) NULL",
             "region_restriction_api_status": "VARCHAR(20) NULL",
             "is_two_stage_bid": "BOOLEAN NULL",
+            "work_type": "VARCHAR(40) NULL",
+            "procurement_type": "VARCHAR(20) NULL",
+            "official_base_amount": "NUMERIC(20, 2) NULL",
+            "source_payload": "TEXT NOT NULL DEFAULT '{}'",
         },
     )
     _ensure_index(
