@@ -1,4 +1,5 @@
 import unittest
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -18,6 +19,11 @@ from app.data.bootstrap import ensure_schema_compatibility, seed_defaults
 from app.core.config import Settings, settings, validate_runtime_settings
 from app.g2b.opening_results import models as opening_result_models  # noqa: F401
 from app.g2b.opening_results.models import SheetDestinationModel
+from app.g2b.pre_specifications.models import (
+    PreSpecificationModel,
+    PreSpecificationSheetExportModel,
+    UserPreSpecificationStateModel,
+)
 from app.routers.auth import google_login, login, single_user_session
 from app.schemas import GoogleLoginRequest, LoginRequest
 from app.services.auth_service import (
@@ -78,6 +84,47 @@ class AuthTenancyTests(unittest.TestCase):
         seed_defaults(self.db)
 
         self.assertIsNone(self.db.get(SheetDestinationModel, destination_id))
+
+    def test_seed_defaults_purges_legacy_pre_specification_export_states(self):
+        destination = SheetDestinationModel(
+            organization_id=self.organization.id,
+            owner_user_id=None,
+            label="기존 조직 공용 Sheet",
+            spreadsheet_id="legacy-pre-specification-sheet",
+            tab_name="사전규격",
+            is_default=True,
+            is_active=True,
+        )
+        pre_specification = PreSpecificationModel(
+            bf_spec_rgst_no="R001",
+            attachments_json="[]",
+            raw_payload="{}",
+        )
+        self.db.add_all([destination, pre_specification])
+        self.db.flush()
+        export = PreSpecificationSheetExportModel(
+            destination_id=destination.id,
+            organization_id=self.organization.id,
+            bf_spec_rgst_no=pre_specification.bf_spec_rgst_no,
+            exported_by_user_id=self.user.id,
+            status="SUCCEEDED",
+            succeeded_at=datetime.now(timezone.utc),
+        )
+        state = UserPreSpecificationStateModel(
+            organization_id=self.organization.id,
+            user_id=self.user.id,
+            bf_spec_rgst_no=pre_specification.bf_spec_rgst_no,
+            state="EXPORTED",
+        )
+        self.db.add_all([export, state])
+        self.db.commit()
+        export_id = export.id
+        state_id = state.id
+
+        seed_defaults(self.db)
+
+        self.assertIsNone(self.db.get(PreSpecificationSheetExportModel, export_id))
+        self.assertIsNone(self.db.get(UserPreSpecificationStateModel, state_id))
 
     def make_token(self) -> str:
         return create_access_token(

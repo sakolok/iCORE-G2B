@@ -11,6 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.g2b.keyword_policy import evaluate_keyword_title, normalize_keywords
+from app.g2b.opening_results.models import SheetDestinationModel
 from app.g2b.pre_specifications.client import (
     PreSpecificationApiClient,
     PreSpecificationApiConfig,
@@ -33,9 +34,6 @@ from app.g2b.pre_specifications.schemas import (
 
 KST = ZoneInfo("Asia/Seoul")
 ARCHIVE_RETENTION_DAYS = 14
-USER_TERMINAL_STATES = ("DISMISSED", "EXPORTED")
-
-
 class PreSpecificationAccessError(LookupError):
     pass
 
@@ -399,16 +397,34 @@ def _visible_pre_specification_predicates(
     organization_id: int,
     user_id: int,
 ) -> tuple:
-    user_handled = exists(
+    dismissed = exists(
         select(UserPreSpecificationStateModel.id).where(
             UserPreSpecificationStateModel.organization_id == organization_id,
             UserPreSpecificationStateModel.user_id == user_id,
             UserPreSpecificationStateModel.bf_spec_rgst_no
             == PreSpecificationModel.bf_spec_rgst_no,
-            UserPreSpecificationStateModel.state.in_(USER_TERMINAL_STATES),
+            UserPreSpecificationStateModel.state == "DISMISSED",
         )
     )
-    return (~user_handled,)
+    exported_to_active_personal_sheet = exists(
+        select(PreSpecificationSheetExportModel.id)
+        .join(
+            SheetDestinationModel,
+            SheetDestinationModel.id
+            == PreSpecificationSheetExportModel.destination_id,
+        )
+        .where(
+            PreSpecificationSheetExportModel.organization_id == organization_id,
+            PreSpecificationSheetExportModel.bf_spec_rgst_no
+            == PreSpecificationModel.bf_spec_rgst_no,
+            PreSpecificationSheetExportModel.exported_by_user_id == user_id,
+            PreSpecificationSheetExportModel.status == "SUCCEEDED",
+            SheetDestinationModel.organization_id == organization_id,
+            SheetDestinationModel.owner_user_id == user_id,
+            SheetDestinationModel.is_active.is_(True),
+        )
+    )
+    return (~dismissed, ~exported_to_active_personal_sheet)
 
 
 def get_visible_pre_specification(
@@ -558,7 +574,7 @@ def list_archived_pre_specifications(
         .where(
             UserPreSpecificationStateModel.organization_id == organization_id,
             UserPreSpecificationStateModel.user_id == user_id,
-            UserPreSpecificationStateModel.state.in_(USER_TERMINAL_STATES),
+            UserPreSpecificationStateModel.state == "DISMISSED",
             UserPreSpecificationStateModel.acted_at >= cutoff,
         )
     )
@@ -582,12 +598,20 @@ def list_archived_pre_specifications(
             PreSpecificationSheetExportModel.bf_spec_rgst_no
             == PreSpecificationModel.bf_spec_rgst_no,
         )
+        .join(
+            SheetDestinationModel,
+            SheetDestinationModel.id
+            == PreSpecificationSheetExportModel.destination_id,
+        )
         .where(
             PreSpecificationSheetExportModel.organization_id == organization_id,
             PreSpecificationSheetExportModel.status == "SUCCEEDED",
             PreSpecificationSheetExportModel.succeeded_at.is_not(None),
             PreSpecificationSheetExportModel.succeeded_at >= cutoff,
             PreSpecificationSheetExportModel.exported_by_user_id == user_id,
+            SheetDestinationModel.organization_id == organization_id,
+            SheetDestinationModel.owner_user_id == user_id,
+            SheetDestinationModel.is_active.is_(True),
         )
     )
     if bf_spec_rgst_no is not None:

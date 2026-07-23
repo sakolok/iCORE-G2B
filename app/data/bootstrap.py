@@ -13,12 +13,19 @@ from app.data.models import (
     UserModel,
 )
 from app.g2b.opening_results.models import SheetDestinationModel
+from app.g2b.pre_specifications.models import (
+    PreSpecificationSheetExportModel,
+    UserPreSpecificationStateModel,
+)
 from app.services.auth_service import hash_password, verify_password
 
 ORGANIZATION_MEMBERSHIP_BACKFILL_KEY = "2026-07-organization-membership-backfill"
 USER_RESULT_PROFILE_BACKFILL_KEY = "2026-07-user-result-profile-backfill"
 LEGACY_ORGANIZATION_SHEET_DESTINATIONS_PURGED_KEY = (
     "2026-07-legacy-organization-sheet-destinations-purged"
+)
+LEGACY_PRE_SPECIFICATION_EXPORT_HISTORY_PURGED_KEY = (
+    "2026-07-legacy-pre-specification-export-history-purged"
 )
 LEGACY_DEFAULT_ADMIN_PASSWORD = "icore1234!"
 
@@ -355,6 +362,57 @@ def seed_defaults(db: Session) -> None:
         db.add(
             SystemMigrationModel(
                 key=LEGACY_ORGANIZATION_SHEET_DESTINATIONS_PURGED_KEY
+            )
+        )
+
+    legacy_pre_specification_history = db.get(
+        SystemMigrationModel,
+        LEGACY_PRE_SPECIFICATION_EXPORT_HISTORY_PURGED_KEY,
+    )
+    if legacy_pre_specification_history is None:
+        valid_export_keys = set()
+        exports = db.execute(
+            select(PreSpecificationSheetExportModel, SheetDestinationModel).outerjoin(
+                SheetDestinationModel,
+                SheetDestinationModel.id
+                == PreSpecificationSheetExportModel.destination_id,
+            )
+        ).all()
+        for export, destination in exports:
+            is_active_personal_export = (
+                destination is not None
+                and destination.is_active
+                and destination.organization_id == export.organization_id
+                and destination.owner_user_id == export.exported_by_user_id
+                and export.status == "SUCCEEDED"
+            )
+            if is_active_personal_export:
+                valid_export_keys.add(
+                    (
+                        export.organization_id,
+                        export.exported_by_user_id,
+                        export.bf_spec_rgst_no,
+                    )
+                )
+            else:
+                db.delete(export)
+        db.flush()
+
+        exported_states = db.scalars(
+            select(UserPreSpecificationStateModel).where(
+                UserPreSpecificationStateModel.state == "EXPORTED"
+            )
+        ).all()
+        for state in exported_states:
+            if (
+                state.organization_id,
+                state.user_id,
+                state.bf_spec_rgst_no,
+            ) not in valid_export_keys:
+                db.delete(state)
+        db.add(
+            SystemMigrationModel(
+                key=LEGACY_PRE_SPECIFICATION_EXPORT_HISTORY_PURGED_KEY
             )
         )
 
