@@ -20,6 +20,7 @@ from app.g2b.bid_notices.models import (
     UserBidNoticeMatchModel,
     UserBidNoticeStateModel,
 )
+from app.g2b.bid_notices.router import list_bid_notices
 from app.g2b.bid_notices.sheet_export import (
     build_bid_notice_sheet_rows,
     claim_bid_notice_sheet_exports,
@@ -206,3 +207,50 @@ class BidNoticeCollectorTests(unittest.TestCase):
             )
         )
         self.assertIsNone(self.db.scalar(select(UserBidNoticeStateModel)))
+
+    def test_review_list_filters_by_region(self):
+        now = datetime.now(timezone.utc)
+        self.db.add_all([
+            ScraperNoticeModel(
+                dedup_key="bid-notice-region-seoul",
+                notice_id="R26BK000005",
+                title="AI 서울 교육 용역",
+                region_restriction="서울특별시",
+                first_seen_at=now,
+                last_seen_at=now,
+                published_at=now,
+                source_payload="{}",
+            ),
+            ScraperNoticeModel(
+                dedup_key="bid-notice-region-busan",
+                notice_id="R26BK000006",
+                title="AI 부산 교육 용역",
+                region_restriction="부산광역시",
+                first_seen_at=now,
+                last_seen_at=now,
+                published_at=now,
+                source_payload="{}",
+            ),
+        ])
+        self.db.commit()
+        update_user_bid_notice_profile(
+            self.db,
+            organization_id=1,
+            user_id=10,
+            enabled=True,
+            keywords=["AI"],
+            excluded_keywords=[],
+        )
+
+        response = list_bid_notices(
+            q=None,
+            work_type=None,
+            region="서울",
+            page=1,
+            page_size=30,
+            auth={"organization_id": 1, "user_id": 10},
+            db=self.db,
+        )
+
+        self.assertEqual(response.total, 1)
+        self.assertEqual(response.items[0].business_name, "AI 서울 교육 용역")
