@@ -85,3 +85,81 @@ class BidNoticeListResponse(BaseModel):
     total: int
     page: int
     page_size: int
+
+
+class BidNoticeSheetDestinationRequest(BaseModel):
+    destination_id: int | None = Field(default=None, ge=1)
+    label: str = Field(min_length=1, max_length=120)
+    spreadsheet_id: str = Field(min_length=1, max_length=500)
+    tab_name: str = Field(default="입찰공고", min_length=1, max_length=120)
+    is_default: bool = True
+
+    @field_validator("label", "spreadsheet_id", "tab_name")
+    @classmethod
+    def strip_values(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("빈 값은 사용할 수 없습니다.")
+        return cleaned
+
+
+class BidNoticeSheetDestinationVerifyRequest(BaseModel):
+    spreadsheet_id: str = Field(min_length=1, max_length=500)
+    tab_name: str = Field(default="입찰공고", min_length=1, max_length=120)
+
+    @field_validator("spreadsheet_id", "tab_name")
+    @classmethod
+    def strip_values(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("빈 값은 사용할 수 없습니다.")
+        return cleaned
+
+
+class BidNoticeSheetDestinationResponse(BaseModel):
+    id: int
+    label: str
+    spreadsheet_id: str
+    tab_name: str
+    scope: Literal["PERSONAL"] = "PERSONAL"
+    is_default: bool
+
+
+class BidNoticeSheetDestinationVerifyResponse(BaseModel):
+    spreadsheet_id: str
+    spreadsheet_title: str | None
+    tab_name: str
+    tab_exists: bool
+    header_status: Literal["MATCH", "EMPTY", "MISMATCH", "NOT_CHECKED"]
+    connection_ready: bool
+    sheet_service_account_email: str | None = None
+
+
+class ExportBidNoticesSheetRequest(BaseModel):
+    destination_id: int | None = Field(default=None, ge=1)
+    notice_ids: list[int] = Field(min_length=1, max_length=100)
+    dry_run: bool = True
+    expected_preview_token: str | None = Field(default=None, min_length=64, max_length=64)
+
+    @field_validator("notice_ids")
+    @classmethod
+    def unique_notice_ids(cls, values: list[int]) -> list[int]:
+        if len(values) != len(set(values)):
+            raise ValueError("같은 입찰공고는 한 번만 선택하세요.")
+        return values
+
+
+class ExportBidNoticesSheetResponse(BaseModel):
+    headers: list[str]
+    requested_notice_count: int
+    row_count: int
+    missing_notice_ids: list[int]
+    written: bool
+    inserted_count: int
+    updated_count: int
+    preview_rows: list[list[str | int | float]]
+    destination_id: int
+    destination_label: str
+    destination_scope: Literal["PERSONAL"] = "PERSONAL"
+    destination_tab_name: str
+    preview_token: str

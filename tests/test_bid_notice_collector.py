@@ -14,8 +14,16 @@ from app.g2b.bid_notices.matching import (
 )
 from app.g2b.bid_notices.models import (
     BidNoticeCollectionRunModel,
+    BidNoticeSheetExportModel,
     UserBidNoticeMatchModel,
 )
+from app.g2b.bid_notices.sheet_export import (
+    build_bid_notice_sheet_rows,
+    claim_bid_notice_sheet_exports,
+    complete_bid_notice_sheet_exports,
+)
+from app.g2b.opening_results.matching import SheetExportConflictError
+from app.g2b.opening_results.models import SheetDestinationModel
 
 
 class BidNoticeCollectorTests(unittest.TestCase):
@@ -105,3 +113,52 @@ class BidNoticeCollectorTests(unittest.TestCase):
 
         matches = self.db.scalars(select(UserBidNoticeMatchModel)).all()
         self.assertEqual([(item.user_id, item.notice_id) for item in matches], [(11, notice.id)])
+
+    def test_personal_sheet_export_claim_uses_notice_rows_and_owner_lock(self):
+        now = datetime.now(timezone.utc)
+        notice = ScraperNoticeModel(
+            dedup_key="bid-notice-sheet-test",
+            notice_id="R26BK000003",
+            title="AI 데이터 구축 용역",
+            bid_notice_no="R26BK000003",
+            bid_notice_ord="01",
+            business_name="AI 데이터 구축 용역",
+            base_amount=Decimal("1100000"),
+            official_base_amount=Decimal("1000000"),
+            first_seen_at=now,
+            last_seen_at=now,
+            published_at=now,
+            source_payload="{}",
+        )
+        destination = SheetDestinationModel(
+            organization_id=1,
+            owner_user_id=10,
+            label="내 입찰공고",
+            spreadsheet_id="sheet-id",
+            tab_name="입찰공고",
+        )
+        self.db.add_all([notice, destination])
+        self.db.commit()
+
+        rows = build_bid_notice_sheet_rows([notice])
+        self.assertEqual(rows[0][0:2], ["R26BK000003", "01"])
+        self.assertEqual(rows[0][8:10], [1100000.0, 1000000.0])
+        with self.assertRaises(SheetExportConflictError):
+            claim_bid_notice_sheet_exports(
+                self.db,
+                destination=destination,
+                organization_id=1,
+                user_id=11,
+                notices=[notice],
+            )
+
+        claim = claim_bid_notice_sheet_exports(
+            self.db,
+            destination=destination,
+            organization_id=1,
+            user_id=10,
+            notices=[notice],
+        )
+        complete_bid_notice_sheet_exports(self.db, claim=claim)
+        history = self.db.scalar(select(BidNoticeSheetExportModel))
+        self.assertEqual(history.status, "SUCCEEDED")

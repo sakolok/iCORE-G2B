@@ -18,15 +18,56 @@ from app.g2b.bid_notices.schemas import (
     BidNoticeListResponse,
     BidNoticeProfileResponse,
     BidNoticeProfileUpdateRequest,
+    BidNoticeSheetDestinationRequest,
+    BidNoticeSheetDestinationResponse,
+    BidNoticeSheetDestinationVerifyRequest,
+    BidNoticeSheetDestinationVerifyResponse,
     BidNoticeSettingsResponse,
     CollectBidNoticesRequest,
     CollectBidNoticesResponse,
+    ExportBidNoticesSheetRequest,
+    ExportBidNoticesSheetResponse,
+)
+from app.g2b.bid_notices.sheet_export import (
+    BID_NOTICE_SHEET_HEADERS,
+    BidNoticeSheetWriter,
+    build_bid_notice_preview_token,
+    build_bid_notice_sheet_rows,
+    claim_bid_notice_sheet_exports,
+    complete_bid_notice_sheet_exports,
+    fail_bid_notice_sheet_exports,
 )
 from app.g2b.keyword_policy import normalize_keywords
+from app.g2b.opening_results.matching import (
+    SheetDestinationAccessError,
+    SheetDestinationConflictError,
+    SheetExportConflictError,
+    deactivate_sheet_destination,
+    ensure_sheet_target_access,
+    list_sheet_destinations,
+    normalize_spreadsheet_id,
+    resolve_sheet_destination,
+    save_sheet_destination,
+)
+from app.g2b.opening_results.sheet_export import (
+    SheetExportConfigurationError,
+    get_sheet_service_account_email,
+)
 from app.services.auth_service import require_organization_auth
 
 
 router = APIRouter(prefix="/api/v1/bid-notices", tags=["g2b-bid-notices"])
+
+
+def _destination_response(destination) -> BidNoticeSheetDestinationResponse:
+    return BidNoticeSheetDestinationResponse(
+        id=destination.id,
+        label=destination.label,
+        spreadsheet_id=destination.spreadsheet_id,
+        tab_name=destination.tab_name,
+        scope="PERSONAL",
+        is_default=destination.is_default,
+    )
 
 
 @router.post("/collect", response_model=CollectBidNoticesResponse)
@@ -143,3 +184,224 @@ def list_bid_notices(
         for notice, matched_keyword in rows
     ]
     return BidNoticeListResponse(items=items, total=total, page=page, page_size=page_size)
+
+
+@router.get(
+    "/sheet-destinations", response_model=list[BidNoticeSheetDestinationResponse]
+)
+def fetch_bid_notice_sheet_destinations(
+    auth: dict = Depends(require_organization_auth),
+    db: Session = Depends(get_db),
+) -> list[BidNoticeSheetDestinationResponse]:
+    destinations = list_sheet_destinations(
+        db,
+        organization_id=auth["organization_id"],
+        user_id=auth["user_id"],
+    )
+    return [_destination_response(destination) for destination in destinations]
+
+
+@router.post(
+    "/sheet-destinations/verify",
+    response_model=BidNoticeSheetDestinationVerifyResponse,
+)
+def verify_bid_notice_sheet_destination(
+    request: BidNoticeSheetDestinationVerifyRequest,
+    auth: dict = Depends(require_organization_auth),
+    db: Session = Depends(get_db),
+) -> BidNoticeSheetDestinationVerifyResponse:
+    try:
+        spreadsheet_id = normalize_spreadsheet_id(request.spreadsheet_id)
+        ensure_sheet_target_access(
+            db,
+            organization_id=auth["organization_id"],
+            user_id=auth["user_id"],
+            spreadsheet_id=spreadsheet_id,
+            tab_name=request.tab_name,
+        )
+        spreadsheet_title, tab_exists, header_status = BidNoticeSheetWriter.from_env(
+            spreadsheet_id=spreadsheet_id,
+            tab_name=request.tab_name,
+        ).verify_connection()
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except SheetDestinationAccessError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except SheetExportConfigurationError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    except Exception as error:
+        raise HTTPException(
+            status_code=502,
+            detail="Google Sheet 연결 확인에 실패했습니다. 서비스계정 공유 권한을 확인하세요.",
+        ) from error
+    return BidNoticeSheetDestinationVerifyResponse(
+        spreadsheet_id=spreadsheet_id,
+        spreadsheet_title=spreadsheet_title,
+        tab_name=request.tab_name,
+        tab_exists=tab_exists,
+        header_status=header_status,
+        connection_ready=tab_exists and header_status in {"MATCH", "EMPTY"},
+        sheet_service_account_email=get_sheet_service_account_email(),
+    )
+
+
+@router.post(
+    "/sheet-destinations", response_model=BidNoticeSheetDestinationResponse
+)
+def save_bid_notice_sheet_destination(
+    request: BidNoticeSheetDestinationRequest,
+    auth: dict = Depends(require_organization_auth),
+    db: Session = Depends(get_db),
+) -> BidNoticeSheetDestinationResponse:
+    try:
+        destination = save_sheet_destination(
+            db,
+            organization_id=auth["organization_id"],
+            user_id=auth["user_id"],
+            destination_id=request.destination_id,
+            label=request.label,
+            spreadsheet_id=request.spreadsheet_id,
+            tab_name=request.tab_name,
+            is_default=request.is_default,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except SheetDestinationAccessError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except SheetDestinationConflictError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    return _destination_response(destination)
+
+
+@router.delete("/sheet-destinations/{destination_id}", status_code=204)
+def delete_bid_notice_sheet_destination(
+    destination_id: int,
+    auth: dict = Depends(require_organization_auth),
+    db: Session = Depends(get_db),
+) -> None:
+    try:
+        deactivate_sheet_destination(
+            db,
+            organization_id=auth["organization_id"],
+            user_id=auth["user_id"],
+            destination_id=destination_id,
+        )
+    except SheetDestinationAccessError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@router.post("/export/sheet", response_model=ExportBidNoticesSheetResponse)
+def export_bid_notices_sheet(
+    request: ExportBidNoticesSheetRequest,
+    auth: dict = Depends(require_organization_auth),
+    db: Session = Depends(get_db),
+) -> ExportBidNoticesSheetResponse:
+    try:
+        destination = resolve_sheet_destination(
+            db,
+            organization_id=auth["organization_id"],
+            user_id=auth["user_id"],
+            destination_id=request.destination_id,
+        )
+    except SheetDestinationAccessError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+
+    notices = (
+        db.execute(
+            select(ScraperNoticeModel)
+            .join(
+                UserBidNoticeMatchModel,
+                UserBidNoticeMatchModel.notice_id == ScraperNoticeModel.id,
+            )
+            .where(
+                ScraperNoticeModel.id.in_(request.notice_ids),
+                UserBidNoticeMatchModel.user_id == auth["user_id"],
+                UserBidNoticeMatchModel.is_current_match.is_(True),
+            )
+        )
+        .scalars()
+        .all()
+    )
+    notice_by_id = {notice.id: notice for notice in notices}
+    missing_notice_ids = [
+        notice_id for notice_id in request.notice_ids if notice_id not in notice_by_id
+    ]
+    ordered_notices = [notice_by_id[notice_id] for notice_id in request.notice_ids if notice_id in notice_by_id]
+    rows = build_bid_notice_sheet_rows(ordered_notices)
+    preview_token = build_bid_notice_preview_token(
+        destination=destination,
+        notice_ids=request.notice_ids,
+        rows=rows,
+    )
+    if not request.dry_run:
+        if missing_notice_ids:
+            raise HTTPException(
+                status_code=404,
+                detail="선택한 입찰공고를 내 검토 목록에서 찾을 수 없습니다.",
+            )
+        if not rows:
+            raise HTTPException(status_code=409, detail="반영할 입찰공고가 없습니다.")
+        if request.expected_preview_token is None:
+            raise HTTPException(
+                status_code=409,
+                detail="먼저 미리보기를 확인한 뒤 Google Sheet 반영을 실행하세요.",
+            )
+        if request.expected_preview_token != preview_token:
+            raise HTTPException(
+                status_code=409,
+                detail="미리보기 이후 입찰공고 또는 Sheet 목적지가 변경되었습니다. 다시 확인하세요.",
+            )
+        claim = None
+        try:
+            claim = claim_bid_notice_sheet_exports(
+                db,
+                destination=destination,
+                organization_id=auth["organization_id"],
+                user_id=auth["user_id"],
+                notices=ordered_notices,
+            )
+            upsert_result = BidNoticeSheetWriter.from_env(
+                spreadsheet_id=destination.spreadsheet_id,
+                tab_name=destination.tab_name,
+            ).upsert(rows)
+            complete_bid_notice_sheet_exports(db, claim=claim)
+        except SheetExportConflictError as error:
+            if claim:
+                fail_bid_notice_sheet_exports(db, claim=claim, error_message=str(error))
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        except SheetExportConfigurationError as error:
+            if claim:
+                fail_bid_notice_sheet_exports(db, claim=claim, error_message=str(error))
+            raise HTTPException(status_code=503, detail=str(error)) from error
+        except Exception as error:
+            if claim:
+                fail_bid_notice_sheet_exports(db, claim=claim, error_message=str(error))
+            raise HTTPException(status_code=502, detail="Google Sheet 기록에 실패했습니다.") from error
+        return ExportBidNoticesSheetResponse(
+            headers=BID_NOTICE_SHEET_HEADERS,
+            requested_notice_count=len(request.notice_ids),
+            row_count=len(rows),
+            missing_notice_ids=missing_notice_ids,
+            written=True,
+            inserted_count=upsert_result.inserted_count,
+            updated_count=upsert_result.updated_count,
+            preview_rows=rows,
+            destination_id=destination.id,
+            destination_label=destination.label,
+            destination_tab_name=destination.tab_name,
+            preview_token=preview_token,
+        )
+    return ExportBidNoticesSheetResponse(
+        headers=BID_NOTICE_SHEET_HEADERS,
+        requested_notice_count=len(request.notice_ids),
+        row_count=len(rows),
+        missing_notice_ids=missing_notice_ids,
+        written=False,
+        inserted_count=0,
+        updated_count=0,
+        preview_rows=rows,
+        destination_id=destination.id,
+        destination_label=destination.label,
+        destination_tab_name=destination.tab_name,
+        preview_token=preview_token,
+    )
