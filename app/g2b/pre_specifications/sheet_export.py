@@ -1,5 +1,6 @@
 import hashlib
 import json
+import unicodedata
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -109,6 +110,28 @@ def _attachment_urls(row: PreSpecificationModel) -> str:
     )
 
 
+def _normalized_header(values: list[object]) -> list[str]:
+    return [
+        "".join(unicodedata.normalize("NFKC", str(value or "")).split())
+        for value in values[: len(SHEET_HEADERS)]
+    ]
+
+
+def _header_status(header: list[list[object]]) -> str:
+    if not header or not any(str(value).strip() for value in header[0]):
+        return "EMPTY"
+    normalized = _normalized_header(header[0])
+    if normalized == _normalized_header(SHEET_HEADERS):
+        return "MATCH"
+    if normalized == _normalized_header(LEGACY_SHEET_HEADERS):
+        return "LEGACY"
+    return "MISMATCH"
+
+
+def _has_sheet_rows(rows: list[list[object]]) -> bool:
+    return any(any(str(value).strip() for value in row) for row in rows)
+
+
 def build_sheet_rows(
     rows: list[PreSpecificationModel],
 ) -> list[list[str | int | float]]:
@@ -212,12 +235,8 @@ class PreSpecificationSheetWriter:
             .get("values")
             or []
         )
-        if not header or not any(str(value).strip() for value in header[0]):
-            header_status = "EMPTY"
-        elif header[0][: len(SHEET_HEADERS)] in (SHEET_HEADERS, LEGACY_SHEET_HEADERS):
-            header_status = "MATCH"
-        else:
-            header_status = "MISMATCH"
+        status = _header_status(header)
+        header_status = "MATCH" if status in {"MATCH", "LEGACY"} else status
         return PreSpecificationSheetConnectionVerification(
             spreadsheet_title=spreadsheet_title,
             tab_exists=True,
@@ -260,30 +279,43 @@ class PreSpecificationSheetWriter:
             range=f"'{tab}'!A1:L1",
         ).execute()
         header = header_response.get("values") or []
-        if not header or not any(str(value).strip() for value in header[0]):
+        status = _header_status(header)
+        existing_rows: list[list[object]] | None = None
+        if status in {"EMPTY", "LEGACY"}:
             values.update(
                 spreadsheetId=self.spreadsheet_id,
                 range=f"'{tab}'!A1",
                 valueInputOption="RAW",
                 body={"values": [SHEET_HEADERS]},
             ).execute()
-        elif header[0][: len(SHEET_HEADERS)] == LEGACY_SHEET_HEADERS:
-            values.update(
-                spreadsheetId=self.spreadsheet_id,
-                range=f"'{tab}'!A1",
-                valueInputOption="RAW",
-                body={"values": [SHEET_HEADERS]},
-            ).execute()
-        elif header[0][: len(SHEET_HEADERS)] != SHEET_HEADERS:
-            raise PreSpecificationSheetError(
-                "사전규격 Sheet의 A:L 헤더가 고정 12개 열과 일치하지 않습니다."
+        elif status == "MISMATCH":
+            existing_rows = (
+                values.get(
+                    spreadsheetId=self.spreadsheet_id,
+                    range=f"'{tab}'!A2:L",
+                ).execute().get("values")
+                or []
             )
+            if _has_sheet_rows(existing_rows):
+                raise PreSpecificationSheetError(
+                    "사전규격 Sheet의 헤더가 다르고 기존 데이터가 있어 자동 변경할 수 없습니다. "
+                    "비어 있는 전용 탭을 선택하거나 새 탭 이름으로 연결하세요."
+                )
+            values.update(
+                spreadsheetId=self.spreadsheet_id,
+                range=f"'{tab}'!A1",
+                valueInputOption="RAW",
+                body={"values": [SHEET_HEADERS]},
+            ).execute()
 
-        existing_response = values.get(
-            spreadsheetId=self.spreadsheet_id,
-            range=f"'{tab}'!A2:L",
-        ).execute()
-        existing_rows = existing_response.get("values") or []
+        if existing_rows is None:
+            existing_rows = (
+                values.get(
+                    spreadsheetId=self.spreadsheet_id,
+                    range=f"'{tab}'!A2:L",
+                ).execute().get("values")
+                or []
+            )
         row_number_by_id: dict[str, int] = {}
         for row_number, existing in enumerate(existing_rows, start=2):
             if not existing or not str(existing[0]).strip():
