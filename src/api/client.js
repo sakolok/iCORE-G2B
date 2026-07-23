@@ -164,6 +164,14 @@ export const preSpecificationsApi = {
     api.delete(`/v1/pre-specifications/${encodeURIComponent(registrationNumber)}`),
   restore: (registrationNumber) =>
     api.post(`/v1/pre-specifications/${encodeURIComponent(registrationNumber)}/restore`),
+  settings: () => api.get("/v1/pre-specifications/settings"),
+  updateProfile: (payload) => api.put("/v1/pre-specifications/settings/profile", payload),
+  verifySheetDestination: (payload) =>
+    api.post("/v1/pre-specifications/sheet-destinations/verify", payload, { timeout: 30000 }),
+  saveSheetDestination: (payload) =>
+    api.post("/v1/pre-specifications/sheet-destinations", payload),
+  deleteSheetDestination: (destinationId) =>
+    api.delete(`/v1/pre-specifications/sheet-destinations/${destinationId}`),
   exportSheet: (payload) =>
     api.post("/v1/pre-specifications/export/sheet", payload, { timeout: 60000 }),
 };

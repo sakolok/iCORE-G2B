@@ -233,7 +233,6 @@ function OpeningResultsPage() {
     label: "내 개찰결과 Sheet",
     spreadsheet_id: "",
     tab_name: "개찰결과",
-    scope: "PERSONAL",
   });
   archivePageRef.current = archivePage;
   archivePageSizeRef.current = archivePageSize;
@@ -454,7 +453,6 @@ function OpeningResultsPage() {
       label: "내 개찰결과 Sheet",
       spreadsheet_id: "",
       tab_name: "개찰결과",
-      scope: "PERSONAL",
     });
     setConnectionResult(null);
     setConnectionError("");
@@ -694,7 +692,7 @@ function OpeningResultsPage() {
       if (response.data.visible) {
         message.success("제외를 취소해 검토함에 다시 표시했습니다.");
       } else {
-        message.warning("제외는 취소했지만 조직 공용 Sheet에서 이미 처리되어 다시 표시되지 않습니다.");
+        message.warning("Sheet에 반영한 항목은 다시 검토 목록으로 복구할 수 없습니다.");
       }
     } catch (error) {
       message.error(formatApiError(error, "제외 실행취소에 실패했습니다."));
@@ -717,7 +715,7 @@ function OpeningResultsPage() {
       if (response.data.visible) {
         message.success("검토할 결과로 복구했습니다.");
       } else {
-        message.warning("제외 상태는 복구했지만 조직 공용 Sheet에서 이미 처리되어 목록에는 표시되지 않습니다.");
+        message.warning("Sheet에 반영한 항목은 다시 검토 목록으로 복구할 수 없습니다.");
       }
     } catch (error) {
       message.error(formatApiError(error, "보관 항목 복구에 실패했습니다."));
@@ -971,8 +969,6 @@ function OpeningResultsPage() {
     },
   ];
 
-  const canDeleteDestination = (destination) =>
-    destination.scope === "PERSONAL" || settings?.organization_role === "admin";
   const connectionMeta = connectionResult
     ? HEADER_STATUS_META[connectionResult.header_status] || HEADER_STATUS_META.NOT_CHECKED
     : null;
@@ -1200,7 +1196,7 @@ function OpeningResultsPage() {
               className="opening-results-destination-select"
               options={usableDestinations.map((item) => ({
                 value: item.id,
-                label: `${item.label} · ${item.scope === "PERSONAL" ? "개인" : "조직"}`,
+                label: `${item.label} · 개인`,
               }))}
             />
             {!usableDestinations.length ? (
@@ -1392,7 +1388,7 @@ function OpeningResultsPage() {
                     <div>
                       <Typography.Text strong>{destination.label}</Typography.Text>
                       <Typography.Paragraph type="secondary">
-                        {destination.scope === "PERSONAL" ? "개인" : "조직"} · {destination.tab_name} 탭
+                        개인 · {destination.tab_name} 탭
                       </Typography.Paragraph>
                     </div>
                     <Space>
@@ -1416,9 +1412,8 @@ function OpeningResultsPage() {
                         okText="제거"
                         cancelText="닫기"
                         onConfirm={() => deleteDestination(destination)}
-                        disabled={!canDeleteDestination(destination)}
                       >
-                        <Button danger disabled={!canDeleteDestination(destination)}>
+                        <Button danger>
                           연결 제거
                         </Button>
                       </Popconfirm>
@@ -1496,14 +1491,10 @@ function OpeningResultsPage() {
             type="warning"
             showIcon
             message="아직 Google Sheets에 반영하지 않았어요."
-            description={
-              previewData?.destination_scope === "ORGANIZATION"
-                ? "조직 공용 Sheet에 반영하면 성공한 결과가 같은 조직 전체의 검토함에서 숨겨집니다. 아래 17개 열과 목적지를 확인한 뒤 최종 반영하세요."
-                : "아래 17개 열과 목적지를 확인한 뒤 최종 반영을 눌러야 실제 쓰기가 실행됩니다. 선택하지 않은 Sheet 행은 변경하지 않습니다."
-            }
+            description="아래 17개 열과 개인 Sheet 목적지를 확인한 뒤 최종 반영을 눌러야 실제 쓰기가 실행됩니다. 선택하지 않은 Sheet 행은 변경하지 않습니다."
           />
           <Typography.Text strong>
-            목적지: {previewData?.destination_label} · {previewData?.destination_tab_name} 탭 · {previewData?.destination_scope === "PERSONAL" ? "개인" : "조직 공용"}
+            목적지: {previewData?.destination_label} · {previewData?.destination_tab_name} 탭 · 개인
           </Typography.Text>
           {previewError ? (
             <Alert type="error" showIcon message="최종 반영 실패" description={previewError} />

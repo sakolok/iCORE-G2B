@@ -12,6 +12,7 @@ import {
   Popconfirm,
   Select,
   Space,
+  Switch,
   Table,
   Tag,
   Typography,
@@ -21,7 +22,6 @@ import {
 import dayjs from "dayjs";
 import {
   formatApiError,
-  openingResultsApi,
   preSpecificationsApi,
 } from "../api/client";
 import "./PreSpecificationsPage.css";
@@ -41,7 +41,15 @@ const ARCHIVE_STATE_META = {
   EXPORTED: { color: "blue", label: "Sheet 반영" },
 };
 
-const DEFAULT_COLLECTION_RANGE = [dayjs().subtract(13, "day"), dayjs()];
+const HEADER_STATUS_META = {
+  MATCH: { type: "success", text: "A:L 헤더가 올바릅니다." },
+  EMPTY: { type: "success", text: "빈 탭입니다. 첫 반영 시 고정 헤더를 만듭니다." },
+  MISMATCH: {
+    type: "error",
+    text: "기존 헤더가 사전규격 12개 열과 다릅니다. 빈 탭이나 올바른 헤더의 탭을 사용하세요.",
+  },
+  NOT_CHECKED: { type: "warning", text: "탭을 확인하지 못했습니다." },
+};
 
 function formatDateTime(value) {
   if (!value) return "-";
@@ -76,10 +84,11 @@ function archiveDaysRemaining(expiresAt) {
   return Math.max(0, Math.ceil(dayjs(expiresAt).diff(dayjs(), "hour", true) / 24));
 }
 
-function PreSpecificationsPage({ session }) {
+function PreSpecificationsPage() {
   const listRequestId = useRef(0);
   const detailRequestId = useRef(0);
   const archiveRequestId = useRef(0);
+  const destinationVerifyRequestId = useRef(0);
   const [rows, setRows] = useState([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -93,13 +102,26 @@ function PreSpecificationsPage({ session }) {
   const [registeredRange, setRegisteredRange] = useState(null);
   const [attachmentFilter, setAttachmentFilter] = useState("ALL");
   const [deadlineFilter, setDeadlineFilter] = useState("ALL");
-  const [collectionRange, setCollectionRange] = useState(DEFAULT_COLLECTION_RANGE);
-  const [collecting, setCollecting] = useState(false);
   const [selectedById, setSelectedById] = useState(() => new Map());
   const [selectionOpen, setSelectionOpen] = useState(false);
   const [sheetSettings, setSheetSettings] = useState(null);
   const [sheetSettingsError, setSheetSettingsError] = useState("");
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [profileEnabled, setProfileEnabled] = useState(false);
+  const [keywords, setKeywords] = useState([]);
+  const [excludedKeywords, setExcludedKeywords] = useState([]);
+  const [savingProfile, setSavingProfile] = useState(false);
   const [destinationId, setDestinationId] = useState(null);
+  const [destinationOpen, setDestinationOpen] = useState(false);
+  const [savingDestination, setSavingDestination] = useState(false);
+  const [verifyingDestination, setVerifyingDestination] = useState(false);
+  const [connectionResult, setConnectionResult] = useState(null);
+  const [connectionError, setConnectionError] = useState("");
+  const [destinationDraft, setDestinationDraft] = useState({
+    label: "내 사전규격 Sheet",
+    spreadsheet_id: "",
+    tab_name: "사전규격",
+  });
   const [previewing, setPreviewing] = useState(false);
   const [writing, setWriting] = useState(false);
   const [previewData, setPreviewData] = useState(null);
@@ -176,24 +198,31 @@ function PreSpecificationsPage({ session }) {
       });
   }, [appliedQuery, attachmentFilter, deadlineFilter, page, pageSize, registeredRange, reloadKey]);
 
-  useEffect(() => {
+  const loadSheetSettings = async () => {
     setSheetSettingsError("");
-    openingResultsApi
-      .settings()
-      .then((response) => {
-        const nextSettings = response.data;
-        const destinations = nextSettings.sheet_destinations || [];
-        setSheetSettings(nextSettings);
-        setDestinationId((current) => {
-          if (destinations.some((item) => item.id === current)) return current;
-          return destinations.find((item) => item.is_default)?.id ?? destinations[0]?.id ?? null;
-        });
-      })
-      .catch((error) => {
-        setSheetSettingsError(
-          formatApiError(error, "Google Sheet 연결 정보를 불러오지 못했습니다.")
-        );
+    try {
+      const response = await preSpecificationsApi.settings();
+      const nextSettings = response.data;
+      const destinations = nextSettings.sheet_destinations || [];
+      setSheetSettings(nextSettings);
+      setProfileEnabled(nextSettings.profile?.enabled ?? false);
+      setKeywords(nextSettings.profile?.keywords || []);
+      setExcludedKeywords(nextSettings.profile?.excluded_keywords || []);
+      setDestinationId((current) => {
+        if (destinations.some((item) => item.id === current)) return current;
+        return destinations.find((item) => item.is_default)?.id ?? destinations[0]?.id ?? null;
       });
+      return nextSettings;
+    } catch (error) {
+      setSheetSettingsError(
+        formatApiError(error, "사전규격 설정을 불러오지 못했습니다.")
+      );
+      return null;
+    }
+  };
+
+  useEffect(() => {
+    loadSheetSettings();
   }, []);
 
   const loadArchive = async (
@@ -314,28 +343,168 @@ function PreSpecificationsPage({ session }) {
     }
   };
 
-  const collectRows = async () => {
-    if (!collectionRange?.[0] || !collectionRange?.[1]) {
-      message.warning("수집 기간을 선택해주세요.");
+  const saveProfile = async () => {
+    if (profileEnabled && keywords.length === 0) {
+      message.warning("활성화할 때는 포함 키워드를 한 개 이상 입력하세요.");
       return;
     }
-    setCollecting(true);
+    setSavingProfile(true);
     try {
-      const response = await preSpecificationsApi.collect({
-        start_date: collectionRange[0].format("YYYY-MM-DD"),
-        end_date: collectionRange[1].format("YYYY-MM-DD"),
+      await preSpecificationsApi.updateProfile({
+        enabled: profileEnabled,
+        keywords,
+        excluded_keywords: excludedKeywords,
       });
-      const result = response.data;
       clearSelection();
-      message.success(
-        `사전규격 ${result.fetched_count}건을 확인해 ${result.inserted_count}건 추가, ${result.updated_count}건 갱신했습니다.`
-      );
+      setProfileOpen(false);
       setPage(1);
       setReloadKey((current) => current + 1);
+      await loadSheetSettings();
+      message.success("내 사전규격 키워드 조건을 저장하고 선택을 비웠습니다.");
     } catch (error) {
-      message.error(formatApiError(error, "사전규격을 수집하지 못했습니다."));
+      message.error(formatApiError(error, "사전규격 조건 저장에 실패했습니다."));
     } finally {
-      setCollecting(false);
+      setSavingProfile(false);
+    }
+  };
+
+  const changeDestinationDraft = (field, value) => {
+    setDestinationDraft((current) => ({ ...current, [field]: value }));
+    if (field === "spreadsheet_id" || field === "tab_name") {
+      destinationVerifyRequestId.current += 1;
+      setVerifyingDestination(false);
+      setConnectionResult(null);
+      setConnectionError("");
+    }
+  };
+
+  const openDestinationModal = () => {
+    destinationVerifyRequestId.current += 1;
+    setDestinationDraft({
+      label: "내 사전규격 Sheet",
+      spreadsheet_id: "",
+      tab_name: "사전규격",
+    });
+    setConnectionResult(null);
+    setConnectionError("");
+    setVerifyingDestination(false);
+    setDestinationOpen(true);
+  };
+
+  const closeDestinationModal = () => {
+    destinationVerifyRequestId.current += 1;
+    setVerifyingDestination(false);
+    setDestinationOpen(false);
+  };
+
+  const verifyDestination = async () => {
+    if (!destinationDraft.spreadsheet_id.trim() || !destinationDraft.tab_name.trim()) {
+      message.warning("Google Sheet URL 또는 ID와 탭 이름을 입력하세요.");
+      return;
+    }
+    const requestId = ++destinationVerifyRequestId.current;
+    const requestedSpreadsheetId = destinationDraft.spreadsheet_id;
+    const requestedTabName = destinationDraft.tab_name;
+    setVerifyingDestination(true);
+    setConnectionError("");
+    try {
+      const response = await preSpecificationsApi.verifySheetDestination({
+        spreadsheet_id: requestedSpreadsheetId,
+        tab_name: requestedTabName,
+      });
+      if (requestId !== destinationVerifyRequestId.current) return;
+      setDestinationDraft((current) => ({
+        ...current,
+        spreadsheet_id: response.data.spreadsheet_id,
+      }));
+      setConnectionResult(response.data);
+      if (response.data.connection_ready) message.success("읽기 전용 연결 테스트를 통과했습니다.");
+    } catch (error) {
+      if (requestId !== destinationVerifyRequestId.current) return;
+      setConnectionResult(null);
+      setConnectionError(
+        formatApiError(error, "Google Sheet 연결 확인에 실패했습니다. 공유 권한을 확인하세요.")
+      );
+    } finally {
+      if (requestId === destinationVerifyRequestId.current) setVerifyingDestination(false);
+    }
+  };
+
+  const destinationVerified = Boolean(
+    connectionResult?.connection_ready &&
+      connectionResult.spreadsheet_id === destinationDraft.spreadsheet_id.trim() &&
+      connectionResult.tab_name === destinationDraft.tab_name.trim()
+  );
+
+  const saveDestination = async () => {
+    if (!destinationDraft.label.trim()) {
+      message.warning("Sheet 표시 이름을 입력하세요.");
+      return;
+    }
+    if (!destinationVerified) {
+      message.warning("현재 URL과 탭으로 연결 테스트를 먼저 통과하세요.");
+      return;
+    }
+    const existingDestination = usableDestinations.find(
+      (item) =>
+        item.spreadsheet_id === connectionResult.spreadsheet_id &&
+        item.tab_name === connectionResult.tab_name
+    );
+    if (existingDestination) {
+      setDestinationId(existingDestination.id);
+      closeDestinationModal();
+      message.info("이미 등록된 Google Sheet 목적지를 선택했습니다.");
+      return;
+    }
+    setSavingDestination(true);
+    try {
+      const response = await preSpecificationsApi.saveSheetDestination({
+        ...destinationDraft,
+        is_default: true,
+      });
+      await loadSheetSettings();
+      setDestinationId(response.data.id);
+      closeDestinationModal();
+      message.success("검증된 Google Sheet 목적지를 저장했습니다.");
+    } catch (error) {
+      if (error?.response?.status === 409) {
+        const nextSettings = await loadSheetSettings();
+        const existingDestination = (nextSettings?.sheet_destinations || []).find(
+          (item) =>
+            item.spreadsheet_id === connectionResult?.spreadsheet_id &&
+            item.tab_name === connectionResult?.tab_name
+        );
+        if (existingDestination) {
+          setDestinationId(existingDestination.id);
+          closeDestinationModal();
+          message.info("이미 등록된 Google Sheet 목적지를 선택했습니다.");
+          return;
+        }
+      }
+      message.error(formatApiError(error, "Google Sheet 목적지 저장에 실패했습니다."));
+    } finally {
+      setSavingDestination(false);
+    }
+  };
+
+  const deleteDestination = async (target) => {
+    try {
+      await preSpecificationsApi.deleteSheetDestination(target.id);
+      await loadSheetSettings();
+      message.success("Google Sheet 연결을 목록에서 제거했습니다.");
+    } catch (error) {
+      message.error(formatApiError(error, "Google Sheet 연결 제거에 실패했습니다."));
+    }
+  };
+
+  const copyServiceAccountEmail = async () => {
+    const email = sheetSettings?.sheet_service_account_email;
+    if (!email) return;
+    try {
+      await navigator.clipboard.writeText(email);
+      message.success("서비스계정 이메일을 복사했습니다.");
+    } catch {
+      message.error("자동 복사에 실패했습니다. 이메일을 직접 선택해 복사하세요.");
     }
   };
 
@@ -354,7 +523,7 @@ function PreSpecificationsPage({ session }) {
         setReloadKey((current) => current + 1);
         message.success("검토할 사전규격으로 복구했습니다.");
       } else {
-        message.warning("제외는 취소했지만 조직 공용 Sheet에서 처리되어 목록에는 표시되지 않습니다.");
+        message.warning("Sheet에 반영한 항목은 다시 검토 목록으로 복구할 수 없습니다.");
       }
     } catch (error) {
       message.error(formatApiError(error, "사전규격 복구에 실패했습니다."));
@@ -624,6 +793,9 @@ function PreSpecificationsPage({ session }) {
       url: externalHttpUrl(attachment.url),
     }))
     .filter((attachment) => attachment.url);
+  const connectionMeta = connectionResult
+    ? HEADER_STATUS_META[connectionResult.header_status] || HEADER_STATUS_META.NOT_CHECKED
+    : null;
 
   return (
     <section className="pre-specifications-page" aria-labelledby="pre-specifications-title">
@@ -648,25 +820,32 @@ function PreSpecificationsPage({ session }) {
           <Button onClick={manualRefresh} loading={loading}>
             목록 새로고침
           </Button>
-          {session?.role === "admin" ? (
-            <Space.Compact className="pre-specifications-collect-controls">
-              <RangePicker
-                value={collectionRange}
-                onChange={setCollectionRange}
-                allowClear={false}
-                disabledDate={(current) => current && current > dayjs().endOf("day")}
-              />
-              <Button type="primary" onClick={collectRows} loading={collecting}>
-                기간 수집
-              </Button>
-            </Space.Compact>
-          ) : null}
+          <Button onClick={openDestinationModal}>Sheet 연결 관리</Button>
+          <Button type="primary" ghost onClick={() => setProfileOpen(true)}>
+            조건 설정
+          </Button>
         </div>
       </header>
 
       {listError ? <Alert type="error" showIcon message={listError} /> : null}
       {sheetSettingsError ? (
-        <Alert type="warning" showIcon message={sheetSettingsError} />
+        <Alert
+          type="warning"
+          showIcon
+          message="사전규격 조건·Sheet 설정을 불러오지 못했습니다."
+          description={sheetSettingsError}
+          action={<Button onClick={loadSheetSettings}>다시 시도</Button>}
+        />
+      ) : null}
+
+      {sheetSettings && !usableDestinations.length ? (
+        <Alert
+          type="warning"
+          showIcon
+          message="연결된 Google Sheet가 없습니다."
+          description="서비스계정을 내 Sheet의 편집자로 공유하고 연결 테스트를 통과하면 저장할 수 있습니다."
+          action={<Button type="primary" onClick={openDestinationModal}>내 Sheet 연결</Button>}
+        />
       ) : null}
 
       <Card className="pre-specifications-filter-card">
@@ -725,6 +904,25 @@ function PreSpecificationsPage({ session }) {
             ]}
           />
           <Button onClick={resetFilters}>필터 초기화</Button>
+        </div>
+        <div className="pre-specifications-condition-row">
+          <Space wrap>
+            <Typography.Text strong>내 포함 키워드</Typography.Text>
+            {sheetSettings?.profile?.enabled ? (
+              sheetSettings.profile.keywords?.map((keyword) => <Tag key={keyword}>{keyword}</Tag>)
+            ) : (
+              <Tag>사용 안 함</Tag>
+            )}
+            {sheetSettings?.profile?.excluded_keywords?.length ? (
+              <>
+                <Typography.Text strong>제외</Typography.Text>
+                {sheetSettings.profile.excluded_keywords.map((keyword) => (
+                  <Tag color="orange" key={keyword}>{keyword}</Tag>
+                ))}
+              </>
+            ) : null}
+          </Space>
+          <Button type="link" onClick={() => setProfileOpen(true)}>조건 설정</Button>
         </div>
       </Card>
 
@@ -800,7 +998,7 @@ function PreSpecificationsPage({ session }) {
               className="pre-specifications-destination-select"
               options={usableDestinations.map((item) => ({
                 value: item.id,
-                label: `${item.label} · ${item.scope === "PERSONAL" ? "개인" : "조직"}`,
+                label: `${item.label} · 개인`,
               }))}
             />
             {usableDestinations.length ? (
@@ -813,13 +1011,215 @@ function PreSpecificationsPage({ session }) {
                 선택한 {selectedById.size}건 검토
               </Button>
             ) : (
-              <Button type="primary" href="#opening-results">
-                개찰결과에서 Sheet 연결
+              <Button type="primary" onClick={openDestinationModal}>
+                내 Sheet 연결
               </Button>
             )}
           </Space>
         </div>
       </Card>
+
+      <Drawer
+        title="내 사전규격 조건 설정"
+        width={520}
+        open={profileOpen}
+        onClose={() => setProfileOpen(false)}
+        extra={<Button type="primary" loading={savingProfile} onClick={saveProfile}>저장</Button>}
+      >
+        <Space direction="vertical" size={20} style={{ width: "100%" }}>
+          <Alert
+            type="info"
+            showIcon
+            message="포함 키워드 중 하나라도 일치하고 제외 키워드가 없을 때만 표시합니다."
+          />
+          <Space>
+            <Typography.Text strong>내 키워드 매칭 사용</Typography.Text>
+            <Switch checked={profileEnabled} onChange={setProfileEnabled} />
+          </Space>
+          <div>
+            <Typography.Text strong>내 포함 키워드 · OR 조건</Typography.Text>
+            <Select
+              mode="tags"
+              value={keywords}
+              onChange={setKeywords}
+              tokenSeparators={[","]}
+              placeholder="AI, 클라우드, 교육"
+              style={{ width: "100%", marginTop: 8 }}
+            />
+          </div>
+          <div>
+            <Typography.Text strong>내 제외 키워드 · 하나라도 있으면 제외</Typography.Text>
+            <Select
+              mode="tags"
+              value={excludedKeywords}
+              onChange={setExcludedKeywords}
+              tokenSeparators={[","]}
+              placeholder="연수구, 연수원"
+              style={{ width: "100%", marginTop: 8 }}
+            />
+          </div>
+          <Typography.Paragraph type="secondary">
+            예: 포함 `교육`, 제외 `연수원`이면 교육 사업은 남기고 기관명 오탐은 제외합니다.
+          </Typography.Paragraph>
+          <div>
+            <Typography.Text strong>Google Sheet 연결</Typography.Text>
+            <Typography.Paragraph type="secondary" style={{ marginTop: 8 }}>
+              내가 고른 사전규격을 반영할 개인 Sheet를 연결하거나 등록된 연결을 관리합니다.
+            </Typography.Paragraph>
+            <Button
+              onClick={() => {
+                setProfileOpen(false);
+                openDestinationModal();
+              }}
+            >
+              Sheet 연결 관리
+            </Button>
+          </div>
+        </Space>
+      </Drawer>
+
+      <Modal
+        title="내 사전규격 Google Sheet 연결"
+        open={destinationOpen}
+        width={860}
+        footer={null}
+        onCancel={closeDestinationModal}
+      >
+        <Space direction="vertical" size={20} style={{ width: "100%" }}>
+          <Alert
+            type={sheetSettings?.sheet_service_account_email ? "info" : "warning"}
+            showIcon
+            message={
+              sheetSettings?.sheet_service_account_email
+                ? "먼저 아래 서비스계정을 Google Sheet의 편집자로 공유하세요."
+                : "서비스계정 이메일 설정이 없어 연결을 시작할 수 없습니다."
+            }
+            description={
+              sheetSettings?.sheet_service_account_email ? (
+                <Space wrap>
+                  <Typography.Text copyable>{sheetSettings.sheet_service_account_email}</Typography.Text>
+                  <Button size="small" onClick={copyServiceAccountEmail}>복사</Button>
+                </Space>
+              ) : (
+                "백엔드의 GSHEET_SERVICE_ACCOUNT_EMAIL 설정을 관리자에게 요청하세요."
+              )
+            }
+          />
+
+          <div className="pre-specifications-destination-form">
+            <div>
+              <Typography.Text strong>표시 이름</Typography.Text>
+              <Input
+                value={destinationDraft.label}
+                onChange={(event) => changeDestinationDraft("label", event.target.value)}
+                placeholder="내 사전규격 Sheet"
+              />
+            </div>
+            <div>
+              <Typography.Text strong>Google Sheet URL 또는 ID</Typography.Text>
+              <Input
+                value={destinationDraft.spreadsheet_id}
+                onChange={(event) => changeDestinationDraft("spreadsheet_id", event.target.value)}
+                placeholder="https://docs.google.com/spreadsheets/d/.../edit"
+                disabled={verifyingDestination}
+              />
+            </div>
+            <div>
+              <Typography.Text strong>탭 이름</Typography.Text>
+              <Input
+                value={destinationDraft.tab_name}
+                onChange={(event) => changeDestinationDraft("tab_name", event.target.value)}
+                disabled={verifyingDestination}
+              />
+            </div>
+            <div>
+              <Typography.Text strong>사용 범위</Typography.Text>
+              <Input value="내 개인 Sheet" disabled />
+            </div>
+          </div>
+
+          {connectionError ? (
+            <Alert type="error" showIcon message="연결 테스트 실패" description={connectionError} />
+          ) : null}
+          {connectionResult ? (
+            <Alert
+              type={connectionMeta.type}
+              showIcon
+              message={connectionResult.connection_ready ? "연결할 수 있습니다." : "연결을 저장할 수 없습니다."}
+              description={
+                <Space direction="vertical" size={2}>
+                  <span>문서: {connectionResult.spreadsheet_title || "제목 없음"}</span>
+                  <span>탭: {connectionResult.tab_exists ? `${connectionResult.tab_name} 확인` : `${connectionResult.tab_name} 없음`}</span>
+                  <span>헤더: {connectionMeta.text}</span>
+                </Space>
+              }
+            />
+          ) : null}
+
+          <div className="pre-specifications-destination-actions">
+            <Button
+              onClick={verifyDestination}
+              loading={verifyingDestination}
+              disabled={!sheetSettings?.sheet_service_account_email}
+            >
+              연결 테스트 · 읽기 전용
+            </Button>
+            <Button
+              type="primary"
+              onClick={saveDestination}
+              loading={savingDestination}
+              disabled={!destinationVerified}
+            >
+              검증된 연결 저장
+            </Button>
+          </div>
+
+          <div>
+            <Typography.Title level={5}>등록된 내 Sheet</Typography.Title>
+            {usableDestinations.length ? (
+              <div className="pre-specifications-destination-list">
+                {usableDestinations.map((destination) => (
+                  <div className="pre-specifications-destination-item" key={destination.id}>
+                    <div>
+                      <Typography.Text strong>{destination.label}</Typography.Text>
+                      <Typography.Paragraph type="secondary">
+                        개인 · {destination.tab_name} 탭
+                      </Typography.Paragraph>
+                    </div>
+                    <Space>
+                      <Button
+                        type={destination.id === destinationId ? "primary" : "default"}
+                        disabled={destination.id === destinationId}
+                        onClick={() => {
+                          setDestinationId(destination.id);
+                          closeDestinationModal();
+                          message.success("Google Sheet 목적지를 선택했습니다.");
+                        }}
+                      >
+                        {destination.id === destinationId ? "사용 중" : "이 목적지 사용"}
+                      </Button>
+                      <Button href={sheetUrl(destination.spreadsheet_id)} target="_blank" rel="noreferrer">
+                        열기
+                      </Button>
+                      <Popconfirm
+                        title="이 Sheet 연결을 제거할까요?"
+                        description="기존 반영 기록과 Sheet 내용은 유지됩니다."
+                        okText="제거"
+                        cancelText="닫기"
+                        onConfirm={() => deleteDestination(destination)}
+                      >
+                        <Button danger>연결 제거</Button>
+                      </Popconfirm>
+                    </Space>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="등록된 Sheet가 없습니다." />
+            )}
+          </div>
+        </Space>
+      </Modal>
 
       <Modal
         title="선택한 사전규격"
@@ -893,13 +1293,11 @@ function PreSpecificationsPage({ session }) {
             showIcon
             message="아직 Google Sheets에 반영하지 않았어요."
             description={
-              previewData?.destination_scope === "ORGANIZATION"
-                ? "조직 공용 Sheet에 반영하면 같은 조직 전체의 검토 목록에서 숨겨집니다. 아래 12개 열과 목적지를 확인한 뒤 최종 반영하세요."
-                : "아래 12개 열과 목적지를 확인한 뒤 최종 반영을 눌러야 실제 쓰기가 실행됩니다. 선택하지 않은 Sheet 행은 변경하지 않습니다."
+              "아래 12개 열과 개인 Sheet 목적지를 확인한 뒤 최종 반영을 눌러야 실제 쓰기가 실행됩니다. 선택하지 않은 Sheet 행은 변경하지 않습니다."
             }
           />
           <Typography.Text strong>
-            목적지: {previewData?.destination_label} · {previewData?.destination_tab_name} 탭 · {previewData?.destination_scope === "PERSONAL" ? "개인" : "조직 공용"}
+            목적지: {previewData?.destination_label} · {previewData?.destination_tab_name} 탭 · 개인
           </Typography.Text>
           {previewError ? (
             <Alert type="error" showIcon message="최종 반영 실패" description={previewError} />
