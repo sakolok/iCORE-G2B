@@ -67,6 +67,26 @@ class UserBidNoticeMatchModel(Base):
     matched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utcnow)
 
 
+class UserBidNoticeStateModel(Base):
+    __tablename__ = "user_bid_notice_states"
+    __table_args__ = (
+        UniqueConstraint("user_id", "notice_id", name="uq_user_bid_notice_state"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    organization_id: Mapped[int] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    notice_id: Mapped[int] = mapped_column(
+        ForeignKey("scraper_notices.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    state: Mapped[str] = mapped_column(String(20), nullable=False, default="DISMISSED")
+    acted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utcnow)
+
+
 class BidNoticeSheetExportModel(Base):
     __tablename__ = "g2b_bid_notice_sheet_exports"
     __table_args__ = (

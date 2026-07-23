@@ -9,6 +9,8 @@ from sqlalchemy.orm import Session
 from app.data.models import Base, ScraperNoticeModel
 from app.g2b.bid_notices.collector import collect_bid_notices
 from app.g2b.bid_notices.matching import (
+    dismiss_user_bid_notice,
+    restore_user_bid_notice,
     sync_user_bid_notice_matches,
     update_user_bid_notice_profile,
 )
@@ -16,6 +18,7 @@ from app.g2b.bid_notices.models import (
     BidNoticeCollectionRunModel,
     BidNoticeSheetExportModel,
     UserBidNoticeMatchModel,
+    UserBidNoticeStateModel,
 )
 from app.g2b.bid_notices.sheet_export import (
     build_bid_notice_sheet_rows,
@@ -59,6 +62,7 @@ class BidNoticeCollectorTests(unittest.TestCase):
             start_date=date(2026, 7, 20),
             end_date=date(2026, 7, 23),
             business_types=["SERVICE"],
+            keywords=["AI"],
         )
 
         stored = self.db.scalar(select(ScraperNoticeModel))
@@ -69,6 +73,7 @@ class BidNoticeCollectorTests(unittest.TestCase):
         self.assertEqual(stored.official_base_amount, Decimal("95000000"))
         self.assertEqual(stored.bid_notice_ord, "000")
         self.assertEqual(stored.work_type, "용역")
+        self.assertEqual(fetch_operation.call_args.kwargs["keyword"], "AI")
         # SQLite strips timezone metadata; the source KST wall-clock value must
         # still remain unchanged after the shared persistence round trip.
         self.assertEqual(stored.published_at.hour, 10)
@@ -162,3 +167,42 @@ class BidNoticeCollectorTests(unittest.TestCase):
         complete_bid_notice_sheet_exports(self.db, claim=claim)
         history = self.db.scalar(select(BidNoticeSheetExportModel))
         self.assertEqual(history.status, "SUCCEEDED")
+
+    def test_dismissed_notice_is_kept_only_in_the_personal_archive_state(self):
+        now = datetime.now(timezone.utc)
+        notice = ScraperNoticeModel(
+            dedup_key="bid-notice-archive-test",
+            notice_id="R26BK000004",
+            title="AI 플랫폼 용역",
+            first_seen_at=now,
+            last_seen_at=now,
+            published_at=now,
+            source_payload="{}",
+        )
+        self.db.add(notice)
+        self.db.commit()
+        update_user_bid_notice_profile(
+            self.db,
+            organization_id=1,
+            user_id=10,
+            enabled=True,
+            keywords=["AI"],
+            excluded_keywords=[],
+        )
+        dismiss_user_bid_notice(
+            self.db,
+            organization_id=1,
+            user_id=10,
+            notice_id=notice.id,
+        )
+        state = self.db.scalar(select(UserBidNoticeStateModel))
+        self.assertEqual(state.state, "DISMISSED")
+        self.assertTrue(
+            restore_user_bid_notice(
+                self.db,
+                organization_id=1,
+                user_id=10,
+                notice_id=notice.id,
+            )
+        )
+        self.assertIsNone(self.db.scalar(select(UserBidNoticeStateModel)))

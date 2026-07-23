@@ -1,21 +1,28 @@
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.orm import Session
 
 from app.data.database import get_db
 from app.data.models import ScraperNoticeModel
 from app.g2b.bid_notices.collector import BidNoticeCollectionError, collect_bid_notices
 from app.g2b.bid_notices.matching import (
+    dismiss_user_bid_notice,
     get_user_bid_notice_profile,
+    restore_user_bid_notice,
     sync_user_bid_notice_matches,
     update_user_bid_notice_profile,
 )
-from app.g2b.bid_notices.models import UserBidNoticeMatchModel
+from app.g2b.bid_notices.models import (
+    UserBidNoticeMatchModel,
+    UserBidNoticeStateModel,
+)
 from app.g2b.bid_notices.schemas import (
     BidNoticeListItem,
     BidNoticeListResponse,
+    BidNoticeArchiveResponse,
+    DismissBidNoticeResponse,
     BidNoticeProfileResponse,
     BidNoticeProfileUpdateRequest,
     BidNoticeSheetDestinationRequest,
@@ -27,6 +34,7 @@ from app.g2b.bid_notices.schemas import (
     CollectBidNoticesResponse,
     ExportBidNoticesSheetRequest,
     ExportBidNoticesSheetResponse,
+    RestoreBidNoticeResponse,
 )
 from app.g2b.bid_notices.sheet_export import (
     BID_NOTICE_SHEET_HEADERS,
@@ -78,12 +86,22 @@ def collect_bid_notice_data(
 ) -> CollectBidNoticesResponse:
     if auth.get("role") != "admin":
         raise HTTPException(status_code=403, detail="시스템 관리자만 공통 원본 수집을 실행할 수 있습니다.")
+    profile = get_user_bid_notice_profile(
+        db, organization_id=auth["organization_id"], user_id=auth["user_id"]
+    )
+    keywords = normalize_keywords(profile.keywords)
+    if not profile.enabled or not keywords:
+        raise HTTPException(
+            status_code=409,
+            detail="수집하려면 조건 설정에서 포함 키워드를 한 개 이상 저장하고 조건 사용을 켜세요.",
+        )
     try:
         result = collect_bid_notices(
             db,
             start_date=request.start_date,
             end_date=request.end_date,
             business_types=request.business_types,
+            keywords=keywords,
         )
     except BidNoticeCollectionError as error:
         raise HTTPException(status_code=502, detail=str(error)) from error
@@ -132,6 +150,7 @@ def save_bid_notice_profile(
 @router.get("", response_model=BidNoticeListResponse)
 def list_bid_notices(
     q: str | None = Query(default=None, max_length=200),
+    work_type: str | None = Query(default=None, max_length=40),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=30, ge=1, le=100),
     auth: dict = Depends(require_organization_auth),
@@ -148,14 +167,25 @@ def list_bid_notices(
             UserBidNoticeMatchModel,
             UserBidNoticeMatchModel.notice_id == ScraperNoticeModel.id,
         )
+        .outerjoin(
+            UserBidNoticeStateModel,
+            and_(
+                UserBidNoticeStateModel.user_id == auth["user_id"],
+                UserBidNoticeStateModel.notice_id == ScraperNoticeModel.id,
+                UserBidNoticeStateModel.state == "DISMISSED",
+            ),
+        )
         .where(
             UserBidNoticeMatchModel.user_id == auth["user_id"],
             UserBidNoticeMatchModel.is_current_match.is_(True),
             ScraperNoticeModel.published_at >= cutoff,
+            UserBidNoticeStateModel.id.is_(None),
         )
     )
     if q and q.strip():
         statement = statement.where(ScraperNoticeModel.title.like(f"%{q.strip()}%"))
+    if work_type and work_type.strip():
+        statement = statement.where(ScraperNoticeModel.work_type == work_type.strip())
     total = db.execute(select(func.count()).select_from(statement.subquery())).scalar_one()
     rows = db.execute(
         statement.order_by(ScraperNoticeModel.published_at.desc(), ScraperNoticeModel.id.desc())
@@ -184,6 +214,102 @@ def list_bid_notices(
         for notice, matched_keyword in rows
     ]
     return BidNoticeListResponse(items=items, total=total, page=page, page_size=page_size)
+
+
+@router.get("/archive", response_model=BidNoticeArchiveResponse)
+def list_bid_notice_archive(
+    q: str | None = Query(default=None, max_length=200),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=30, ge=1, le=100),
+    auth: dict = Depends(require_organization_auth),
+    db: Session = Depends(get_db),
+) -> BidNoticeArchiveResponse:
+    cutoff = datetime.now(timezone.utc) - timedelta(days=14)
+    statement = (
+        select(ScraperNoticeModel, UserBidNoticeMatchModel.matched_keyword)
+        .join(
+            UserBidNoticeStateModel,
+            and_(
+                UserBidNoticeStateModel.notice_id == ScraperNoticeModel.id,
+                UserBidNoticeStateModel.user_id == auth["user_id"],
+                UserBidNoticeStateModel.state == "DISMISSED",
+            ),
+        )
+        .join(
+            UserBidNoticeMatchModel,
+            and_(
+                UserBidNoticeMatchModel.notice_id == ScraperNoticeModel.id,
+                UserBidNoticeMatchModel.user_id == auth["user_id"],
+            ),
+        )
+        .where(ScraperNoticeModel.published_at >= cutoff)
+    )
+    if q and q.strip():
+        statement = statement.where(ScraperNoticeModel.title.like(f"%{q.strip()}%"))
+    total = db.execute(select(func.count()).select_from(statement.subquery())).scalar_one()
+    rows = db.execute(
+        statement.order_by(UserBidNoticeStateModel.acted_at.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    ).all()
+    items = [
+        BidNoticeListItem(
+            id=notice.id,
+            bid_notice_no=notice.bid_notice_no,
+            bid_notice_ord=notice.bid_notice_ord,
+            business_name=notice.business_name or notice.title,
+            demand_agency_name=notice.demand_agency_name or notice.agency,
+            work_type=notice.work_type,
+            procurement_type=notice.procurement_type,
+            official_base_amount=notice.official_base_amount,
+            business_amount=notice.base_amount,
+            published_at=notice.published_at,
+            deadline_at=notice.deadline_at,
+            notice_url=notice.notice_url,
+            region_restriction=notice.region_restriction,
+            region_restriction_api_status=notice.region_restriction_api_status,
+            is_two_stage_bid=notice.is_two_stage_bid,
+            matched_keyword=matched_keyword,
+        )
+        for notice, matched_keyword in rows
+    ]
+    return BidNoticeArchiveResponse(items=items, total=total, page=page, page_size=page_size)
+
+
+@router.delete("/items/{notice_id}", response_model=DismissBidNoticeResponse)
+def dismiss_bid_notice(
+    notice_id: int,
+    auth: dict = Depends(require_organization_auth),
+    db: Session = Depends(get_db),
+) -> DismissBidNoticeResponse:
+    try:
+        dismiss_user_bid_notice(
+            db,
+            organization_id=auth["organization_id"],
+            user_id=auth["user_id"],
+            notice_id=notice_id,
+        )
+    except LookupError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    return DismissBidNoticeResponse(notice_id=notice_id)
+
+
+@router.post("/items/{notice_id}/restore", response_model=RestoreBidNoticeResponse)
+def restore_bid_notice(
+    notice_id: int,
+    auth: dict = Depends(require_organization_auth),
+    db: Session = Depends(get_db),
+) -> RestoreBidNoticeResponse:
+    try:
+        restore_user_bid_notice(
+            db,
+            organization_id=auth["organization_id"],
+            user_id=auth["user_id"],
+            notice_id=notice_id,
+        )
+    except LookupError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    return RestoreBidNoticeResponse(notice_id=notice_id)
 
 
 @router.get(
