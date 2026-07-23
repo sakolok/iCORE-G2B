@@ -23,4 +23,6 @@
 .bid-notices-profile-form, .bid-notices-collect-form, .bid-notices-export-form { display: grid; gap: 18px; }
 .bid-notices-profile-form > div:not(.bid-notices-condition-row), .bid-notices-collect-form > div:not(.ant-alert) { display: grid; gap: 7px; }
 .bid-notices-profile-form .ant-select, .bid-notices-collect-form .ant-select { width: 100%; }
+.bid-notices-destination-list { display: grid; gap: 8px; max-height: 160px; overflow: auto; }
+.bid-notices-destination-item { display: flex; justify-content: space-between; width: 100%; }
 @media (max-width: 720px) { .bid-notices-hero { align-items: flex-start; flex-direction: column; } }
