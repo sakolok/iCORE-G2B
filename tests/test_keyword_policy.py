@@ -181,6 +181,7 @@ class KeywordPolicyTests(unittest.TestCase):
             connection.execute(
                 text("CREATE TABLE scraper_notices (id INTEGER PRIMARY KEY)")
             )
+            connection.execute(text("INSERT INTO scraper_notices (id) VALUES (1)"))
 
         ensure_schema_compatibility(engine)
 
@@ -198,8 +199,17 @@ class KeywordPolicyTests(unittest.TestCase):
                 "proposal_deadline",
                 "region_restriction",
                 "is_two_stage_bid",
+                "work_type",
+                "procurement_type",
+                "official_base_amount",
+                "source_payload",
             }.issubset(columns)
         )
+        with engine.connect() as connection:
+            source_payload = connection.execute(
+                text("SELECT source_payload FROM scraper_notices WHERE id = 1")
+            ).scalar_one()
+        self.assertEqual(source_payload, "{}")
         indexes = {
             index["name"] for index in inspect(engine).get_indexes("scraper_notices")
         }
