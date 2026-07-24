@@ -70,7 +70,7 @@ class ScraperNotice(BaseModel):
         max_length=120,
     )
     proposal_deadline: Optional[datetime] = None
-    region_restriction: Optional[str] = Field(default=None, max_length=240)
+    region_restriction: Optional[str] = None
     region_restriction_api_status: Optional[RegionRestrictionApiStatus] = None
     is_two_stage_bid: Optional[bool] = None
 

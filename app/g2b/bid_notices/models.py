@@ -27,6 +27,45 @@ class BidNoticeCollectionRunModel(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class BidNoticeDocumentAnalysisModel(Base):
+    __tablename__ = "g2b_bid_notice_document_analyses"
+    __table_args__ = (
+        UniqueConstraint(
+            "notice_id",
+            "attachment_key",
+            "analyzer_version",
+            name="uq_bid_notice_document_analysis",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    notice_id: Mapped[int] = mapped_column(
+        ForeignKey("scraper_notices.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    attachment_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    attachment_name: Mapped[str] = mapped_column(String(500), nullable=False)
+    attachment_url: Mapped[str] = mapped_column(Text, nullable=False)
+    analyzer_version: Mapped[str] = mapped_column(String(40), nullable=False)
+    content_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    status: Mapped[str] = mapped_column(String(30), nullable=False, default="PENDING")
+    needs_region: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    needs_industry: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    region_result: Mapped[str | None] = mapped_column(Text, nullable=True)
+    region_status: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    industry_codes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    industry_status: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    evidence: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    analyzed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow, onupdate=_utcnow
+    )
+
+
 class UserBidNoticeProfileModel(Base):
     __tablename__ = "user_bid_notice_profiles"
     __table_args__ = (UniqueConstraint("user_id", name="uq_user_bid_notice_profile"),)

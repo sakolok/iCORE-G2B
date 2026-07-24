@@ -1,4 +1,4 @@
-from sqlalchemy import delete, inspect, select, text
+from sqlalchemy import Text, delete, inspect, select, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
@@ -135,6 +135,32 @@ def _ensure_unique_index(
             raise
 
 
+def _ensure_mysql_text_column(
+    engine: Engine,
+    table_name: str,
+    column_name: str,
+) -> None:
+    if engine.dialect.name != "mysql":
+        return
+    inspector = inspect(engine)
+    if table_name not in inspector.get_table_names():
+        return
+    column = next(
+        (
+            candidate
+            for candidate in inspector.get_columns(table_name)
+            if candidate["name"] == column_name
+        ),
+        None,
+    )
+    if column is None or isinstance(column["type"], Text):
+        return
+    with engine.begin() as connection:
+        connection.execute(
+            text(f"ALTER TABLE {table_name} MODIFY COLUMN {column_name} TEXT NULL")
+        )
+
+
 def ensure_schema_compatibility(engine: Engine) -> None:
     _ensure_columns(
         engine,
@@ -174,10 +200,14 @@ def ensure_schema_compatibility(engine: Engine) -> None:
             "base_amount": "NUMERIC(20, 2) NULL",
             "prearranged_price_decision_method": "VARCHAR(120) NULL",
             "proposal_deadline": "DATETIME NULL",
-            "region_restriction": "VARCHAR(240) NULL",
+            "region_restriction": "TEXT NULL",
             "region_restriction_api_status": "VARCHAR(20) NULL",
+            "region_restriction_source": "VARCHAR(20) NULL",
+            "region_restriction_evidence": "TEXT NULL",
             "industry_restriction_codes": "VARCHAR(240) NULL",
             "industry_restriction_api_status": "VARCHAR(20) NULL",
+            "industry_restriction_source": "VARCHAR(20) NULL",
+            "industry_restriction_evidence": "TEXT NULL",
             "icore_industry_code_match": "BOOLEAN NULL",
             "is_two_stage_bid": "BOOLEAN NULL",
             "joint_supply_allowed": "BOOLEAN NULL",
@@ -187,6 +217,7 @@ def ensure_schema_compatibility(engine: Engine) -> None:
             "source_payload": "TEXT NULL",
         },
     )
+    _ensure_mysql_text_column(engine, "scraper_notices", "region_restriction")
     if "scraper_notices" in inspect(engine).get_table_names():
         with engine.begin() as connection:
             connection.execute(

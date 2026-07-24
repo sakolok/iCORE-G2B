@@ -551,7 +551,6 @@ def _notice_fields_for_db(notice: ScraperNotice) -> dict[str, object | None]:
         "proposal_deadline": notice.proposal_deadline,
         "region_restriction": clean_optional_text(
             notice.region_restriction,
-            max_length=240,
         ),
         "region_restriction_api_status": notice.region_restriction_api_status,
         "is_two_stage_bid": notice.is_two_stage_bid,
@@ -760,7 +759,6 @@ def _fetch_official_bid_notice_context(
 
     region_restriction = clean_optional_text(
         item.get("prtcptPsblRgnNm"),
-        max_length=240,
     )
     region_url = _resolve_bid_notice_operation_url(
         "getBidPblancListInfoPrtcptPsblRgn",
@@ -786,7 +784,6 @@ def _fetch_official_bid_notice_context(
                     region_names.append(region_name)
             region_restriction = clean_optional_text(
                 ", ".join(region_names),
-                max_length=240,
             )
             region_api_status = (
                 REGION_API_VALUE if region_restriction else REGION_API_EMPTY

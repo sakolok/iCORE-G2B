@@ -26,6 +26,7 @@ env:
   PRE_SPECIFICATIONS_SCHEDULER_JOB_ID: icore-g2b-pre-specifications-daily
   NOTICE_ENRICHMENT_SCHEDULER_JOB_ID: icore-g2b-notice-enrichment
   BID_NOTICES_SCHEDULER_JOB_ID: icore-g2b-bid-notices-4daily
+  BID_NOTICE_DOCUMENT_ANALYSIS_SCHEDULER_JOB_ID: icore-g2b-bid-notice-document-analysis-4daily
 
 jobs:
   test-and-build:
@@ -383,6 +384,48 @@ jobs:
           bid_notices_expected="$BID_NOTICES_SCHEDULE $EXPECTED_TIME_ZONE ENABLED $BID_NOTICES_TARGET_URL POST $INVOKER_SERVICE_ACCOUNT $API_URL"
           if [ "$bid_notices_actual" != "$bid_notices_expected" ]; then
             echo "Bid notice scheduler verification failed."
+            exit 1
+          fi
+
+          BID_NOTICE_DOCUMENT_ANALYSIS_TARGET_URL="$API_URL/api/v1/bid-notices/internal/analyze-documents"
+          BID_NOTICE_DOCUMENT_ANALYSIS_SCHEDULE="5 8,11,14,17 * * *"
+          bid_notice_document_analysis_args=(
+            --project="${{ env.PROJECT_ID }}"
+            --location="${{ env.CLOUD_SCHEDULER_LOCATION }}"
+            --schedule="$BID_NOTICE_DOCUMENT_ANALYSIS_SCHEDULE"
+            --time-zone="$EXPECTED_TIME_ZONE"
+            --uri="$BID_NOTICE_DOCUMENT_ANALYSIS_TARGET_URL"
+            --http-method=POST
+            --message-body='{}'
+            --oidc-service-account-email="$INVOKER_SERVICE_ACCOUNT"
+            --oidc-token-audience="$API_URL"
+            --attempt-deadline=30m
+            --max-retry-attempts=2
+            --min-backoff=60s
+            --max-backoff=600s
+            --max-doublings=3
+          )
+          if gcloud scheduler jobs describe "${{ env.BID_NOTICE_DOCUMENT_ANALYSIS_SCHEDULER_JOB_ID }}" \
+            --project="${{ env.PROJECT_ID }}" \
+            --location="${{ env.CLOUD_SCHEDULER_LOCATION }}" >/dev/null 2>&1; then
+            gcloud scheduler jobs update http "${{ env.BID_NOTICE_DOCUMENT_ANALYSIS_SCHEDULER_JOB_ID }}" \
+              "${bid_notice_document_analysis_args[@]}" \
+              --update-headers="Content-Type=application/json,X-Scraper-Internal-Token=$INTERNAL_TOKEN"
+          else
+            gcloud scheduler jobs create http "${{ env.BID_NOTICE_DOCUMENT_ANALYSIS_SCHEDULER_JOB_ID }}" \
+              "${bid_notice_document_analysis_args[@]}" \
+              --headers="Content-Type=application/json,X-Scraper-Internal-Token=$INTERNAL_TOKEN"
+          fi
+          gcloud scheduler jobs resume "${{ env.BID_NOTICE_DOCUMENT_ANALYSIS_SCHEDULER_JOB_ID }}" \
+            --project="${{ env.PROJECT_ID }}" \
+            --location="${{ env.CLOUD_SCHEDULER_LOCATION }}" || true
+          bid_notice_document_analysis_actual=$(gcloud scheduler jobs describe "${{ env.BID_NOTICE_DOCUMENT_ANALYSIS_SCHEDULER_JOB_ID }}" \
+            --project="${{ env.PROJECT_ID }}" \
+            --location="${{ env.CLOUD_SCHEDULER_LOCATION }}" \
+            --format=json | jq -r '[.schedule, .timeZone, .state, .httpTarget.uri, .httpTarget.httpMethod, .httpTarget.oidcToken.serviceAccountEmail, .httpTarget.oidcToken.audience] | join(" ")')
+          bid_notice_document_analysis_expected="$BID_NOTICE_DOCUMENT_ANALYSIS_SCHEDULE $EXPECTED_TIME_ZONE ENABLED $BID_NOTICE_DOCUMENT_ANALYSIS_TARGET_URL POST $INVOKER_SERVICE_ACCOUNT $API_URL"
+          if [ "$bid_notice_document_analysis_actual" != "$bid_notice_document_analysis_expected" ]; then
+            echo "Bid notice document analysis scheduler verification failed."
             exit 1
           fi
 

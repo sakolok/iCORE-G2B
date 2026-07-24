@@ -309,7 +309,7 @@ class ScraperNoticePersistenceTests(unittest.TestCase):
             )
         )
 
-    def test_official_context_truncates_long_region_restriction(self):
+    def test_official_context_preserves_long_region_restriction(self):
         result_id = self.add_opening_result()
         round_row = self.db.get(BidOpeningRoundModel, result_id)
         notice_item = {
@@ -339,8 +339,9 @@ class ScraperNoticePersistenceTests(unittest.TestCase):
 
         self.assertIsNotNone(notice)
         self.assertEqual(notice.base_amount, Decimal("90000000"))
-        self.assertEqual(len(notice.region_restriction), 240)
-        self.assertTrue(notice.region_restriction.startswith("지역제한-00"))
+        expected_regions = ", ".join(f"지역제한-{index:02d}" for index in range(40))
+        self.assertGreater(len(expected_regions), 240)
+        self.assertEqual(notice.region_restriction, expected_regions)
         self.assertEqual(
             notice.region_restriction_api_status,
             REGION_API_VALUE,

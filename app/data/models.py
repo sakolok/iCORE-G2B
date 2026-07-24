@@ -85,16 +85,20 @@ class ScraperNoticeModel(Base):
     proposal_deadline: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
-    region_restriction: Mapped[str | None] = mapped_column(String(240), nullable=True)
+    region_restriction: Mapped[str | None] = mapped_column(Text, nullable=True)
     region_restriction_api_status: Mapped[str | None] = mapped_column(
         String(20), nullable=True
     )
+    region_restriction_source: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    region_restriction_evidence: Mapped[str | None] = mapped_column(Text, nullable=True)
     industry_restriction_codes: Mapped[str | None] = mapped_column(
         String(240), nullable=True
     )
     industry_restriction_api_status: Mapped[str | None] = mapped_column(
         String(20), nullable=True
     )
+    industry_restriction_source: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    industry_restriction_evidence: Mapped[str | None] = mapped_column(Text, nullable=True)
     icore_industry_code_match: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     is_two_stage_bid: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     joint_supply_allowed: Mapped[bool | None] = mapped_column(Boolean, nullable=True)

@@ -9,6 +9,7 @@ from sqlalchemy import or_, select, update
 from sqlalchemy.orm import Session
 
 from app.data.models import ScraperNoticeModel
+from app.g2b.bid_notice import KST
 from app.g2b.bid_notices.models import BidNoticeSheetExportModel
 from app.g2b.opening_results.matching import SheetExportConflictError
 from app.g2b.opening_results.models import SheetDestinationModel
@@ -20,6 +21,18 @@ from app.g2b.opening_results.sheet_export import (
 
 
 BID_NOTICE_SHEET_HEADERS = [
+    "공고번호",
+    "공고명",
+    "게시일시(입찰마감일시)",
+    "수요기관",
+    "사업금액",
+    "업종제한(기관코드)",
+    "공동도급",
+    "지역제한",
+    "원문",
+    "첨부파일",
+]
+LEGACY_BID_NOTICE_SHEET_HEADERS = [
     "공고번호",
     "차수",
     "공고명",
@@ -43,11 +56,49 @@ def _utcnow() -> datetime:
 def _format_datetime(value: datetime | None) -> str:
     if value is None:
         return ""
-    return value.strftime("%Y-%m-%d %H:%M")
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=KST)
+    return value.astimezone(KST).strftime("%Y-%m-%d %H:%M")
+
+
+def _format_notice_schedule(notice: ScraperNoticeModel) -> str:
+    published_at = _format_datetime(notice.published_at)
+    deadline_at = _format_datetime(notice.deadline_at)
+    if not published_at and not deadline_at:
+        return ""
+    return f"{published_at}\n({deadline_at})"
+
+
+def _notice_number(notice: ScraperNoticeModel) -> str:
+    notice_no = notice.bid_notice_no or notice.notice_id or ""
+    notice_ord = (notice.bid_notice_ord or "").strip()
+    return f"{notice_no}-{notice_ord}" if notice_no and notice_ord else notice_no
+
+
+def _attachment_urls(notice: ScraperNoticeModel) -> str:
+    try:
+        source = json.loads(notice.source_payload or "{}")
+    except (TypeError, ValueError):
+        return ""
+    if not isinstance(source, dict):
+        return ""
+
+    urls: list[str] = []
+    for index in range(1, 11):
+        url = str(source.get(f"ntceSpecDocUrl{index}") or "").strip()
+        if url and url not in urls:
+            urls.append(url)
+    return "\n".join(urls)
+
+
+def _joint_supply_text(value: bool | None) -> str:
+    if value is None:
+        return "확인 필요"
+    return "가능" if value else "불가"
 
 
 def _notice_key(row: list[str | int | float]) -> str:
-    return f"{str(row[0]).strip()}|{str(row[1]).strip()}"
+    return str(row[0]).strip()
 
 
 def build_bid_notice_sheet_rows(
@@ -55,25 +106,45 @@ def build_bid_notice_sheet_rows(
 ) -> list[list[str | int | float]]:
     return [
         [
-            notice.bid_notice_no or notice.notice_id or "",
-            notice.bid_notice_ord or "",
+            _notice_number(notice),
             notice.business_name or notice.title or "",
+            _format_notice_schedule(notice),
             notice.demand_agency_name or notice.agency or "",
-            notice.work_type or "",
-            notice.procurement_type or "",
-            _format_datetime(notice.published_at),
-            _format_datetime(notice.deadline_at),
             float(notice.base_amount) if notice.base_amount is not None else "",
-            (
-                float(notice.official_base_amount)
-                if notice.official_base_amount is not None
-                else ""
-            ),
+            notice.industry_restriction_codes or "",
+            _joint_supply_text(notice.joint_supply_allowed),
             notice.region_restriction or "",
             notice.notice_url or "",
+            _attachment_urls(notice),
         ]
         for notice in notices
     ]
+
+
+def _migrate_legacy_rows(rows: list[list[Any]]) -> list[list[str]]:
+    migrated_rows: list[list[str]] = []
+    for row in rows:
+        notice_no = str(row[0]).strip() if len(row) > 0 else ""
+        if not notice_no:
+            continue
+        notice_ord = str(row[1]).strip() if len(row) > 1 else ""
+        published_at = str(row[6]).strip() if len(row) > 6 else ""
+        deadline_at = str(row[7]).strip() if len(row) > 7 else ""
+        migrated_rows.append(
+            [
+                f"{notice_no}-{notice_ord}" if notice_ord else notice_no,
+                str(row[2]).strip() if len(row) > 2 else "",
+                f"{published_at}\n({deadline_at})" if published_at or deadline_at else "",
+                str(row[3]).strip() if len(row) > 3 else "",
+                str(row[8]).strip() if len(row) > 8 else "",
+                "",
+                "확인 필요",
+                str(row[10]).strip() if len(row) > 10 else "",
+                str(row[11]).strip() if len(row) > 11 else "",
+                "",
+            ]
+        )
+    return migrated_rows
 
 
 def build_bid_notice_preview_token(
@@ -133,6 +204,8 @@ class BidNoticeSheetWriter(GoogleSheetWriter):
             status = "EMPTY"
         elif values[0][: len(BID_NOTICE_SHEET_HEADERS)] == BID_NOTICE_SHEET_HEADERS:
             status = "MATCH"
+        elif values[0][: len(LEGACY_BID_NOTICE_SHEET_HEADERS)] == LEGACY_BID_NOTICE_SHEET_HEADERS:
+            status = "MIGRATION_READY"
         else:
             status = "MISMATCH"
         return spreadsheet_title, True, status
@@ -153,28 +226,53 @@ class BidNoticeSheetWriter(GoogleSheetWriter):
                 valueInputOption="RAW",
                 body={"values": [BID_NOTICE_SHEET_HEADERS]},
             ).execute()
+        elif header_values[0][: len(LEGACY_BID_NOTICE_SHEET_HEADERS)] == LEGACY_BID_NOTICE_SHEET_HEADERS:
+            legacy_rows = (
+                values_api.get(
+                    spreadsheetId=self.spreadsheet_id,
+                    range=f"'{escaped_tab}'!A2:L",
+                )
+                .execute()
+                .get("values")
+                or []
+            )
+            existing_rows = _migrate_legacy_rows(legacy_rows)
+            values_api.clear(
+                spreadsheetId=self.spreadsheet_id,
+                range=f"'{escaped_tab}'!A:L",
+                body={},
+            ).execute()
+            values_api.update(
+                spreadsheetId=self.spreadsheet_id,
+                range=f"'{escaped_tab}'!A1",
+                valueInputOption="RAW",
+                body={"values": [BID_NOTICE_SHEET_HEADERS, *existing_rows]},
+            ).execute()
         elif header_values[0][: len(BID_NOTICE_SHEET_HEADERS)] != BID_NOTICE_SHEET_HEADERS:
             raise SheetExportConfigurationError(
-                "입찰공고 Sheet의 A:L 헤더가 고정 12개 열과 일치하지 않습니다."
+                "입찰공고 Sheet의 A:J 헤더가 새 10개 열과 일치하지 않습니다."
             )
 
-        existing_rows = (
-            values_api.get(
-                spreadsheetId=self.spreadsheet_id,
-                range=f"'{escaped_tab}'!A2:L",
+        if header_values and header_values[0][: len(LEGACY_BID_NOTICE_SHEET_HEADERS)] == LEGACY_BID_NOTICE_SHEET_HEADERS:
+            pass
+        else:
+            existing_rows = (
+                values_api.get(
+                    spreadsheetId=self.spreadsheet_id,
+                    range=f"'{escaped_tab}'!A2:J",
+                )
+                .execute()
+                .get("values")
+                or []
             )
-            .execute()
-            .get("values")
-            or []
-        )
         row_number_by_key: dict[str, int] = {}
         for row_number, existing_row in enumerate(existing_rows, start=2):
             if not existing_row or not str(existing_row[0]).strip():
                 continue
-            key = f"{str(existing_row[0]).strip()}|{str(existing_row[1]).strip() if len(existing_row) > 1 else ''}"
+            key = str(existing_row[0]).strip()
             if key in row_number_by_key:
                 raise SheetExportConfigurationError(
-                    f"기존 Sheet에 공고번호·차수 {key}가 중복되어 있습니다."
+                    f"기존 Sheet에 공고번호 {key}가 중복되어 있습니다."
                 )
             row_number_by_key[key] = row_number
 
@@ -191,7 +289,7 @@ class BidNoticeSheetWriter(GoogleSheetWriter):
                 inserted_count += 1
             write_data.append(
                 {
-                    "range": f"'{escaped_tab}'!A{current_row_number}:L{current_row_number}",
+                    "range": f"'{escaped_tab}'!A{current_row_number}:J{current_row_number}",
                     "values": [row],
                 }
             )
@@ -226,8 +324,8 @@ class BidNoticeSheetWriter(GoogleSheetWriter):
                                 "range": {
                                     "sheetId": sheet_id,
                                     "startRowIndex": 1,
-                                    "startColumnIndex": 8,
-                                    "endColumnIndex": 10,
+                                    "startColumnIndex": 4,
+                                    "endColumnIndex": 5,
                                 },
                                 "cell": {
                                     "userEnteredFormat": {
@@ -235,7 +333,22 @@ class BidNoticeSheetWriter(GoogleSheetWriter):
                                     }
                                 },
                                 "fields": "userEnteredFormat.numberFormat",
-                            }
+                            },
+                        },
+                        {
+                            "repeatCell": {
+                                "range": {
+                                    "sheetId": sheet_id,
+                                    "startColumnIndex": 2,
+                                    "endColumnIndex": 3,
+                                },
+                                "cell": {
+                                    "userEnteredFormat": {
+                                        "wrapStrategy": "WRAP"
+                                    }
+                                },
+                                "fields": "userEnteredFormat.wrapStrategy",
+                            },
                         }
                     ]
                 },

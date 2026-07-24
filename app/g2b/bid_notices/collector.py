@@ -41,6 +41,8 @@ PARTICIPANT_REGION_OPERATION = "getBidPblancListInfoPrtcptPsblRgn"
 INDUSTRY_API_VALUE = "API_VALUE"
 INDUSTRY_API_EMPTY = "API_EMPTY"
 INDUSTRY_API_ERROR = "API_ERROR"
+INDUSTRY_API_NONE = "API_NONE"
+INDUSTRY_API_ORDER_MISMATCH = "ORDER_MISMATCH"
 ICORE_INDUSTRY_CODES = frozenset(
     {"9901", "3198", "0036", "1169", "1261", "1426", "1468", "9999"}
 )
@@ -161,9 +163,11 @@ def _dedup_key(notice_no: str, notice_ord: str) -> str:
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()
 
 
-def _optional_text(value: object, limit: int) -> str | None:
+def _optional_text(value: object, limit: int | None = None) -> str | None:
     text = str(value or "").strip()
-    return text[:limit] if text else None
+    if not text:
+        return None
+    return text[:limit] if limit is not None else text
 
 
 def fetch_industry_restriction_codes(
@@ -195,13 +199,29 @@ def fetch_industry_restriction_codes(
     except (requests.RequestException, ValueError, BidNoticeCollectionError):
         return None, INDUSTRY_API_ERROR
 
+    identity = canonical_bid_notice_identity(notice_no, notice_ord)
+    matching_items = [
+        item
+        for item in items
+        if canonical_bid_notice_identity(item.get("bidNtceNo"), item.get("bidNtceOrd"))
+        == identity
+    ]
+    if items and not matching_items:
+        return None, INDUSTRY_API_ORDER_MISMATCH
+
     codes: list[str] = []
-    for item in items:
+    explicitly_none = False
+    for item in matching_items:
         for field_name in ("lcnsLmtNm", "permsnIndstrytyList", "indstrytyCd"):
-            for code in re.findall(r"(?<!\d)(\d{4})(?!\d)", str(item.get(field_name) or "")):
+            value = str(item.get(field_name) or "").strip()
+            if value == "해당없음":
+                explicitly_none = True
+            for code in re.findall(r"(?<!\d)(\d{4})(?!\d)", value):
                 if code not in codes:
                     codes.append(code)
-    return (", ".join(codes) if codes else None), (INDUSTRY_API_VALUE if codes else INDUSTRY_API_EMPTY)
+    if codes:
+        return ", ".join(codes), INDUSTRY_API_VALUE
+    return None, INDUSTRY_API_NONE if explicitly_none else INDUSTRY_API_EMPTY
 
 
 def fetch_participant_region_restriction(
@@ -238,7 +258,7 @@ def fetch_participant_region_restriction(
     for item in items:
         if canonical_bid_notice_identity(item.get("bidNtceNo"), item.get("bidNtceOrd")) != identity:
             continue
-        region = _optional_text(item.get("prtcptPsblRgnNm"), 240)
+        region = _optional_text(item.get("prtcptPsblRgnNm"))
         if region and region not in regions:
             regions.append(region)
     return (
@@ -348,6 +368,8 @@ def _upsert_item(
     row.prearranged_price_decision_method = _optional_text(item.get("prearngPrceDcsnMthdNm"), 120)
     row.region_restriction = region
     row.region_restriction_api_status = REGION_API_VALUE if region else REGION_API_EMPTY
+    row.region_restriction_source = "API" if region else None
+    row.region_restriction_evidence = None
     row.joint_supply_allowed = infer_joint_supply_allowed(
         item.get("cmmnSpldmdMethdCd"),
         item.get("cmmnSpldmdMethdNm"),

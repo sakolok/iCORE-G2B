@@ -780,7 +780,6 @@ def _enrich_bid_notice_contexts(notices: list[NoticeRow]) -> list[NoticeRow]:
                             region_names.append(region_name)
                     notice.region_restriction = clean_optional_text(
                         ", ".join(region_names),
-                        max_length=240,
                     )
                     notice.region_restriction_api_status = (
                         REGION_API_VALUE

@@ -11,6 +11,10 @@ from app.data.database import get_db
 from app.data.models import ScraperNoticeModel
 from app.g2b.bid_notices.collector import (
     INDUSTRY_API_ERROR,
+    INDUSTRY_API_EMPTY,
+    INDUSTRY_API_NONE,
+    INDUSTRY_API_ORDER_MISMATCH,
+    INDUSTRY_API_VALUE,
     REGION_API_EMPTY,
     REGION_API_ERROR,
     REGION_API_VALUE,
@@ -21,6 +25,9 @@ from app.g2b.bid_notices.collector import (
     fetch_industry_restriction_codes,
     fetch_participant_region_restriction,
     matches_icore_industry_code,
+)
+from app.g2b.bid_notices.document_analysis import (
+    run_pending_bid_notice_document_analysis,
 )
 from app.g2b.bid_notices.matching import (
     dismiss_user_bid_notice,
@@ -38,6 +45,7 @@ from app.g2b.bid_notices.schemas import (
     BidNoticeListResponse,
     BidNoticeArchiveResponse,
     BidNoticeAttachment,
+    BidNoticeDocumentAnalysisRunResponse,
     DismissBidNoticeResponse,
     BidNoticeProfileResponse,
     BidNoticeProfileUpdateRequest,
@@ -86,6 +94,16 @@ from app.services.auth_service import (
 
 router = APIRouter(prefix="/api/v1/bid-notices", tags=["g2b-bid-notices"])
 KST = ZoneInfo("Asia/Seoul")
+
+
+def _icore_industry_code_match(status: str | None, codes: str | None) -> bool | None:
+    if status == INDUSTRY_API_EMPTY:
+        return False
+    if status in {INDUSTRY_API_ERROR, INDUSTRY_API_ORDER_MISMATCH}:
+        return None
+    if status in {INDUSTRY_API_NONE, "DOCUMENT_NONE"}:
+        return True
+    return matches_icore_industry_code(codes)
 
 
 def _destination_response(destination) -> BidNoticeSheetDestinationResponse:
@@ -190,7 +208,12 @@ def _notice_response(
         notice_url=notice.notice_url,
         region_restriction=notice.region_restriction,
         region_restriction_api_status=notice.region_restriction_api_status,
+        region_restriction_source=notice.region_restriction_source,
+        region_restriction_evidence=notice.region_restriction_evidence,
         industry_restriction_codes=notice.industry_restriction_codes,
+        industry_restriction_api_status=notice.industry_restriction_api_status,
+        industry_restriction_source=notice.industry_restriction_source,
+        industry_restriction_evidence=notice.industry_restriction_evidence,
         icore_industry_code_match=notice.icore_industry_code_match,
         is_two_stage_bid=notice.is_two_stage_bid,
         joint_supply_allowed=notice.joint_supply_allowed,
@@ -239,6 +262,20 @@ def collect_bid_notice_data_on_schedule(
         return CollectBidNoticesResponse(**collect_scheduled_bid_notices(db))
     except BidNoticeCollectionError as error:
         raise HTTPException(status_code=502, detail=str(error)) from error
+
+
+@router.post(
+    "/internal/analyze-documents",
+    response_model=BidNoticeDocumentAnalysisRunResponse,
+)
+def analyze_bid_notice_documents_on_schedule(
+    _: None = Depends(verify_scraper_internal_token),
+    __: None = Depends(verify_cloud_scheduler_oidc_token),
+    db: Session = Depends(get_db),
+) -> BidNoticeDocumentAnalysisRunResponse:
+    return BidNoticeDocumentAnalysisRunResponse(
+        **run_pending_bid_notice_document_analysis(db)
+    )
 
 
 @router.get("/settings", response_model=BidNoticeSettingsResponse)
@@ -369,18 +406,14 @@ def list_bid_notices(
                 notice_no=notice.bid_notice_no or notice.notice_id,
                 notice_ord=notice.bid_notice_ord or "00",
             )
-            notice.icore_industry_code_match = (
-                None
-                if notice.industry_restriction_api_status == INDUSTRY_API_ERROR
-                else matches_icore_industry_code(notice.industry_restriction_codes)
+            notice.icore_industry_code_match = _icore_industry_code_match(
+                notice.industry_restriction_api_status,
+                notice.industry_restriction_codes,
             )
         if unresolved_rows:
             db.commit()
         statement = statement.where(
-            or_(
-                ScraperNoticeModel.icore_industry_code_match.is_(True),
-                ScraperNoticeModel.industry_restriction_api_status == "API_EMPTY",
-            )
+            ScraperNoticeModel.icore_industry_code_match.is_(True)
         )
     total = db.execute(select(func.count()).select_from(statement.subquery())).scalar_one()
     rows = db.execute(
@@ -460,6 +493,9 @@ def fetch_bid_notice_detail(
                 notice_ord=notice.bid_notice_ord or "00",
             )
         )
+        if notice.region_restriction_api_status == REGION_API_VALUE:
+            notice.region_restriction_source = "API"
+            notice.region_restriction_evidence = None
     if notice.industry_restriction_api_status in {None, INDUSTRY_API_ERROR}:
         notice.industry_restriction_codes, notice.industry_restriction_api_status = (
             fetch_industry_restriction_codes(
@@ -467,11 +503,13 @@ def fetch_bid_notice_detail(
                 notice_ord=notice.bid_notice_ord or "00",
             )
         )
-        notice.icore_industry_code_match = (
-            None
-            if notice.industry_restriction_api_status == INDUSTRY_API_ERROR
-            else matches_icore_industry_code(notice.industry_restriction_codes)
+        notice.icore_industry_code_match = _icore_industry_code_match(
+            notice.industry_restriction_api_status,
+            notice.industry_restriction_codes,
         )
+        if notice.industry_restriction_api_status in {INDUSTRY_API_VALUE, INDUSTRY_API_NONE}:
+            notice.industry_restriction_source = "API"
+            notice.industry_restriction_evidence = None
         attachments_updated = True
     if attachments_updated:
         db.commit()
@@ -568,7 +606,7 @@ def verify_bid_notice_sheet_destination(
         tab_name=request.tab_name,
         tab_exists=tab_exists,
         header_status=header_status,
-        connection_ready=tab_exists and header_status in {"MATCH", "EMPTY"},
+        connection_ready=tab_exists and header_status in {"MATCH", "EMPTY", "MIGRATION_READY"},
         sheet_service_account_email=get_sheet_service_account_email(),
     )
 

@@ -34,6 +34,14 @@ class CollectBidNoticesResponse(BaseModel):
     updated_count: int
 
 
+class BidNoticeDocumentAnalysisRunResponse(BaseModel):
+    candidate_count: int
+    queued_count: int
+    analyzed_count: int
+    review_required_count: int
+    failed_count: int
+
+
 class BidNoticeProfileUpdateRequest(BaseModel):
     enabled: bool
     keywords: list[str] = Field(default_factory=list)
@@ -83,7 +91,12 @@ class BidNoticeListItem(BaseModel):
     notice_url: str | None
     region_restriction: str | None
     region_restriction_api_status: str | None
+    region_restriction_source: str | None = None
+    region_restriction_evidence: str | None = None
     industry_restriction_codes: str | None
+    industry_restriction_api_status: str | None = None
+    industry_restriction_source: str | None = None
+    industry_restriction_evidence: str | None = None
     icore_industry_code_match: bool | None
     is_two_stage_bid: bool | None
     joint_supply_allowed: bool | None
@@ -162,7 +175,7 @@ class BidNoticeSheetDestinationVerifyResponse(BaseModel):
     spreadsheet_title: str | None
     tab_name: str
     tab_exists: bool
-    header_status: Literal["MATCH", "EMPTY", "MISMATCH", "NOT_CHECKED"]
+    header_status: Literal["MATCH", "EMPTY", "MIGRATION_READY", "MISMATCH", "NOT_CHECKED"]
     connection_ready: bool
     sheet_service_account_email: str | None = None
 
