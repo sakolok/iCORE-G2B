@@ -38,9 +38,11 @@ const HEADER_STATUS_META = {
 };
 
 const WORK_TYPE_OPTIONS = [
-  { value: "용역", label: "용역" },
-  { value: "물품", label: "물품" },
   { value: "공사", label: "공사" },
+  { value: "기술용역", label: "기술용역" },
+  { value: "물품", label: "물품" },
+  { value: "민간일반용역", label: "민간일반용역" },
+  { value: "일반용역", label: "일반용역" },
 ];
 
 const REGION_OPTIONS = [
@@ -76,6 +78,11 @@ function formatAmount(value) {
   return Number.isFinite(amount) ? `${amount.toLocaleString("ko-KR")}원` : String(value);
 }
 
+function formatWorkType(value) {
+  if (value === "용역") return "일반용역";
+  return value || "분류 확인 중";
+}
+
 function externalUrl(value) {
   try {
     const parsed = new URL(value);
@@ -102,7 +109,7 @@ function BidNoticesPage() {
   const [listError, setListError] = useState("");
   const [queryDraft, setQueryDraft] = useState("");
   const [query, setQuery] = useState("");
-  const [workType, setWorkType] = useState();
+  const [workTypes, setWorkTypes] = useState([]);
   const [region, setRegion] = useState();
   const [publishedRange, setPublishedRange] = useState(null);
   const [icoreCodesOnly, setIcoreCodesOnly] = useState(false);
@@ -161,7 +168,7 @@ function BidNoticesPage() {
         page,
         page_size: pageSize,
         q: query || undefined,
-        work_type: workType,
+        work_type: workTypes.join(",") || undefined,
         region,
         published_from: publishedRange?.[0]?.format("YYYY-MM-DD"),
         published_to: publishedRange?.[1]?.format("YYYY-MM-DD"),
@@ -204,7 +211,7 @@ function BidNoticesPage() {
 
   useEffect(() => {
     loadList();
-  }, [page, pageSize, query, workType, region, publishedRange, icoreCodesOnly]);
+  }, [page, pageSize, query, workTypes, region, publishedRange, icoreCodesOnly]);
 
   useEffect(() => {
     loadProfile();
@@ -499,9 +506,8 @@ function BidNoticesPage() {
         );
       },
     },
-    { title: "업무", dataIndex: "work_type", key: "work_type", width: 86, render: (value) => value || "-" },
+    { title: "업무", dataIndex: "work_type", key: "work_type", width: 116, render: formatWorkType },
     { title: "사업금액", dataIndex: "business_amount", key: "business_amount", width: 145, render: formatAmount },
-    { title: "기초금액", dataIndex: "official_base_amount", key: "official_base_amount", width: 145, render: formatAmount },
     {
       title: "매칭",
       dataIndex: "matched_keyword",
@@ -564,7 +570,7 @@ function BidNoticesPage() {
             <strong>입찰공고 찾기</strong>
             <span>공고명, 공고번호, 수요기관으로 검색할 수 있어요.</span>
           </div>
-          <span>{query || workType || region || publishedRange || icoreCodesOnly ? "필터 적용 중" : "전체 공고"}</span>
+          <span>{query || workTypes.length || region || publishedRange || icoreCodesOnly ? "필터 적용 중" : "전체 공고"}</span>
         </div>
         <div className="bid-notices-filter-row">
           <Input.Search
@@ -577,12 +583,13 @@ function BidNoticesPage() {
             enterButton="검색"
           />
           <Select
+            mode="multiple"
             allowClear
-            value={workType}
-            placeholder="업무구분 전체"
+            value={workTypes}
+            placeholder="업무구분 (선택)"
             className="bid-notices-filter-select"
             options={WORK_TYPE_OPTIONS}
-            onChange={(value) => { setWorkType(value); setPage(1); }}
+            onChange={(value) => { setWorkTypes(value); setPage(1); }}
           />
           <Select
             allowClear
@@ -602,7 +609,7 @@ function BidNoticesPage() {
           <Button onClick={() => {
             setQueryDraft("");
             setQuery("");
-            setWorkType(undefined);
+            setWorkTypes([]);
             setRegion(undefined);
             setPublishedRange(null);
             setIcoreCodesOnly(false);
@@ -849,38 +856,39 @@ function BidNoticesPage() {
         {detail ? (
           <Descriptions bordered size="small" column={2}>
             <Descriptions.Item label="공고번호">{detail.bid_notice_no ? `${detail.bid_notice_no}-${detail.bid_notice_ord || "00"}` : "-"}</Descriptions.Item>
-            <Descriptions.Item label="업무구분">{detail.work_type || "-"}</Descriptions.Item>
+            <Descriptions.Item label="업무구분">{formatWorkType(detail.work_type)}</Descriptions.Item>
             <Descriptions.Item label="수요기관">{detail.demand_agency_name || "-"}</Descriptions.Item>
             <Descriptions.Item label="조달구분">{detail.procurement_type || "-"}</Descriptions.Item>
             <Descriptions.Item label="게시일시">{formatDateTime(detail.published_at)}</Descriptions.Item>
             <Descriptions.Item label="마감일시">{formatDateTime(detail.deadline_at)}</Descriptions.Item>
             <Descriptions.Item label="사업금액">{formatAmount(detail.business_amount)}</Descriptions.Item>
-            <Descriptions.Item label="기초금액">{formatAmount(detail.official_base_amount)}</Descriptions.Item>
             <Descriptions.Item label="지역제한">{detail.region_restriction || "확인 필요"}</Descriptions.Item>
             <Descriptions.Item label="매칭 키워드">{detail.matched_keyword ? <Tag color="blue">{detail.matched_keyword}</Tag> : "-"}</Descriptions.Item>
-            <Descriptions.Item label="업종제한 코드">{detail.industry_restriction_codes || ""}</Descriptions.Item>
+            <Descriptions.Item label="업종제한 코드">{detail.industry_restriction_codes || (detail.industry_restriction_api_status === "API_EMPTY" ? "해당없음" : "확인하지 못함")}</Descriptions.Item>
             <Descriptions.Item label="공동수급 가능">{detail.joint_supply_allowed == null ? "" : detail.joint_supply_allowed ? "가능" : "불가"}</Descriptions.Item>
             <Descriptions.Item label="공식 공고" span={2}>
               {externalUrl(detail.notice_url) ? <Button type="link" href={externalUrl(detail.notice_url)} target="_blank" rel="noopener noreferrer">나라장터 공고 바로가기</Button> : <Text type="secondary">연결된 공식 공고 링크가 없습니다.</Text>}
             </Descriptions.Item>
           </Descriptions>
         ) : null}
-        {detail?.attachments?.length ? (
+        {detail ? (
           <Card className="bid-notice-attachments" size="small" title={`공고 첨부파일 ${detail.attachments.length}개`}>
-            <Space direction="vertical" size={8} style={{ width: "100%" }}>
-              {detail.attachments.map((attachment) => (
-                <Button
-                  key={`${attachment.label}-${attachment.url}`}
-                  type="link"
-                  href={externalUrl(attachment.url) || undefined}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  disabled={!externalUrl(attachment.url)}
-                >
-                  {attachment.label}
-                </Button>
-              ))}
-            </Space>
+            {detail.attachments.length ? (
+              <Space direction="vertical" size={8} style={{ width: "100%" }}>
+                {detail.attachments.map((attachment) => (
+                  <Button
+                    key={`${attachment.label}-${attachment.url}`}
+                    type="link"
+                    href={externalUrl(attachment.url) || undefined}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    disabled={!externalUrl(attachment.url)}
+                  >
+                    {attachment.label}
+                  </Button>
+                ))}
+              </Space>
+            ) : <Text type="secondary">나라장터 공고에 연결된 첨부파일이 없습니다.</Text>}
           </Card>
         ) : null}
       </Drawer>
