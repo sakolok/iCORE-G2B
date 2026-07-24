@@ -22,6 +22,9 @@ from app.g2b.opening_results.models import (
     UserOpeningResultMatchModel,
     UserOpeningResultStateModel,
 )
+from app.g2b.opening_results.notice_context_repository import (
+    select_canonical_scraper_notice,
+)
 
 
 ENRICHMENT_TASK_NOTICE_CONTEXT = "NOTICE_CONTEXT"
@@ -121,11 +124,12 @@ def enqueue_notice_enrichment_jobs(
 
     priorities: dict[tuple[str, str], int] = {}
     for identity in identities:
-        contexts = contexts_by_identity.get(identity, [])
-        if len(contexts) != 1 or contexts[0].base_amount is None:
+        context = select_canonical_scraper_notice(
+            contexts_by_identity.get(identity, [])
+        )
+        if context is None or context.base_amount is None:
             priorities[identity] = ENRICHMENT_PRIORITY_BUSINESS_AMOUNT
             continue
-        context = contexts[0]
         missing_fields = set(missing_bid_notice_context_fields(context))
         if not missing_fields:
             continue
@@ -273,7 +277,7 @@ def _load_contexts_for_job(
         .all()
     )
     expected = (job.bid_notice_no, job.bid_notice_ord)
-    return [
+    matched = [
         context
         for context in contexts
         if canonical_bid_notice_identity(
@@ -282,6 +286,8 @@ def _load_contexts_for_job(
         )
         == expected
     ]
+    canonical = select_canonical_scraper_notice(matched)
+    return [canonical] if canonical is not None else []
 
 
 def _complete_job(
@@ -368,16 +374,6 @@ def process_notice_enrichment_jobs(
 
             enriched_count = enrich_context(db, round_row)
             contexts = _load_contexts_for_job(db, job)
-            if len(contexts) > 1:
-                _complete_job(
-                    job,
-                    status=ENRICHMENT_STATUS_NEEDS_REVIEW,
-                    current=current,
-                    error="NOTICE_CONTEXT_AMBIGUOUS",
-                )
-                needs_review_count += 1
-                db.commit()
-                continue
             if not contexts:
                 retrying = _schedule_api_error_retry(
                     job,

@@ -14,6 +14,38 @@ class AmbiguousBidNoticeContextError(RuntimeError):
         super().__init__("동일한 공고번호와 차수의 입찰공고가 여러 건입니다.")
 
 
+def select_canonical_scraper_notice(
+    records: Iterable[ScraperNoticeModel],
+) -> ScraperNoticeModel | None:
+    """명확히 최신·완전한 과거 중복 행만 안전하게 통합한다."""
+    candidates = list(records)
+    if not candidates:
+        return None
+
+    def completeness(record: ScraperNoticeModel) -> int:
+        fields = (
+            record.business_name,
+            record.demand_agency_name,
+            record.base_amount,
+            record.prearranged_price_decision_method,
+            record.proposal_deadline,
+            record.region_restriction,
+            record.is_two_stage_bid,
+            record.notice_url,
+        )
+        return sum(value is not None and str(value).strip() != "" for value in fields)
+
+    def rank(record: ScraperNoticeModel) -> int:
+        return completeness(record)
+
+    best_rank = max(rank(record) for record in candidates)
+    best = [record for record in candidates if rank(record) == best_rank]
+    # 서로 같은 정보량이면 어느 행이 공식 원본인지 판단할 수 없다.
+    if len(best) != 1:
+        return None
+    return best[0]
+
+
 def canonical_notice_key(
     bid_notice_no: str,
     bid_notice_ord: str | None,
@@ -61,19 +93,21 @@ def resolve_bid_notice_contexts(
         .all()
     )
 
-    contexts: dict[tuple[str, str], BidNoticeSheetContext] = {}
-    ambiguous_keys: set[tuple[str, str]] = set()
+    records_by_key: dict[tuple[str, str], list[ScraperNoticeModel]] = {}
     for record in records:
         if not record.bid_notice_no:
             continue
         key = canonical_notice_key(record.bid_notice_no, record.bid_notice_ord)
         if key not in canonical_keys:
             continue
-        if key in ambiguous_keys:
-            continue
-        if key in contexts:
+        records_by_key.setdefault(key, []).append(record)
+
+    contexts: dict[tuple[str, str], BidNoticeSheetContext] = {}
+    ambiguous_keys: set[tuple[str, str]] = set()
+    for key, candidates in records_by_key.items():
+        record = select_canonical_scraper_notice(candidates)
+        if record is None:
             ambiguous_keys.add(key)
-            contexts.pop(key, None)
             continue
         contexts[key] = BidNoticeSheetContext(
             bid_notice_no=record.bid_notice_no.strip(),
@@ -91,4 +125,6 @@ def resolve_bid_notice_contexts(
             notice_url=record.notice_url,
         )
 
+    # 동일한 공고번호·차수의 과거 중복은 더 완전한 행이 명확할 때만
+    # 논리 통합한다. 동률이면 기존처럼 공고정보 중복으로 안전하게 막는다.
     return contexts, ambiguous_keys

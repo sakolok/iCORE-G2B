@@ -253,6 +253,23 @@ def ensure_schema_compatibility(engine: Engine) -> None:
     )
     _ensure_columns(
         engine,
+        "g2b_pre_specifications",
+        {"delivery_deadline_text": "TEXT NULL"},
+    )
+    if engine.dialect.name == "mysql" and "g2b_pre_specifications" in inspect(engine).get_table_names():
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "UPDATE g2b_pre_specifications "
+                    "SET delivery_deadline_text = JSON_UNQUOTE(JSON_EXTRACT(raw_payload, '$.dlvrTmlmtDt')) "
+                    "WHERE delivery_deadline_text IS NULL "
+                    "AND delivery_deadline IS NULL "
+                    "AND JSON_VALID(raw_payload) "
+                    "AND JSON_UNQUOTE(JSON_EXTRACT(raw_payload, '$.dlvrTmlmtDt')) REGEXP '[^0-9]'"
+                )
+            )
+    _ensure_columns(
+        engine,
         "g2b_pre_specification_sheet_exports",
         {
             "attempt_count": "INTEGER NOT NULL DEFAULT 1",

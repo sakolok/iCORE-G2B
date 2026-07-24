@@ -102,6 +102,7 @@ from app.g2b.opening_results.service import (
     OpeningResultCollectionConflictError,
     run_scheduled_opening_results,
 )
+from app.g2b.bid_notices.service import _fetch_official_bid_notice_context
 
 
 class FakeResponse:
@@ -1427,6 +1428,76 @@ class OpeningResultServiceTests(unittest.TestCase):
         self.assertEqual(detail.winner_company_name, "최종낙찰기업")
         self.assertEqual(detail.sheet_export_status, "READY")
         self.assertEqual(detail.notice_url, "https://www.g2b.go.kr/notice/detail")
+
+    def test_duplicate_notice_context_uses_latest_complete_record_for_notice_link(self):
+        collect_opening_results(self.db, self.request, self.make_client())
+        stale = self.add_bid_notice(
+            business_name=None,
+            demand_agency_name=None,
+            base_amount=None,
+            prearranged_price_decision_method=None,
+            proposal_deadline=None,
+            region_restriction=None,
+            region_restriction_api_status="API_EMPTY",
+            is_two_stage_bid=None,
+            notice_url=None,
+            dedup_suffix="legacy",
+        )
+        stale.last_seen_at = datetime(2026, 7, 1, tzinfo=timezone.utc)
+        current = self.add_bid_notice(
+            notice_url="https://www.g2b.go.kr/notice/current",
+            dedup_suffix="current",
+        )
+        current.last_seen_at = datetime(2026, 7, 24, tzinfo=timezone.utc)
+        self.db.commit()
+
+        response = fetch_results(
+            q=None,
+            status=None,
+            opened_from=datetime(2026, 7, 14, tzinfo=timezone.utc),
+            opened_to=datetime(2026, 7, 16, tzinfo=timezone.utc),
+            page=1,
+            page_size=30,
+            auth=self.auth,
+            db=self.db,
+        )
+
+        self.assertEqual(
+            response.items[0].notice_url,
+            "https://www.g2b.go.kr/notice/current",
+        )
+
+    @patch("app.g2b.bid_notices.service._fetch_bid_notice_api_items")
+    def test_opening_context_uses_explicit_no_region_limit_from_detail_api(self, fetch_items):
+        round_row = BidOpeningRoundModel(
+            external_key="SERVICE:R26BK01643534:000:0:0",
+            business_type="SERVICE",
+            bid_notice_no="R26BK01643534",
+            bid_notice_ord="000",
+            bid_class_no="0",
+            rebid_no="0",
+            title="인공지능 글로벌 행사(K-AI 서밋)",
+        )
+        fetch_items.side_effect = [
+            (
+                True,
+                [
+                    {
+                        "bidNtceNo": "R26BK01643534",
+                        "bidNtceOrd": "000",
+                        "bidNtceNm": "인공지능 글로벌 행사(K-AI 서밋)",
+                        "bidPrtcptLmtYn": "N",
+                    }
+                ],
+            ),
+            (True, []),
+        ]
+
+        context = _fetch_official_bid_notice_context(round_row)
+
+        self.assertIsNotNone(context)
+        self.assertEqual(context.region_restriction, "해당없음")
+        self.assertEqual(context.region_restriction_api_status, "API_VALUE")
 
     def test_region_api_error_does_not_block_sheet_and_exports_blank_cell(self):
         collect_opening_results(self.db, self.request, self.make_client())

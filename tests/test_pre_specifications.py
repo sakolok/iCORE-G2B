@@ -324,6 +324,20 @@ class PreSpecificationTests(unittest.TestCase):
         self.assertEqual(item["allocated_budget"], Decimal("1000"))
         self.assertEqual(len(item["attachments"]), 1)
 
+    def test_delivery_deadline_keeps_official_text_when_it_is_not_a_date(self):
+        item = normalize_source_item(
+            {
+                "bfSpecRgstNo": "R002",
+                "dlvrTmlmtDt": "착수일로부터 30일",
+            }
+        )
+
+        self.assertEqual(item["delivery_deadline_text"], "착수일로부터 30일")
+        self.assertEqual(upsert_pre_specifications(self.db, [item]), (1, 0))
+        stored = self.db.get(PreSpecificationModel, "R002")
+        self.assertIsNone(stored.delivery_deadline)
+        self.assertEqual(stored.delivery_deadline_text, "착수일로부터 30일")
+
     def test_upsert_preserves_identity_and_deduplicates_snapshot(self):
         first = {
             "bf_spec_rgst_no": "R001",

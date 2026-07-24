@@ -7,6 +7,7 @@ from urllib.parse import unquote
 import requests
 
 from app.core.config import settings
+from app.g2b.bid_notice import parse_g2b_datetime
 
 
 class PreSpecificationApiError(RuntimeError):
@@ -143,6 +144,7 @@ def normalize_source_item(item: dict[str, Any]) -> dict[str, Any]:
         for index in range(1, 6)
         if (url := clean(item.get(f"specDocFileUrl{index}")))
     ]
+    delivery_deadline = item.get("dlvrTmlmtDt")
     return {
         "bf_spec_rgst_no": external_id,
         "bid_notice_no": clean(item.get("bidNtceNo")),
@@ -157,7 +159,13 @@ def normalize_source_item(item: dict[str, Any]) -> dict[str, Any]:
         "allocated_budget": amount(item.get("asignBdgtAmt")),
         "registered_at": item.get("rgstDt") or item.get("rcptDt"),
         "opinion_deadline": item.get("opninRgstClseDt"),
-        "delivery_deadline": item.get("dlvrTmlmtDt"),
+        "delivery_deadline": delivery_deadline,
+        "delivery_deadline_text": (
+            clean(delivery_deadline)
+            if delivery_deadline is not None
+            and parse_g2b_datetime(delivery_deadline) is None
+            else None
+        ),
         "contact_name": clean(item.get("ofclNm")),
         "contact_phone": clean(item.get("ofclTelNo")),
         "attachments": attachments,

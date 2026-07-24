@@ -110,6 +110,26 @@ def parse_optional_bool(value: Any) -> bool | None:
     return None
 
 
+def explicit_region_restriction_from_item(item: dict[str, Any]) -> str | None:
+    """공식 공고 응답에 명시된 지역제한 값만 확정한다."""
+    region = clean_optional_text(item.get("prtcptPsblRgnNm"))
+    if region:
+        return "해당없음" if region in {"해당없음", "없음"} else region
+    # 나라장터 상세 공고의 입찰참가 제한 여부 N은 지역제한이 없음을 뜻한다.
+    if parse_optional_bool(item.get("bidPrtcptLmtYn")) is False:
+        return "해당없음"
+    return None
+
+
+def explicit_region_restriction_evidence(item: dict[str, Any]) -> str | None:
+    region = clean_optional_text(item.get("prtcptPsblRgnNm"))
+    if region in {"해당없음", "없음"}:
+        return f"prtcptPsblRgnNm={region}"
+    if parse_optional_bool(item.get("bidPrtcptLmtYn")) is False:
+        return "bidPrtcptLmtYn=N"
+    return None
+
+
 def infer_two_stage_bid(explicit_value: Any, *official_method_values: Any) -> bool | None:
     explicit = parse_optional_bool(explicit_value)
     if explicit is not None:

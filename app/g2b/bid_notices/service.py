@@ -26,6 +26,7 @@ from app.g2b.bid_notice import (
     REGION_API_VALUE,
     canonical_bid_notice_identity,
     clean_optional_text,
+    explicit_region_restriction_from_item,
     infer_two_stage_bid,
     missing_bid_notice_context_fields,
     parse_business_amount,
@@ -34,6 +35,9 @@ from app.g2b.bid_notice import (
 )
 from app.g2b.keyword_policy import evaluate_keyword_title, normalize_keywords
 from app.g2b.opening_results.models import BidOpeningRoundModel
+from app.g2b.opening_results.notice_context_repository import (
+    select_canonical_scraper_notice,
+)
 from app.schemas import (
     ScraperConfig,
     ScraperDedupFilterRequest,
@@ -757,9 +761,7 @@ def _fetch_official_bid_notice_context(
     price_method = clean_optional_text(item.get("prearngPrceDcsnMthdNm"))
     business_amount = parse_business_amount(item)
 
-    region_restriction = clean_optional_text(
-        item.get("prtcptPsblRgnNm"),
-    )
+    region_restriction = explicit_region_restriction_from_item(item)
     region_url = _resolve_bid_notice_operation_url(
         "getBidPblancListInfoPrtcptPsblRgn",
         env_name="G2B_REGION_SOURCE_URL",
@@ -782,12 +784,16 @@ def _fetch_official_bid_notice_context(
                 )
                 if region_name and region_name not in region_names:
                     region_names.append(region_name)
-            region_restriction = clean_optional_text(
+            fetched_region_restriction = clean_optional_text(
                 ", ".join(region_names),
             )
-            region_api_status = (
-                REGION_API_VALUE if region_restriction else REGION_API_EMPTY
-            )
+            if fetched_region_restriction:
+                region_restriction = fetched_region_restriction
+                region_api_status = REGION_API_VALUE
+            elif region_restriction == "해당없음":
+                region_api_status = REGION_API_VALUE
+            else:
+                region_api_status = REGION_API_EMPTY
     else:
         region_api_status = REGION_API_ERROR
 
@@ -878,17 +884,11 @@ def enrich_bid_notice_contexts_for_opening_rounds(
     enriched_count = 0
     for identity, round_row in rounds_by_key.items():
         existing_rows = stored_by_key.get(identity, [])
-        if len(existing_rows) > 1:
-            logger.warning(
-                "Skipping ambiguous bid notice context %s|%s",
-                identity[0],
-                identity[1],
-            )
-            continue
+        stored = select_canonical_scraper_notice(existing_rows)
         if (
-            len(existing_rows) == 1
-            and existing_rows[0].last_run_id == "opening-result-context"
-            and not missing_bid_notice_context_fields(existing_rows[0])
+            stored is not None
+            and stored.last_run_id == "opening-result-context"
+            and not missing_bid_notice_context_fields(stored)
         ):
             continue
         try:
@@ -907,7 +907,6 @@ def enrich_bid_notice_contexts_for_opening_rounds(
             continue
 
         dedup_key = _make_dedup_key(notice)
-        stored = existing_rows[0] if existing_rows else None
         if stored is None:
             stored = _find_existing_scraper_notice(db, notice, dedup_key)
         if stored is None:

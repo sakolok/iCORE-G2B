@@ -37,6 +37,7 @@ class PreSpecificationTransfer(BaseModel):
     registered_at: datetime | None = None
     opinion_deadline: datetime | None = None
     delivery_deadline: datetime | None = None
+    delivery_deadline_text: str | None = None
     contact_name: str | None = None
     contact_phone: str | None = None
     attachments: list[dict] = Field(default_factory=list)
@@ -51,6 +52,7 @@ class PreSpecificationTransfer(BaseModel):
         "business_type",
         "demand_agency_name",
         "ordering_agency_name",
+        "delivery_deadline_text",
         "contact_name",
         "contact_phone",
         mode="before",
@@ -143,6 +145,7 @@ class PreSpecificationResponse(BaseModel):
     registered_at: datetime | None
     opinion_deadline: datetime | None
     delivery_deadline: datetime | None
+    delivery_deadline_text: str | None
     contact_name: str | None
     contact_phone: str | None
     attachments: list[dict] = Field(default_factory=list)

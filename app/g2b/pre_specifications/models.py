@@ -42,6 +42,7 @@ class PreSpecificationModel(Base):
     delivery_deadline: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    delivery_deadline_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     contact_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
     contact_phone: Mapped[str | None] = mapped_column(String(80), nullable=True)
     attachments_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")

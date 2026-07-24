@@ -12,9 +12,11 @@ from app.g2b.bid_notices.collector import (
     INDUSTRY_API_EMPTY,
     INDUSTRY_API_NONE,
     INDUSTRY_API_VALUE,
+    REGION_API_EMPTY,
     REGION_API_VALUE,
     collect_bid_notices,
     collect_scheduled_bid_notices,
+    fetch_explicit_region_restriction,
     fetch_notice_detail_source,
     fetch_industry_restriction_codes,
     fetch_participant_region_restriction,
@@ -128,6 +130,44 @@ class BidNoticeCollectorTests(unittest.TestCase):
         self.assertEqual(run.status, "SUCCESS")
 
     @patch("app.g2b.bid_notices.collector._fetch_operation")
+    def test_collection_reuses_existing_official_notice_identity(self, fetch_operation):
+        now = datetime.now(timezone.utc)
+        self.db.add(
+            ScraperNoticeModel(
+                dedup_key="legacy-culture-cloud",
+                notice_id="R26BK01638818",
+                bid_notice_no="R26BK01638818",
+                bid_notice_ord="000",
+                title="2026년 문화클라우드 인프라 확충 사업",
+                first_seen_at=now,
+                last_seen_at=now,
+                source_payload="{}",
+            )
+        )
+        self.db.commit()
+        fetch_operation.return_value = [
+            {
+                "bidNtceNo": "R26BK01638818",
+                "bidNtceOrd": "000",
+                "bidNtceNm": "2026년 문화클라우드 인프라 확충 사업",
+                "bidNtceDtlUrl": "https://www.g2b.go.kr/notice/current",
+            }
+        ]
+
+        result = collect_bid_notices(
+            self.db,
+            start_date=date(2026, 7, 20),
+            end_date=date(2026, 7, 24),
+            business_types=["SERVICE"],
+            keywords=["문화클라우드"],
+        )
+
+        rows = self.db.scalars(select(ScraperNoticeModel)).all()
+        self.assertEqual(result["inserted_count"], 0)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].notice_url, "https://www.g2b.go.kr/notice/current")
+
+    @patch("app.g2b.bid_notices.collector._fetch_operation")
     def test_scheduled_collection_uses_enabled_keywords_and_skips_existing_notices(
         self, fetch_operation
     ):
@@ -235,6 +275,23 @@ class BidNoticeCollectorTests(unittest.TestCase):
         self.assertEqual(region, "충청북도")
         self.assertEqual(status, REGION_API_VALUE)
         self.assertIn("getBidPblancListInfoPrtcptPsblRgn", request_get.call_args.args[0])
+
+    @patch("app.g2b.bid_notices.collector.fetch_notice_detail_source")
+    def test_detail_region_limit_flag_confirms_no_region_restriction(self, fetch_detail):
+        fetch_detail.return_value = {
+            "bidNtceNo": "R26BK01643534",
+            "bidNtceOrd": "000",
+            "bidPrtcptLmtYn": "N",
+        }
+
+        region, evidence = fetch_explicit_region_restriction(
+            notice_no="R26BK01643534",
+            notice_ord="000",
+            work_type="일반용역",
+        )
+
+        self.assertEqual(region, "해당없음")
+        self.assertEqual(evidence, "bidPrtcptLmtYn=N")
 
     def test_region_restriction_uses_unbounded_text_column(self):
         self.assertIsInstance(
@@ -644,6 +701,52 @@ class BidNoticeCollectorTests(unittest.TestCase):
         self.assertEqual(response.region_restriction, "충청북도")
         self.assertEqual(self.db.get(ScraperNoticeModel, notice.id).region_restriction, "충청북도")
         fetch_region.assert_called_once_with(notice_no="R26BK01641343", notice_ord="001")
+
+    @patch("app.g2b.bid_notices.router.fetch_explicit_region_restriction")
+    @patch("app.g2b.bid_notices.router.fetch_participant_region_restriction")
+    def test_detail_confirms_none_from_official_detail_when_region_api_is_empty(
+        self,
+        fetch_region,
+        fetch_explicit_region,
+    ):
+        now = datetime.now(timezone.utc)
+        notice = ScraperNoticeModel(
+            dedup_key="bid-notice-detail-region-none",
+            notice_id="R26BK01643534",
+            bid_notice_no="R26BK01643534",
+            bid_notice_ord="000",
+            title="인공지능 글로벌 행사(K-AI 서밋)",
+            work_type="일반용역",
+            first_seen_at=now,
+            last_seen_at=now,
+            published_at=now,
+            source_payload='{"_attachments_checked": true}',
+        )
+        self.db.add(notice)
+        self.db.commit()
+        update_user_bid_notice_profile(
+            self.db,
+            organization_id=1,
+            user_id=10,
+            enabled=True,
+            keywords=["인공지능 글로벌 행사"],
+            excluded_keywords=[],
+        )
+        sync_user_bid_notice_matches(self.db, organization_id=1, user_id=10, now=now)
+        self.db.commit()
+        fetch_region.return_value = (None, REGION_API_EMPTY)
+        fetch_explicit_region.return_value = ("해당없음", "bidPrtcptLmtYn=N")
+
+        response = fetch_bid_notice_detail(
+            notice_id=notice.id,
+            auth={"organization_id": 1, "user_id": 10},
+            db=self.db,
+        )
+
+        stored = self.db.get(ScraperNoticeModel, notice.id)
+        self.assertEqual(response.region_restriction, "해당없음")
+        self.assertEqual(stored.region_restriction_api_status, REGION_API_VALUE)
+        self.assertEqual(stored.region_restriction_evidence, "bidPrtcptLmtYn=N")
 
     def test_detail_exposes_official_notice_attachments(self):
         now = datetime.now(timezone.utc)

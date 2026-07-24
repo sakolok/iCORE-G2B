@@ -21,6 +21,7 @@ from app.g2b.bid_notices.collector import (
     BidNoticeCollectionError,
     collect_bid_notices,
     collect_scheduled_bid_notices,
+    fetch_explicit_region_restriction,
     fetch_notice_detail_source,
     fetch_industry_restriction_codes,
     fetch_participant_region_restriction,
@@ -496,6 +497,18 @@ def fetch_bid_notice_detail(
         if notice.region_restriction_api_status == REGION_API_VALUE:
             notice.region_restriction_source = "API"
             notice.region_restriction_evidence = None
+        elif notice.region_restriction_api_status == REGION_API_EMPTY:
+            region, evidence = fetch_explicit_region_restriction(
+                notice_no=notice.bid_notice_no or notice.notice_id,
+                notice_ord=notice.bid_notice_ord or "00",
+                work_type=notice.work_type,
+            )
+            if region is not None:
+                notice.region_restriction = region
+                notice.region_restriction_api_status = REGION_API_VALUE
+                notice.region_restriction_source = "API"
+                notice.region_restriction_evidence = evidence
+                attachments_updated = True
     if notice.industry_restriction_api_status in {None, INDUSTRY_API_ERROR}:
         notice.industry_restriction_codes, notice.industry_restriction_api_status = (
             fetch_industry_restriction_codes(

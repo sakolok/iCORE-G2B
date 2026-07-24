@@ -18,6 +18,8 @@ from app.g2b.bid_notice import (
     REGION_API_ERROR,
     REGION_API_VALUE,
     canonical_bid_notice_identity,
+    explicit_region_restriction_evidence,
+    explicit_region_restriction_from_item,
     infer_joint_supply_allowed,
     infer_two_stage_bid,
     parse_business_amount,
@@ -26,6 +28,9 @@ from app.g2b.bid_notice import (
 )
 from app.g2b.bid_notices.matching import get_enabled_bid_notice_keywords
 from app.g2b.bid_notices.models import BidNoticeCollectionRunModel
+from app.g2b.opening_results.notice_context_repository import (
+    select_canonical_scraper_notice,
+)
 
 
 KST = ZoneInfo("Asia/Seoul")
@@ -320,6 +325,26 @@ def fetch_notice_detail_source(
     return None
 
 
+def fetch_explicit_region_restriction(
+    *,
+    notice_no: str,
+    notice_ord: str,
+    work_type: str | None,
+) -> tuple[str | None, str | None]:
+    """상세 공고의 명시적 지역제한 값을 보조 확인한다."""
+    item = fetch_notice_detail_source(
+        notice_no=notice_no,
+        notice_ord=notice_ord,
+        work_type=work_type,
+    )
+    if item is None:
+        return None, None
+    return (
+        explicit_region_restriction_from_item(item),
+        explicit_region_restriction_evidence(item),
+    )
+
+
 def _upsert_item(
     db: Session,
     item: dict[str, Any],
@@ -336,6 +361,14 @@ def _upsert_item(
     row = db.execute(
         select(ScraperNoticeModel).where(ScraperNoticeModel.dedup_key == dedup_key)
     ).scalar_one_or_none()
+    if row is None:
+        same_official_notice = db.execute(
+            select(ScraperNoticeModel).where(
+                ScraperNoticeModel.bid_notice_no == notice_no,
+                ScraperNoticeModel.bid_notice_ord == notice_ord,
+            )
+        ).scalars().all()
+        row = select_canonical_scraper_notice(same_official_notice)
     if row is not None and skip_existing:
         if row.work_type in {None, "용역"}:
             row.work_type = classify_work_type(item, work_type)
@@ -351,7 +384,7 @@ def _upsert_item(
 
     business_amount = parse_business_amount(item)
     official_base_amount = parse_official_amount(item.get("bsisAmount") or item.get("bssamt"))
-    region = _optional_text(item.get("prtcptPsblRgnNm"), 240)
+    region = explicit_region_restriction_from_item(item)
     row.notice_id = notice_no
     row.title = _optional_text(item.get("bidNtceNm"), 500) or notice_no
     row.agency = _optional_text(item.get("ntceInsttNm") or item.get("dminsttNm"), 240)
@@ -369,7 +402,9 @@ def _upsert_item(
     row.region_restriction = region
     row.region_restriction_api_status = REGION_API_VALUE if region else REGION_API_EMPTY
     row.region_restriction_source = "API" if region else None
-    row.region_restriction_evidence = None
+    row.region_restriction_evidence = (
+        explicit_region_restriction_evidence(item) if region == "해당없음" else None
+    )
     row.joint_supply_allowed = infer_joint_supply_allowed(
         item.get("cmmnSpldmdMethdCd"),
         item.get("cmmnSpldmdMethdNm"),

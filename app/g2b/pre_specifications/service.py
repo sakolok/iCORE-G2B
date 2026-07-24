@@ -177,6 +177,7 @@ def upsert_pre_specifications(
         "registered_at",
         "opinion_deadline",
         "delivery_deadline",
+        "delivery_deadline_text",
         "contact_name",
         "contact_phone",
     )
@@ -684,6 +685,7 @@ def response_payload(row: PreSpecificationModel) -> dict:
         "registered_at": row.registered_at,
         "opinion_deadline": row.opinion_deadline,
         "delivery_deadline": row.delivery_deadline,
+        "delivery_deadline_text": row.delivery_deadline_text,
         "contact_name": row.contact_name,
         "contact_phone": row.contact_phone,
         "attachments": _attachments(row),
