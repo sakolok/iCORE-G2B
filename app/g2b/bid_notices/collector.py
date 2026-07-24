@@ -44,6 +44,9 @@ ICORE_INDUSTRY_CODES = frozenset(
 )
 DETAIL_OPERATIONS_BY_WORK_TYPE = {
     "용역": "getBidPblancListInfoServc",
+    "기술용역": "getBidPblancListInfoServc",
+    "민간일반용역": "getBidPblancListInfoServc",
+    "일반용역": "getBidPblancListInfoServc",
     "물품": "getBidPblancListInfoThng",
     "공사": "getBidPblancListInfoCnstwk",
 }
