@@ -83,6 +83,11 @@ function formatWorkType(value) {
   return value || "분류 확인 중";
 }
 
+function formatRegionRestriction(value) {
+  if (!value) return "확인 필요";
+  return value === "해당없음" ? value : `${value} 제한`;
+}
+
 function externalUrl(value) {
   try {
     const parsed = new URL(value);
@@ -515,7 +520,7 @@ function BidNoticesPage() {
       width: 110,
       render: (value) => value ? <Tag color="blue">{value}</Tag> : "-",
     },
-    { title: "지역", dataIndex: "region_restriction", key: "region_restriction", width: 140, render: (value) => value || "확인 필요" },
+    { title: "지역", dataIndex: "region_restriction", key: "region_restriction", width: 140, render: formatRegionRestriction },
     {
       title: "작업",
       key: "actions",
@@ -862,7 +867,7 @@ function BidNoticesPage() {
             <Descriptions.Item label="게시일시">{formatDateTime(detail.published_at)}</Descriptions.Item>
             <Descriptions.Item label="마감일시">{formatDateTime(detail.deadline_at)}</Descriptions.Item>
             <Descriptions.Item label="사업금액">{formatAmount(detail.business_amount)}</Descriptions.Item>
-            <Descriptions.Item label="지역제한">{detail.region_restriction || "확인 필요"}</Descriptions.Item>
+            <Descriptions.Item label="지역제한">{formatRegionRestriction(detail.region_restriction)}</Descriptions.Item>
             <Descriptions.Item label="매칭 키워드">{detail.matched_keyword ? <Tag color="blue">{detail.matched_keyword}</Tag> : "-"}</Descriptions.Item>
             <Descriptions.Item label="업종제한 코드">{detail.industry_restriction_codes || (detail.industry_restriction_api_status === "API_EMPTY" ? "해당없음" : "확인하지 못함")}</Descriptions.Item>
             <Descriptions.Item label="공동수급 가능">{detail.joint_supply_allowed == null ? "" : detail.joint_supply_allowed ? "가능" : "불가"}</Descriptions.Item>
