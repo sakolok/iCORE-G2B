@@ -23,6 +23,7 @@ from app.g2b.bid_notice import (
     parse_g2b_datetime,
     parse_official_amount,
 )
+from app.g2b.bid_notices.matching import get_enabled_bid_notice_keywords
 from app.g2b.bid_notices.models import BidNoticeCollectionRunModel
 
 
@@ -190,7 +191,14 @@ def matches_icore_industry_code(codes: str | None) -> bool:
     return bool(set(re.findall(r"(?<!\d)(\d{4})(?!\d)", codes or "")) & ICORE_INDUSTRY_CODES)
 
 
-def _upsert_item(db: Session, item: dict[str, Any], work_type: str, now: datetime) -> bool:
+def _upsert_item(
+    db: Session,
+    item: dict[str, Any],
+    work_type: str,
+    now: datetime,
+    *,
+    skip_existing: bool = False,
+) -> bool:
     notice_no = _optional_text(item.get("bidNtceNo"), 160)
     notice_ord = _optional_text(item.get("bidNtceOrd"), 20) or "00"
     if notice_no is None:
@@ -199,6 +207,8 @@ def _upsert_item(db: Session, item: dict[str, Any], work_type: str, now: datetim
     row = db.execute(
         select(ScraperNoticeModel).where(ScraperNoticeModel.dedup_key == dedup_key)
     ).scalar_one_or_none()
+    if row is not None and skip_existing:
+        return False
     created = row is None
     if row is None:
         row = ScraperNoticeModel(
@@ -227,19 +237,6 @@ def _upsert_item(db: Session, item: dict[str, Any], work_type: str, now: datetim
     row.prearranged_price_decision_method = _optional_text(item.get("prearngPrceDcsnMthdNm"), 120)
     row.region_restriction = region
     row.region_restriction_api_status = REGION_API_VALUE if region else REGION_API_EMPTY
-    if row.industry_restriction_api_status is None:
-        (
-            row.industry_restriction_codes,
-            row.industry_restriction_api_status,
-        ) = fetch_industry_restriction_codes(
-            notice_no=notice_no,
-            notice_ord=notice_ord,
-        )
-        row.icore_industry_code_match = (
-            None
-            if row.industry_restriction_api_status == INDUSTRY_API_ERROR
-            else matches_icore_industry_code(row.industry_restriction_codes)
-        )
     row.joint_supply_allowed = infer_joint_supply_allowed(
         item.get("cmmnSpldmdMethdCd"),
         item.get("cmmnSpldmdMethdNm"),
@@ -266,14 +263,19 @@ def collect_bid_notices(
     end_date: date,
     business_types: list[str],
     keywords: list[str],
+    skip_existing: bool = False,
+    run_prefix: str = "manual",
+    now: datetime | None = None,
+    window_start: datetime | None = None,
+    window_end: datetime | None = None,
 ) -> dict[str, int | str]:
     normalized_keywords = [str(keyword).strip() for keyword in keywords if str(keyword).strip()]
     if not normalized_keywords:
         raise BidNoticeCollectionError("수집하려면 조건 설정에 포함 키워드를 한 개 이상 저장하세요.")
-    start_at = datetime.combine(start_date, time.min, tzinfo=KST)
-    end_at = datetime.combine(end_date, time(23, 59), tzinfo=KST)
+    start_at = window_start or datetime.combine(start_date, time.min, tzinfo=KST)
+    end_at = window_end or datetime.combine(end_date, time(23, 59), tzinfo=KST)
     run = BidNoticeCollectionRunModel(
-        run_key=f"manual:{start_date.isoformat()}:{end_date.isoformat()}:{uuid4()}",
+        run_key=f"{run_prefix}:{start_date.isoformat()}:{end_date.isoformat()}:{uuid4()}",
         window_start=start_at,
         window_end=end_at,
     )
@@ -298,13 +300,21 @@ def collect_bid_notices(
                     if key not in seen:
                         seen.add(key)
                         rows.append((item, label))
-        now = datetime.now(timezone.utc)
+        collected_at = now or datetime.now(timezone.utc)
         inserted = 0
         for item, label in rows:
-            inserted += int(_upsert_item(db, item, label, now))
+            inserted += int(
+                _upsert_item(
+                    db,
+                    item,
+                    label,
+                    collected_at,
+                    skip_existing=skip_existing,
+                )
+            )
         run.fetched_count = len(rows)
         run.inserted_count = inserted
-        run.updated_count = len(rows) - inserted
+        run.updated_count = 0 if skip_existing else len(rows) - inserted
         run.status = "SUCCESS"
         run.finished_at = datetime.now(timezone.utc)
         db.commit()
@@ -312,7 +322,7 @@ def collect_bid_notices(
             "run_key": run.run_key,
             "fetched_count": len(rows),
             "inserted_count": inserted,
-            "updated_count": len(rows) - inserted,
+            "updated_count": 0 if skip_existing else len(rows) - inserted,
         }
     except Exception as error:
         run.status = "FAILED"
@@ -322,3 +332,32 @@ def collect_bid_notices(
         if isinstance(error, BidNoticeCollectionError):
             raise
         raise BidNoticeCollectionError("입찰공고 수집에 실패했습니다.") from error
+
+
+def collect_scheduled_bid_notices(
+    db: Session,
+    *,
+    now: datetime | None = None,
+) -> dict[str, int | str]:
+    collected_at = now or datetime.now(timezone.utc)
+    keywords = get_enabled_bid_notice_keywords(db)
+    if not keywords:
+        return {
+            "run_key": f"scheduled:{collected_at.date().isoformat()}:no-keywords",
+            "fetched_count": 0,
+            "inserted_count": 0,
+            "updated_count": 0,
+        }
+    collection_date = collected_at.astimezone(KST).date()
+    return collect_bid_notices(
+        db,
+        start_date=collection_date,
+        end_date=collection_date,
+        business_types=list(OPERATIONS),
+        keywords=keywords,
+        skip_existing=True,
+        run_prefix="scheduled",
+        now=collected_at,
+        window_start=datetime.combine(collection_date, time.min, tzinfo=KST),
+        window_end=collected_at.astimezone(KST),
+    )

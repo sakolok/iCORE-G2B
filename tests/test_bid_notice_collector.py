@@ -10,6 +10,7 @@ from app.data.models import Base, ScraperNoticeModel
 from app.g2b.bid_notices.collector import (
     INDUSTRY_API_VALUE,
     collect_bid_notices,
+    collect_scheduled_bid_notices,
     fetch_industry_restriction_codes,
 )
 from app.g2b.bid_notices.matching import (
@@ -85,6 +86,60 @@ class BidNoticeCollectorTests(unittest.TestCase):
         # still remain unchanged after the shared persistence round trip.
         self.assertEqual(stored.published_at.hour, 10)
         self.assertEqual(run.status, "SUCCESS")
+
+    @patch("app.g2b.bid_notices.collector._fetch_operation")
+    def test_scheduled_collection_uses_enabled_keywords_and_skips_existing_notices(
+        self, fetch_operation
+    ):
+        now = datetime(2026, 7, 24, 8, 0, tzinfo=timezone.utc)
+        fetch_operation.return_value = [
+            {
+                "bidNtceNo": "R26BK000012",
+                "bidNtceOrd": "00",
+                "bidNtceNm": "AI 데이터 분석 물품 구매",
+                "bidNtceDt": "202607241000",
+            }
+        ]
+        update_user_bid_notice_profile(
+            self.db,
+            organization_id=1,
+            user_id=10,
+            enabled=True,
+            keywords=["AI"],
+            excluded_keywords=[],
+        )
+        update_user_bid_notice_profile(
+            self.db,
+            organization_id=1,
+            user_id=11,
+            enabled=True,
+            keywords=["AI", "클라우드"],
+            excluded_keywords=[],
+        )
+        update_user_bid_notice_profile(
+            self.db,
+            organization_id=1,
+            user_id=12,
+            enabled=False,
+            keywords=["제외"],
+            excluded_keywords=[],
+        )
+
+        first = collect_scheduled_bid_notices(self.db, now=now)
+        second = collect_scheduled_bid_notices(self.db, now=now)
+
+        self.assertEqual(first["inserted_count"], 1)
+        self.assertEqual(first["updated_count"], 0)
+        self.assertEqual(second["inserted_count"], 0)
+        self.assertEqual(second["updated_count"], 0)
+        searched_keywords = {call.kwargs["keyword"] for call in fetch_operation.call_args_list}
+        self.assertEqual(searched_keywords, {"AI", "클라우드"})
+        self.assertTrue(
+            all(
+                call.kwargs["end_at"] == now.astimezone(call.kwargs["end_at"].tzinfo)
+                for call in fetch_operation.call_args_list
+            )
+        )
 
     @patch("app.g2b.bid_notices.collector.requests.get")
     def test_license_limit_codes_are_saved_as_four_digit_codes(self, request_get):

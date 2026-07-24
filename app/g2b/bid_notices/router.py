@@ -13,6 +13,7 @@ from app.g2b.bid_notices.collector import (
     INDUSTRY_API_ERROR,
     BidNoticeCollectionError,
     collect_bid_notices,
+    collect_scheduled_bid_notices,
     fetch_industry_restriction_codes,
     matches_icore_industry_code,
 )
@@ -71,7 +72,11 @@ from app.g2b.opening_results.sheet_export import (
     SheetExportConfigurationError,
     get_sheet_service_account_email,
 )
-from app.services.auth_service import require_organization_auth
+from app.services.auth_service import (
+    require_organization_auth,
+    verify_cloud_scheduler_oidc_token,
+    verify_scraper_internal_token,
+)
 
 
 router = APIRouter(prefix="/api/v1/bid-notices", tags=["g2b-bid-notices"])
@@ -176,6 +181,18 @@ def collect_bid_notice_data(
     except BidNoticeCollectionError as error:
         raise HTTPException(status_code=502, detail=str(error)) from error
     return CollectBidNoticesResponse(**result)
+
+
+@router.post("/internal/collect", response_model=CollectBidNoticesResponse)
+def collect_bid_notice_data_on_schedule(
+    _: None = Depends(verify_scraper_internal_token),
+    __: None = Depends(verify_cloud_scheduler_oidc_token),
+    db: Session = Depends(get_db),
+) -> CollectBidNoticesResponse:
+    try:
+        return CollectBidNoticesResponse(**collect_scheduled_bid_notices(db))
+    except BidNoticeCollectionError as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
 
 
 @router.get("/settings", response_model=BidNoticeSettingsResponse)

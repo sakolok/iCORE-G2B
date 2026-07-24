@@ -41,6 +41,18 @@ def get_user_bid_notice_profile(
     return profile
 
 
+def get_enabled_bid_notice_keywords(db: Session) -> list[str]:
+    profiles = db.execute(
+        select(UserBidNoticeProfileModel).where(UserBidNoticeProfileModel.enabled.is_(True))
+    ).scalars()
+    keywords: list[str] = []
+    for profile in profiles:
+        for keyword in normalize_keywords(profile.keywords):
+            if keyword not in keywords:
+                keywords.append(keyword)
+    return keywords
+
+
 def sync_user_bid_notice_matches(
     db: Session,
     *,
