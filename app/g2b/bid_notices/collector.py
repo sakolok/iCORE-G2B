@@ -15,6 +15,7 @@ from app.core.config import settings
 from app.data.models import ScraperNoticeModel
 from app.g2b.bid_notice import (
     REGION_API_EMPTY,
+    REGION_API_ERROR,
     REGION_API_VALUE,
     canonical_bid_notice_identity,
     infer_joint_supply_allowed,
@@ -36,6 +37,7 @@ OPERATIONS = {
 }
 MAX_PAGES_PER_KEYWORD = 25
 LICENSE_LIMIT_OPERATION = "getBidPblancListInfoLicenseLimit"
+PARTICIPANT_REGION_OPERATION = "getBidPblancListInfoPrtcptPsblRgn"
 INDUSTRY_API_VALUE = "API_VALUE"
 INDUSTRY_API_EMPTY = "API_EMPTY"
 INDUSTRY_API_ERROR = "API_ERROR"
@@ -200,6 +202,49 @@ def fetch_industry_restriction_codes(
                 if code not in codes:
                     codes.append(code)
     return (", ".join(codes) if codes else None), (INDUSTRY_API_VALUE if codes else INDUSTRY_API_EMPTY)
+
+
+def fetch_participant_region_restriction(
+    *,
+    notice_no: str,
+    notice_ord: str,
+) -> tuple[str | None, str]:
+    """참가가능지역 API의 명시된 지역 제한만 반환한다."""
+    service_key = settings.g2b_award_service_key.strip()
+    if not service_key:
+        return None, REGION_API_ERROR
+    try:
+        response = requests.get(
+            f"{G2B_BID_NOTICE_API_BASE}/{PARTICIPANT_REGION_OPERATION}",
+            params={
+                "serviceKey": service_key,
+                "type": "json",
+                "pageNo": 1,
+                "numOfRows": 100,
+                "inqryDiv": "2",
+                "bidNtceNo": notice_no,
+                "bidNtceOrd": notice_ord,
+            },
+            headers={"Accept": "application/json"},
+            timeout=25,
+        )
+        response.raise_for_status()
+        items, _ = _extract_items(response.json())
+    except (requests.RequestException, ValueError, BidNoticeCollectionError):
+        return None, REGION_API_ERROR
+
+    identity = canonical_bid_notice_identity(notice_no, notice_ord)
+    regions: list[str] = []
+    for item in items:
+        if canonical_bid_notice_identity(item.get("bidNtceNo"), item.get("bidNtceOrd")) != identity:
+            continue
+        region = _optional_text(item.get("prtcptPsblRgnNm"), 240)
+        if region and region not in regions:
+            regions.append(region)
+    return (
+        (", ".join(regions) if regions else None),
+        REGION_API_VALUE if regions else REGION_API_EMPTY,
+    )
 
 
 def matches_icore_industry_code(codes: str | None) -> bool:

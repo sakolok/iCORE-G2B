@@ -11,11 +11,15 @@ from app.data.database import get_db
 from app.data.models import ScraperNoticeModel
 from app.g2b.bid_notices.collector import (
     INDUSTRY_API_ERROR,
+    REGION_API_EMPTY,
+    REGION_API_ERROR,
+    REGION_API_VALUE,
     BidNoticeCollectionError,
     collect_bid_notices,
     collect_scheduled_bid_notices,
     fetch_notice_detail_source,
     fetch_industry_restriction_codes,
+    fetch_participant_region_restriction,
     matches_icore_industry_code,
 )
 from app.g2b.bid_notices.matching import (
@@ -124,25 +128,44 @@ def _notice_attachments(notice: ScraperNoticeModel) -> list[BidNoticeAttachment]
     return attachments
 
 
-def _hydrate_notice_attachments(notice: ScraperNoticeModel) -> bool:
-    if _notice_attachments(notice):
+def _apply_explicit_region_restriction(
+    notice: ScraperNoticeModel,
+    source: dict,
+) -> bool:
+    region = str(source.get("prtcptPsblRgnNm") or "").strip()
+    if not region:
         return False
+    if (
+        notice.region_restriction == region
+        and notice.region_restriction_api_status == REGION_API_VALUE
+    ):
+        return False
+    notice.region_restriction = region
+    notice.region_restriction_api_status = REGION_API_VALUE
+    return True
+
+
+def _hydrate_notice_attachments(notice: ScraperNoticeModel) -> bool:
     try:
         source = json.loads(notice.source_payload or "{}")
     except (TypeError, ValueError):
         source = {}
-    if not isinstance(source, dict) or source.get("_attachments_checked"):
+    if not isinstance(source, dict):
         return False
+    updated = _apply_explicit_region_restriction(notice, source)
+    if source.get("_attachments_checked"):
+        return updated
     detail_source = fetch_notice_detail_source(
         notice_no=notice.bid_notice_no or notice.notice_id,
         notice_ord=notice.bid_notice_ord or "00",
         work_type=notice.work_type,
     )
     if detail_source is None:
-        return False
+        return updated
     source.update(detail_source)
     source["_attachments_checked"] = True
     notice.source_payload = json.dumps(source, ensure_ascii=False, sort_keys=True, default=str)
+    _apply_explicit_region_restriction(notice, detail_source)
     return True
 
 
@@ -430,6 +453,13 @@ def fetch_bid_notice_detail(
         raise HTTPException(status_code=404, detail="입찰공고를 찾을 수 없습니다.")
     notice, matched_keyword = row
     attachments_updated = _hydrate_notice_attachments(notice)
+    if notice.region_restriction_api_status in {None, REGION_API_EMPTY, REGION_API_ERROR}:
+        notice.region_restriction, notice.region_restriction_api_status = (
+            fetch_participant_region_restriction(
+                notice_no=notice.bid_notice_no or notice.notice_id,
+                notice_ord=notice.bid_notice_ord or "00",
+            )
+        )
     if notice.industry_restriction_api_status in {None, INDUSTRY_API_ERROR}:
         notice.industry_restriction_codes, notice.industry_restriction_api_status = (
             fetch_industry_restriction_codes(
