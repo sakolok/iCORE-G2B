@@ -27,7 +27,7 @@
 .bid-notice-row-selected > td { background: #f0f6ff !important; }
 .bid-notices-table-card .ant-pagination { margin: 20px 24px; }
 .bid-notice-title-cell { display: grid; gap: 4px; }
-.bid-notices-table-card .bid-notice-detail-button { display: block; overflow: hidden; width: 100%; height: auto; padding: 0; color: #000000 !important; -webkit-text-fill-color: #000000; font-weight: 700; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+.bid-notices-table-card .bid-notice-detail-button { display: block; overflow: hidden; width: 100%; height: auto; padding: 0; color: #000000 !important; -webkit-text-fill-color: #000000; font-size: 15px; font-weight: 700; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
 .bid-notices-table-card .bid-notice-detail-button:hover { color: #000000 !important; -webkit-text-fill-color: #000000; }
 .bid-notice-title-cell span { color: var(--icore-text-muted); font-size: 12px; }
 .bid-notice-detail-loading { padding: 12px 0; color: var(--icore-text-secondary); }

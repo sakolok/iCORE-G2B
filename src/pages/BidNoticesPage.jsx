@@ -28,11 +28,15 @@ const { RangePicker } = DatePicker;
 const MAX_SELECTION_COUNT = 100;
 
 const HEADER_STATUS_META = {
-  MATCH: { type: "success", text: "A:L 헤더가 올바릅니다." },
+  MATCH: { type: "success", text: "A:J 헤더가 올바릅니다." },
   EMPTY: { type: "success", text: "빈 탭입니다. 첫 반영 시 고정 헤더를 만듭니다." },
+  MIGRATION_READY: {
+    type: "success",
+    text: "기존 12개 열 탭입니다. 첫 반영 시 새 10개 열 형식으로 변환합니다.",
+  },
   MISMATCH: {
     type: "error",
-    text: "기존 헤더가 입찰공고 12개 열과 다릅니다. 빈 탭이나 올바른 헤더의 탭을 사용하세요.",
+    text: "기존 헤더가 입찰공고 10개 열과 다릅니다. 빈 탭이나 올바른 헤더의 탭을 사용하세요.",
   },
   NOT_CHECKED: { type: "warning", text: "탭을 확인하지 못했습니다." },
 };
@@ -86,6 +90,13 @@ function formatWorkType(value) {
 function formatRegionRestriction(value) {
   if (!value) return "확인 필요";
   return value === "해당없음" ? value : `${value} 제한`;
+}
+
+function formatIndustryRestriction(row) {
+  if (row?.industry_restriction_codes) return row.industry_restriction_codes;
+  return ["API_NONE", "DOCUMENT_NONE"].includes(row?.industry_restriction_api_status)
+    ? "해당없음"
+    : "문서 확인 필요";
 }
 
 function externalUrl(value) {
@@ -498,7 +509,7 @@ function BidNoticesPage() {
       render: (_, row) => `${row.bid_notice_no || "-"}-${row.bid_notice_ord || "00"}`,
     },
     {
-      title: "공고명",
+      title: "공고명 / 수요기관",
       dataIndex: "business_name",
       key: "business_name",
       width: 340,
@@ -869,8 +880,16 @@ function BidNoticesPage() {
             <Descriptions.Item label="사업금액">{formatAmount(detail.business_amount)}</Descriptions.Item>
             <Descriptions.Item label="지역제한">{formatRegionRestriction(detail.region_restriction)}</Descriptions.Item>
             <Descriptions.Item label="매칭 키워드">{detail.matched_keyword ? <Tag color="blue">{detail.matched_keyword}</Tag> : "-"}</Descriptions.Item>
-            <Descriptions.Item label="업종제한 코드">{detail.industry_restriction_codes || (detail.industry_restriction_api_status === "API_EMPTY" ? "해당없음" : "확인하지 못함")}</Descriptions.Item>
+            <Descriptions.Item label="업종제한 코드">{formatIndustryRestriction(detail)}</Descriptions.Item>
             <Descriptions.Item label="공동수급 가능">{detail.joint_supply_allowed == null ? "" : detail.joint_supply_allowed ? "가능" : "불가"}</Descriptions.Item>
+            {(detail.region_restriction_source === "DOCUMENT" || detail.industry_restriction_source === "DOCUMENT") ? (
+              <Descriptions.Item label="문서 분석 근거" span={2}>
+                <Space direction="vertical" size={2}>
+                  {detail.region_restriction_source === "DOCUMENT" ? <Text type="secondary">지역: {detail.region_restriction_evidence || "첨부 문서에서 확인"}</Text> : null}
+                  {detail.industry_restriction_source === "DOCUMENT" ? <Text type="secondary">업종: {detail.industry_restriction_evidence || "첨부 문서에서 확인"}</Text> : null}
+                </Space>
+              </Descriptions.Item>
+            ) : null}
             <Descriptions.Item label="공식 공고" span={2}>
               {externalUrl(detail.notice_url) ? <Button type="link" href={externalUrl(detail.notice_url)} target="_blank" rel="noopener noreferrer">나라장터 공고 바로가기</Button> : <Text type="secondary">연결된 공식 공고 링크가 없습니다.</Text>}
             </Descriptions.Item>
