@@ -909,7 +909,7 @@ function PreSpecificationsPage() {
           <Space wrap>
             <Typography.Text strong>내 포함 키워드</Typography.Text>
             {sheetSettings?.profile?.enabled ? (
-              sheetSettings.profile.keywords?.map((keyword) => <Tag key={keyword}>{keyword}</Tag>)
+              sheetSettings.profile.keywords?.map((keyword) => <Tag className="pre-specification-keyword-tag" key={keyword}>{keyword}</Tag>)
             ) : (
               <Tag>사용 안 함</Tag>
             )}
@@ -917,7 +917,7 @@ function PreSpecificationsPage() {
               <>
                 <Typography.Text strong>제외</Typography.Text>
                 {sheetSettings.profile.excluded_keywords.map((keyword) => (
-                  <Tag color="orange" key={keyword}>{keyword}</Tag>
+                  <Tag className="pre-specification-keyword-tag is-excluded" key={keyword}>{keyword}</Tag>
                 ))}
               </>
             ) : null}
