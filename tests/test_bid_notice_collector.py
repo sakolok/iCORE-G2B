@@ -8,9 +8,11 @@ from sqlalchemy.orm import Session
 
 from app.data.models import Base, ScraperNoticeModel
 from app.g2b.bid_notices.collector import (
+    INDUSTRY_API_EMPTY,
     INDUSTRY_API_VALUE,
     collect_bid_notices,
     collect_scheduled_bid_notices,
+    fetch_notice_detail_source,
     fetch_industry_restriction_codes,
 )
 from app.g2b.bid_notices.matching import (
@@ -59,6 +61,7 @@ class BidNoticeCollectorTests(unittest.TestCase):
                 "bidNtceDt": "202607231000",
                 "bidClseDt": "202607301700",
                 "prtcptPsblRgnNm": "서울특별시",
+                "bidNtceDtlClsfcNm": "기술용역",
                 "bidMethdNm": "2단계경쟁",
                 "cmmnSpldmdMethdNm": "(전자)분담이행",
             }
@@ -79,7 +82,7 @@ class BidNoticeCollectorTests(unittest.TestCase):
         self.assertEqual(stored.base_amount, Decimal("110000000"))
         self.assertEqual(stored.official_base_amount, Decimal("95000000"))
         self.assertEqual(stored.bid_notice_ord, "000")
-        self.assertEqual(stored.work_type, "용역")
+        self.assertEqual(stored.work_type, "기술용역")
         self.assertTrue(stored.joint_supply_allowed)
         self.assertEqual(fetch_operation.call_args.kwargs["keyword"], "AI")
         # SQLite strips timezone metadata; the source KST wall-clock value must
@@ -140,6 +143,35 @@ class BidNoticeCollectorTests(unittest.TestCase):
                 for call in fetch_operation.call_args_list
             )
         )
+        self.assertTrue(
+            all(call.kwargs["start_at"].date().isoformat() == "2026-07-11" for call in fetch_operation.call_args_list)
+        )
+
+    @patch("app.g2b.bid_notices.collector.requests.get")
+    def test_notice_detail_source_uses_operation_matching_work_type(self, request_get):
+        request_get.return_value.json.return_value = {
+            "response": {
+                "header": {"resultCode": "00"},
+                "body": {
+                    "items": {
+                        "item": {
+                            "bidNtceNo": "R26BK000013",
+                            "bidNtceOrd": "00",
+                            "ntceSpecFileNm1": "공고문.hwp",
+                            "ntceSpecDocUrl1": "https://www.g2b.go.kr/file/notice-13",
+                        }
+                    }
+                },
+            }
+        }
+
+        with patch("app.g2b.bid_notices.collector.settings.g2b_award_service_key", "test-key"):
+            source = fetch_notice_detail_source(
+                notice_no="R26BK000013", notice_ord="00", work_type="용역"
+            )
+
+        self.assertEqual(source["ntceSpecFileNm1"], "공고문.hwp")
+        self.assertIn("getBidPblancListInfoServc", request_get.call_args.args[0])
 
     @patch("app.g2b.bid_notices.collector.requests.get")
     def test_license_limit_codes_are_saved_as_four_digit_codes(self, request_get):
@@ -209,7 +241,7 @@ class BidNoticeCollectorTests(unittest.TestCase):
         )
 
     @patch("app.g2b.bid_notices.router.fetch_industry_restriction_codes")
-    def test_icore_code_filter_keeps_only_matching_notices(self, fetch_codes):
+    def test_icore_code_filter_keeps_matching_and_no_restriction_notices(self, fetch_codes):
         now = datetime.now(timezone.utc)
         matching_notice = ScraperNoticeModel(
             dedup_key="bid-notice-icore-match",
@@ -229,7 +261,16 @@ class BidNoticeCollectorTests(unittest.TestCase):
             published_at=now,
             source_payload="{}",
         )
-        self.db.add_all([matching_notice, other_notice])
+        no_code_notice = ScraperNoticeModel(
+            dedup_key="bid-notice-icore-empty",
+            notice_id="R26BK000014",
+            title="AI 업종제한 해당없음 공고",
+            first_seen_at=now,
+            last_seen_at=now,
+            published_at=now,
+            source_payload="{}",
+        )
+        self.db.add_all([matching_notice, other_notice, no_code_notice])
         self.db.commit()
         update_user_bid_notice_profile(
             self.db,
@@ -239,11 +280,11 @@ class BidNoticeCollectorTests(unittest.TestCase):
             keywords=["AI"],
             excluded_keywords=[],
         )
-        fetch_codes.side_effect = lambda *, notice_no, notice_ord: (
-            ("0036", INDUSTRY_API_VALUE)
-            if notice_no == "R26BK000008"
-            else ("7777", INDUSTRY_API_VALUE)
-        )
+        fetch_codes.side_effect = lambda *, notice_no, notice_ord: {
+            "R26BK000008": ("0036", INDUSTRY_API_VALUE),
+            "R26BK000009": ("7777", INDUSTRY_API_VALUE),
+            "R26BK000014": (None, INDUSTRY_API_EMPTY),
+        }[notice_no]
 
         response = list_bid_notices(
             q=None,
@@ -256,8 +297,104 @@ class BidNoticeCollectorTests(unittest.TestCase):
             db=self.db,
         )
 
-        self.assertEqual(response.total, 1)
-        self.assertEqual(response.items[0].id, matching_notice.id)
+        self.assertEqual(response.total, 2)
+        self.assertEqual({item.id for item in response.items}, {matching_notice.id, no_code_notice.id})
+
+    def test_review_list_filters_multiple_work_types(self):
+        now = datetime.now(timezone.utc)
+        notices = [
+            ScraperNoticeModel(
+                dedup_key=f"bid-notice-work-type-{work_type}",
+                notice_id=f"R26BK00002{index}",
+                title=f"AI {work_type} 공고",
+                work_type=work_type,
+                first_seen_at=now,
+                last_seen_at=now,
+                published_at=now,
+                source_payload="{}",
+            )
+            for index, work_type in enumerate(["공사", "물품", "일반용역", "용역"])
+        ]
+        self.db.add_all(notices)
+        self.db.commit()
+        update_user_bid_notice_profile(
+            self.db,
+            organization_id=1,
+            user_id=10,
+            enabled=True,
+            keywords=["AI"],
+            excluded_keywords=[],
+        )
+
+        response = list_bid_notices(
+            q=None,
+            work_type="공사,물품",
+            region=None,
+            icore_codes_only=False,
+            page=1,
+            page_size=30,
+            auth={"organization_id": 1, "user_id": 10},
+            db=self.db,
+        )
+
+        self.assertEqual({item.work_type for item in response.items}, {"공사", "물품"})
+
+        general_response = list_bid_notices(
+            q=None,
+            work_type="일반용역",
+            region=None,
+            icore_codes_only=False,
+            page=1,
+            page_size=30,
+            auth={"organization_id": 1, "user_id": 10},
+            db=self.db,
+        )
+        self.assertEqual({item.work_type for item in general_response.items}, {"일반용역", "용역"})
+
+    @patch("app.g2b.bid_notices.router.fetch_industry_restriction_codes")
+    @patch("app.g2b.bid_notices.router.fetch_notice_detail_source")
+    def test_detail_fetches_and_persists_official_notice_attachments(self, fetch_detail, fetch_codes):
+        now = datetime.now(timezone.utc)
+        notice = ScraperNoticeModel(
+            dedup_key="bid-notice-detail-attachments",
+            notice_id="R26BK000015",
+            bid_notice_no="R26BK000015",
+            bid_notice_ord="00",
+            title="AI 상세 첨부파일 공고",
+            work_type="용역",
+            first_seen_at=now,
+            last_seen_at=now,
+            published_at=now,
+            source_payload="{}",
+        )
+        self.db.add(notice)
+        self.db.commit()
+        update_user_bid_notice_profile(
+            self.db,
+            organization_id=1,
+            user_id=10,
+            enabled=True,
+            keywords=["AI"],
+            excluded_keywords=[],
+        )
+        sync_user_bid_notice_matches(self.db, organization_id=1, user_id=10, now=now)
+        self.db.commit()
+        fetch_detail.return_value = {
+            "bidNtceNo": "R26BK000015",
+            "bidNtceOrd": "00",
+            "ntceSpecFileNm1": "제안요청서.pdf",
+            "ntceSpecDocUrl1": "https://www.g2b.go.kr/file/notice-15",
+        }
+        fetch_codes.return_value = (None, INDUSTRY_API_EMPTY)
+
+        response = fetch_bid_notice_detail(
+            notice_id=notice.id,
+            auth={"organization_id": 1, "user_id": 10},
+            db=self.db,
+        )
+
+        self.assertEqual(response.attachments[0].label, "제안요청서.pdf")
+        self.assertEqual(self.db.get(ScraperNoticeModel, notice.id).source_payload.count("notice-15"), 1)
 
     def test_detail_exposes_official_notice_attachments(self):
         now = datetime.now(timezone.utc)

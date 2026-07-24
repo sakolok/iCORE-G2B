@@ -14,6 +14,7 @@ from app.g2b.bid_notices.collector import (
     BidNoticeCollectionError,
     collect_bid_notices,
     collect_scheduled_bid_notices,
+    fetch_notice_detail_source,
     fetch_industry_restriction_codes,
     matches_icore_industry_code,
 )
@@ -121,6 +122,28 @@ def _notice_attachments(notice: ScraperNoticeModel) -> list[BidNoticeAttachment]
             )
         )
     return attachments
+
+
+def _hydrate_notice_attachments(notice: ScraperNoticeModel) -> bool:
+    if _notice_attachments(notice):
+        return False
+    try:
+        source = json.loads(notice.source_payload or "{}")
+    except (TypeError, ValueError):
+        source = {}
+    if not isinstance(source, dict) or source.get("_attachments_checked"):
+        return False
+    detail_source = fetch_notice_detail_source(
+        notice_no=notice.bid_notice_no or notice.notice_id,
+        notice_ord=notice.bid_notice_ord or "00",
+        work_type=notice.work_type,
+    )
+    if detail_source is None:
+        return False
+    source.update(detail_source)
+    source["_attachments_checked"] = True
+    notice.source_payload = json.dumps(source, ensure_ascii=False, sort_keys=True, default=str)
+    return True
 
 
 def _notice_response(
@@ -291,8 +314,12 @@ def list_bid_notices(
                 ScraperNoticeModel.agency.like(f"%{keyword}%"),
             )
         )
-    if work_type and work_type.strip():
-        statement = statement.where(ScraperNoticeModel.work_type == work_type.strip())
+    work_types = [item.strip() for item in (work_type or "").split(",") if item.strip()]
+    if work_types:
+        stored_work_types = list(work_types)
+        if "일반용역" in work_types:
+            stored_work_types.append("용역")
+        statement = statement.where(ScraperNoticeModel.work_type.in_(stored_work_types))
     if region and region.strip():
         statement = statement.where(
             ScraperNoticeModel.region_restriction.like(f"%{region.strip()}%")
@@ -326,7 +353,12 @@ def list_bid_notices(
             )
         if unresolved_rows:
             db.commit()
-        statement = statement.where(ScraperNoticeModel.icore_industry_code_match.is_(True))
+        statement = statement.where(
+            or_(
+                ScraperNoticeModel.icore_industry_code_match.is_(True),
+                ScraperNoticeModel.industry_restriction_api_status == "API_EMPTY",
+            )
+        )
     total = db.execute(select(func.count()).select_from(statement.subquery())).scalar_one()
     rows = db.execute(
         statement.order_by(ScraperNoticeModel.published_at.desc(), ScraperNoticeModel.id.desc())
@@ -397,6 +429,7 @@ def fetch_bid_notice_detail(
     if row is None:
         raise HTTPException(status_code=404, detail="입찰공고를 찾을 수 없습니다.")
     notice, matched_keyword = row
+    attachments_updated = _hydrate_notice_attachments(notice)
     if notice.industry_restriction_api_status in {None, INDUSTRY_API_ERROR}:
         notice.industry_restriction_codes, notice.industry_restriction_api_status = (
             fetch_industry_restriction_codes(
@@ -409,6 +442,8 @@ def fetch_bid_notice_detail(
             if notice.industry_restriction_api_status == INDUSTRY_API_ERROR
             else matches_icore_industry_code(notice.industry_restriction_codes)
         )
+        attachments_updated = True
+    if attachments_updated:
         db.commit()
     return _notice_response(notice, matched_keyword, include_attachments=True)
 

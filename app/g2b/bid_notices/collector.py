@@ -1,7 +1,7 @@
 import hashlib
 import json
 import re
-from datetime import date, datetime, time, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 from uuid import uuid4
@@ -34,13 +34,25 @@ OPERATIONS = {
     "GOODS": ("getBidPblancListInfoThngPPSSrch", "물품"),
     "CONSTRUCTION": ("getBidPblancListInfoCnstwkPPSSrch", "공사"),
 }
-MAX_PAGES_PER_KEYWORD = 5
+MAX_PAGES_PER_KEYWORD = 25
 LICENSE_LIMIT_OPERATION = "getBidPblancListInfoLicenseLimit"
 INDUSTRY_API_VALUE = "API_VALUE"
 INDUSTRY_API_EMPTY = "API_EMPTY"
 INDUSTRY_API_ERROR = "API_ERROR"
 ICORE_INDUSTRY_CODES = frozenset(
     {"9901", "3198", "0036", "1169", "1261", "1426", "1468", "9999"}
+)
+DETAIL_OPERATIONS_BY_WORK_TYPE = {
+    "용역": "getBidPblancListInfoServc",
+    "물품": "getBidPblancListInfoThng",
+    "공사": "getBidPblancListInfoCnstwk",
+}
+SERVICE_WORK_TYPE_FIELDS = (
+    "bidNtceDtlClsfcNm",
+    "bidNtceClsfcNm",
+    "bidNtceKndNm",
+    "bizClsfNm",
+    "cntrctCnclsMthdNm",
 )
 
 
@@ -191,6 +203,55 @@ def matches_icore_industry_code(codes: str | None) -> bool:
     return bool(set(re.findall(r"(?<!\d)(\d{4})(?!\d)", codes or "")) & ICORE_INDUSTRY_CODES)
 
 
+def classify_work_type(item: dict[str, Any], operation_work_type: str) -> str:
+    if operation_work_type != "용역":
+        return operation_work_type
+    classification = " ".join(str(item.get(field) or "") for field in SERVICE_WORK_TYPE_FIELDS)
+    compact = re.sub(r"\s+", "", classification)
+    if "민간일반용역" in compact or ("민간" in compact and "일반용역" in compact):
+        return "민간일반용역"
+    if "기술용역" in compact or ("기술" in compact and "용역" in compact):
+        return "기술용역"
+    return "일반용역"
+
+
+def fetch_notice_detail_source(
+    *,
+    notice_no: str,
+    notice_ord: str,
+    work_type: str | None,
+) -> dict[str, Any] | None:
+    """상세 공고 응답에서 첨부파일 링크를 보강한다."""
+    operation = DETAIL_OPERATIONS_BY_WORK_TYPE.get(work_type or "")
+    service_key = settings.g2b_award_service_key.strip()
+    if not operation or not service_key:
+        return None
+    try:
+        response = requests.get(
+            f"{G2B_BID_NOTICE_API_BASE}/{operation}",
+            params={
+                "serviceKey": service_key,
+                "type": "json",
+                "pageNo": 1,
+                "numOfRows": 100,
+                "inqryDiv": "2",
+                "bidNtceNo": notice_no,
+                "bidNtceOrd": notice_ord,
+            },
+            headers={"Accept": "application/json"},
+            timeout=25,
+        )
+        response.raise_for_status()
+        items, _ = _extract_items(response.json())
+    except (requests.RequestException, ValueError, BidNoticeCollectionError):
+        return None
+    identity = canonical_bid_notice_identity(notice_no, notice_ord)
+    for item in items:
+        if canonical_bid_notice_identity(item.get("bidNtceNo"), item.get("bidNtceOrd")) == identity:
+            return item
+    return None
+
+
 def _upsert_item(
     db: Session,
     item: dict[str, Any],
@@ -208,6 +269,8 @@ def _upsert_item(
         select(ScraperNoticeModel).where(ScraperNoticeModel.dedup_key == dedup_key)
     ).scalar_one_or_none()
     if row is not None and skip_existing:
+        if row.work_type in {None, "용역"}:
+            row.work_type = classify_work_type(item, work_type)
         return False
     created = row is None
     if row is None:
@@ -247,7 +310,7 @@ def _upsert_item(
         item.get("cntrctCnclsMthdNm"),
         item.get("sucsfbidMthdNm"),
     )
-    row.work_type = work_type
+    row.work_type = classify_work_type(item, work_type)
     row.procurement_type = _optional_text(item.get("intrntYn"), 20)
     row.official_base_amount = official_base_amount
     row.source_payload = json.dumps(item, ensure_ascii=False, sort_keys=True, default=str)
@@ -349,15 +412,16 @@ def collect_scheduled_bid_notices(
             "updated_count": 0,
         }
     collection_date = collected_at.astimezone(KST).date()
+    window_start_date = collection_date - timedelta(days=13)
     return collect_bid_notices(
         db,
-        start_date=collection_date,
+        start_date=window_start_date,
         end_date=collection_date,
         business_types=list(OPERATIONS),
         keywords=keywords,
         skip_existing=True,
         run_prefix="scheduled",
         now=collected_at,
-        window_start=datetime.combine(collection_date, time.min, tzinfo=KST),
+        window_start=datetime.combine(window_start_date, time.min, tzinfo=KST),
         window_end=collected_at.astimezone(KST),
     )
