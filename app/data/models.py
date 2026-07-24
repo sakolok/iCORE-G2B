@@ -89,7 +89,15 @@ class ScraperNoticeModel(Base):
     region_restriction_api_status: Mapped[str | None] = mapped_column(
         String(20), nullable=True
     )
+    industry_restriction_codes: Mapped[str | None] = mapped_column(
+        String(240), nullable=True
+    )
+    industry_restriction_api_status: Mapped[str | None] = mapped_column(
+        String(20), nullable=True
+    )
+    icore_industry_code_match: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     is_two_stage_bid: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    joint_supply_allowed: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     # ``base_amount`` remains the existing opening-result business amount
     # (estimated price + VAT).  The direct bid-notice collector stores an
     # official base amount separately so the two meanings never overwrite.

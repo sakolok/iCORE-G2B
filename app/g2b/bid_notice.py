@@ -140,6 +140,26 @@ def infer_two_stage_bid(explicit_value: Any, *official_method_values: Any) -> bo
     return None
 
 
+def infer_joint_supply_allowed(
+    method_code: Any,
+    method_name: Any,
+) -> bool | None:
+    """나라장터 공동수급방식 값에서 공동수급 가능 여부만 판별한다."""
+    values = [str(value).strip() for value in (method_code, method_name) if str(value or "").strip()]
+    if not values:
+        return None
+    normalized = " ".join(values).replace(" ", "")
+    if (
+        "공동수급불허" in normalized
+        or "단독계약" in normalized
+        or "해당없음" in normalized
+        or "공500004" in normalized
+        or "공500012" in normalized
+    ):
+        return False
+    return True
+
+
 def missing_bid_notice_context_fields(
     notice: Any,
     *,

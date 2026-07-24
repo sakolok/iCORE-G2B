@@ -1,5 +1,6 @@
 import hashlib
 import json
+import re
 from datetime import date, datetime, time, timezone
 from decimal import Decimal
 from typing import Any
@@ -16,6 +17,7 @@ from app.g2b.bid_notice import (
     REGION_API_EMPTY,
     REGION_API_VALUE,
     canonical_bid_notice_identity,
+    infer_joint_supply_allowed,
     infer_two_stage_bid,
     parse_business_amount,
     parse_g2b_datetime,
@@ -32,6 +34,13 @@ OPERATIONS = {
     "CONSTRUCTION": ("getBidPblancListInfoCnstwkPPSSrch", "공사"),
 }
 MAX_PAGES_PER_KEYWORD = 5
+LICENSE_LIMIT_OPERATION = "getBidPblancListInfoLicenseLimit"
+INDUSTRY_API_VALUE = "API_VALUE"
+INDUSTRY_API_EMPTY = "API_EMPTY"
+INDUSTRY_API_ERROR = "API_ERROR"
+ICORE_INDUSTRY_CODES = frozenset(
+    {"9901", "3198", "0036", "1169", "1261", "1426", "1468", "9999"}
+)
 
 
 class BidNoticeCollectionError(RuntimeError):
@@ -139,6 +148,48 @@ def _optional_text(value: object, limit: int) -> str | None:
     return text[:limit] if text else None
 
 
+def fetch_industry_restriction_codes(
+    *,
+    notice_no: str,
+    notice_ord: str,
+) -> tuple[str | None, str]:
+    """면허제한 API의 4자리 업종 코드를 상세보기 시점에 조회한다."""
+    service_key = settings.g2b_award_service_key.strip()
+    if not service_key:
+        return None, INDUSTRY_API_ERROR
+    try:
+        response = requests.get(
+            f"{G2B_BID_NOTICE_API_BASE}/{LICENSE_LIMIT_OPERATION}",
+            params={
+                "serviceKey": service_key,
+                "type": "json",
+                "pageNo": 1,
+                "numOfRows": 100,
+                "inqryDiv": "2",
+                "bidNtceNo": notice_no,
+                "bidNtceOrd": notice_ord,
+            },
+            headers={"Accept": "application/json"},
+            timeout=25,
+        )
+        response.raise_for_status()
+        items, _ = _extract_items(response.json())
+    except (requests.RequestException, ValueError, BidNoticeCollectionError):
+        return None, INDUSTRY_API_ERROR
+
+    codes: list[str] = []
+    for item in items:
+        for field_name in ("lcnsLmtNm", "permsnIndstrytyList", "indstrytyCd"):
+            for code in re.findall(r"(?<!\d)(\d{4})(?!\d)", str(item.get(field_name) or "")):
+                if code not in codes:
+                    codes.append(code)
+    return (", ".join(codes) if codes else None), (INDUSTRY_API_VALUE if codes else INDUSTRY_API_EMPTY)
+
+
+def matches_icore_industry_code(codes: str | None) -> bool:
+    return bool(set(re.findall(r"(?<!\d)(\d{4})(?!\d)", codes or "")) & ICORE_INDUSTRY_CODES)
+
+
 def _upsert_item(db: Session, item: dict[str, Any], work_type: str, now: datetime) -> bool:
     notice_no = _optional_text(item.get("bidNtceNo"), 160)
     notice_ord = _optional_text(item.get("bidNtceOrd"), 20) or "00"
@@ -176,6 +227,23 @@ def _upsert_item(db: Session, item: dict[str, Any], work_type: str, now: datetim
     row.prearranged_price_decision_method = _optional_text(item.get("prearngPrceDcsnMthdNm"), 120)
     row.region_restriction = region
     row.region_restriction_api_status = REGION_API_VALUE if region else REGION_API_EMPTY
+    if row.industry_restriction_api_status is None:
+        (
+            row.industry_restriction_codes,
+            row.industry_restriction_api_status,
+        ) = fetch_industry_restriction_codes(
+            notice_no=notice_no,
+            notice_ord=notice_ord,
+        )
+        row.icore_industry_code_match = (
+            None
+            if row.industry_restriction_api_status == INDUSTRY_API_ERROR
+            else matches_icore_industry_code(row.industry_restriction_codes)
+        )
+    row.joint_supply_allowed = infer_joint_supply_allowed(
+        item.get("cmmnSpldmdMethdCd"),
+        item.get("cmmnSpldmdMethdNm"),
+    )
     row.is_two_stage_bid = infer_two_stage_bid(
         item.get("twoStageBidYn"),
         item.get("bidMethdNm"),

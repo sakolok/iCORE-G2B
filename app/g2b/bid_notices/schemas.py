@@ -55,7 +55,14 @@ class BidNoticeProfileResponse(BidNoticeProfileUpdateRequest):
 
 
 class BidNoticeSettingsResponse(BaseModel):
+    sheet_service_account_email: str | None = None
     profile: BidNoticeProfileResponse
+    sheet_destinations: list["BidNoticeSheetDestinationResponse"]
+
+
+class BidNoticeAttachment(BaseModel):
+    label: str
+    url: str
 
 
 class BidNoticeListItem(BaseModel):
@@ -75,7 +82,11 @@ class BidNoticeListItem(BaseModel):
     notice_url: str | None
     region_restriction: str | None
     region_restriction_api_status: str | None
+    industry_restriction_codes: str | None
+    icore_industry_code_match: bool | None
     is_two_stage_bid: bool | None
+    joint_supply_allowed: bool | None
+    attachments: list[BidNoticeAttachment] = Field(default_factory=list)
     matched_keyword: str | None = None
 
     @field_validator("published_at", "deadline_at", mode="before")

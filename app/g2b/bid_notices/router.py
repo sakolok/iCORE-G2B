@@ -1,12 +1,21 @@
-from datetime import datetime, timedelta, timezone
+import json
+from datetime import date, datetime, time, timedelta, timezone
+from urllib.parse import urlparse
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.data.database import get_db
 from app.data.models import ScraperNoticeModel
-from app.g2b.bid_notices.collector import BidNoticeCollectionError, collect_bid_notices
+from app.g2b.bid_notices.collector import (
+    INDUSTRY_API_ERROR,
+    BidNoticeCollectionError,
+    collect_bid_notices,
+    fetch_industry_restriction_codes,
+    matches_icore_industry_code,
+)
 from app.g2b.bid_notices.matching import (
     dismiss_user_bid_notice,
     get_user_bid_notice_profile,
@@ -22,6 +31,7 @@ from app.g2b.bid_notices.schemas import (
     BidNoticeListItem,
     BidNoticeListResponse,
     BidNoticeArchiveResponse,
+    BidNoticeAttachment,
     DismissBidNoticeResponse,
     BidNoticeProfileResponse,
     BidNoticeProfileUpdateRequest,
@@ -65,6 +75,7 @@ from app.services.auth_service import require_organization_auth
 
 
 router = APIRouter(prefix="/api/v1/bid-notices", tags=["g2b-bid-notices"])
+KST = ZoneInfo("Asia/Seoul")
 
 
 def _destination_response(destination) -> BidNoticeSheetDestinationResponse:
@@ -75,6 +86,65 @@ def _destination_response(destination) -> BidNoticeSheetDestinationResponse:
         tab_name=destination.tab_name,
         scope="PERSONAL",
         is_default=destination.is_default,
+    )
+
+
+def _notice_attachments(notice: ScraperNoticeModel) -> list[BidNoticeAttachment]:
+    try:
+        source = json.loads(notice.source_payload or "{}")
+    except (TypeError, ValueError):
+        return []
+    if not isinstance(source, dict):
+        return []
+
+    attachments: list[BidNoticeAttachment] = []
+    seen_urls: set[str] = set()
+    for index in range(1, 11):
+        url = str(source.get(f"ntceSpecDocUrl{index}") or "").strip()
+        parsed = urlparse(url)
+        if (
+            parsed.scheme not in {"http", "https"}
+            or not (parsed.hostname or "").lower().endswith("g2b.go.kr")
+            or url in seen_urls
+        ):
+            continue
+        seen_urls.add(url)
+        attachments.append(
+            BidNoticeAttachment(
+                label=str(source.get(f"ntceSpecFileNm{index}") or f"첨부파일 {index}").strip(),
+                url=url,
+            )
+        )
+    return attachments
+
+
+def _notice_response(
+    notice: ScraperNoticeModel,
+    matched_keyword: str | None,
+    *,
+    include_attachments: bool = False,
+) -> BidNoticeListItem:
+    return BidNoticeListItem(
+        id=notice.id,
+        bid_notice_no=notice.bid_notice_no,
+        bid_notice_ord=notice.bid_notice_ord,
+        business_name=notice.business_name or notice.title,
+        demand_agency_name=notice.demand_agency_name or notice.agency,
+        work_type=notice.work_type,
+        procurement_type=notice.procurement_type,
+        official_base_amount=notice.official_base_amount,
+        business_amount=notice.base_amount,
+        published_at=notice.published_at,
+        deadline_at=notice.deadline_at,
+        notice_url=notice.notice_url,
+        region_restriction=notice.region_restriction,
+        region_restriction_api_status=notice.region_restriction_api_status,
+        industry_restriction_codes=notice.industry_restriction_codes,
+        icore_industry_code_match=notice.icore_industry_code_match,
+        is_two_stage_bid=notice.is_two_stage_bid,
+        joint_supply_allowed=notice.joint_supply_allowed,
+        attachments=_notice_attachments(notice) if include_attachments else [],
+        matched_keyword=matched_keyword,
     )
 
 
@@ -116,13 +186,20 @@ def fetch_bid_notice_settings(
     profile = get_user_bid_notice_profile(
         db, organization_id=auth["organization_id"], user_id=auth["user_id"]
     )
+    destinations = list_sheet_destinations(
+        db,
+        organization_id=auth["organization_id"],
+        user_id=auth["user_id"],
+    )
     db.commit()
     return BidNoticeSettingsResponse(
+        sheet_service_account_email=get_sheet_service_account_email(),
         profile=BidNoticeProfileResponse(
             enabled=profile.enabled,
             keywords=normalize_keywords(profile.keywords),
             excluded_keywords=normalize_keywords(profile.excluded_keywords),
-        )
+        ),
+        sheet_destinations=[_destination_response(item) for item in destinations],
     )
 
 
@@ -152,6 +229,9 @@ def list_bid_notices(
     q: str | None = Query(default=None, max_length=200),
     work_type: str | None = Query(default=None, max_length=40),
     region: str | None = Query(default=None, max_length=80),
+    published_from: date | None = None,
+    published_to: date | None = None,
+    icore_codes_only: bool = False,
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=30, ge=1, le=100),
     auth: dict = Depends(require_organization_auth),
@@ -184,40 +264,59 @@ def list_bid_notices(
         )
     )
     if q and q.strip():
-        statement = statement.where(ScraperNoticeModel.title.like(f"%{q.strip()}%"))
+        keyword = q.strip()
+        statement = statement.where(
+            or_(
+                ScraperNoticeModel.title.like(f"%{keyword}%"),
+                ScraperNoticeModel.business_name.like(f"%{keyword}%"),
+                ScraperNoticeModel.bid_notice_no.like(f"%{keyword}%"),
+                ScraperNoticeModel.demand_agency_name.like(f"%{keyword}%"),
+                ScraperNoticeModel.agency.like(f"%{keyword}%"),
+            )
+        )
     if work_type and work_type.strip():
         statement = statement.where(ScraperNoticeModel.work_type == work_type.strip())
     if region and region.strip():
         statement = statement.where(
             ScraperNoticeModel.region_restriction.like(f"%{region.strip()}%")
         )
+    if published_from is not None:
+        statement = statement.where(
+            ScraperNoticeModel.published_at
+            >= datetime.combine(published_from, time.min, tzinfo=KST)
+        )
+    if published_to is not None:
+        statement = statement.where(
+            ScraperNoticeModel.published_at
+            <= datetime.combine(published_to, time.max, tzinfo=KST)
+        )
+    if icore_codes_only:
+        unresolved_rows = db.execute(
+            statement.where(ScraperNoticeModel.icore_industry_code_match.is_(None))
+        ).all()
+        for notice, _ in unresolved_rows:
+            (
+                notice.industry_restriction_codes,
+                notice.industry_restriction_api_status,
+            ) = fetch_industry_restriction_codes(
+                notice_no=notice.bid_notice_no or notice.notice_id,
+                notice_ord=notice.bid_notice_ord or "00",
+            )
+            notice.icore_industry_code_match = (
+                None
+                if notice.industry_restriction_api_status == INDUSTRY_API_ERROR
+                else matches_icore_industry_code(notice.industry_restriction_codes)
+            )
+        if unresolved_rows:
+            db.commit()
+        statement = statement.where(ScraperNoticeModel.icore_industry_code_match.is_(True))
     total = db.execute(select(func.count()).select_from(statement.subquery())).scalar_one()
     rows = db.execute(
         statement.order_by(ScraperNoticeModel.published_at.desc(), ScraperNoticeModel.id.desc())
         .offset((page - 1) * page_size)
         .limit(page_size)
     ).all()
-    items = [
-        BidNoticeListItem(
-            id=notice.id,
-            bid_notice_no=notice.bid_notice_no,
-            bid_notice_ord=notice.bid_notice_ord,
-            business_name=notice.business_name or notice.title,
-            demand_agency_name=notice.demand_agency_name or notice.agency,
-            work_type=notice.work_type,
-            procurement_type=notice.procurement_type,
-            official_base_amount=notice.official_base_amount,
-            business_amount=notice.base_amount,
-            published_at=notice.published_at,
-            deadline_at=notice.deadline_at,
-            notice_url=notice.notice_url,
-            region_restriction=notice.region_restriction,
-            region_restriction_api_status=notice.region_restriction_api_status,
-            is_two_stage_bid=notice.is_two_stage_bid,
-            matched_keyword=matched_keyword,
-        )
-        for notice, matched_keyword in rows
-    ]
+    items = [_notice_response(notice, matched_keyword) for notice, matched_keyword in rows]
     return BidNoticeListResponse(items=items, total=total, page=page, page_size=page_size)
 
 
@@ -257,28 +356,44 @@ def list_bid_notice_archive(
         .offset((page - 1) * page_size)
         .limit(page_size)
     ).all()
-    items = [
-        BidNoticeListItem(
-            id=notice.id,
-            bid_notice_no=notice.bid_notice_no,
-            bid_notice_ord=notice.bid_notice_ord,
-            business_name=notice.business_name or notice.title,
-            demand_agency_name=notice.demand_agency_name or notice.agency,
-            work_type=notice.work_type,
-            procurement_type=notice.procurement_type,
-            official_base_amount=notice.official_base_amount,
-            business_amount=notice.base_amount,
-            published_at=notice.published_at,
-            deadline_at=notice.deadline_at,
-            notice_url=notice.notice_url,
-            region_restriction=notice.region_restriction,
-            region_restriction_api_status=notice.region_restriction_api_status,
-            is_two_stage_bid=notice.is_two_stage_bid,
-            matched_keyword=matched_keyword,
-        )
-        for notice, matched_keyword in rows
-    ]
+    items = [_notice_response(notice, matched_keyword) for notice, matched_keyword in rows]
     return BidNoticeArchiveResponse(items=items, total=total, page=page, page_size=page_size)
+
+
+@router.get("/items/{notice_id}", response_model=BidNoticeListItem)
+def fetch_bid_notice_detail(
+    notice_id: int,
+    auth: dict = Depends(require_organization_auth),
+    db: Session = Depends(get_db),
+) -> BidNoticeListItem:
+    row = db.execute(
+        select(ScraperNoticeModel, UserBidNoticeMatchModel.matched_keyword)
+        .join(
+            UserBidNoticeMatchModel,
+            UserBidNoticeMatchModel.notice_id == ScraperNoticeModel.id,
+        )
+        .where(
+            ScraperNoticeModel.id == notice_id,
+            UserBidNoticeMatchModel.user_id == auth["user_id"],
+        )
+    ).one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="입찰공고를 찾을 수 없습니다.")
+    notice, matched_keyword = row
+    if notice.industry_restriction_api_status in {None, INDUSTRY_API_ERROR}:
+        notice.industry_restriction_codes, notice.industry_restriction_api_status = (
+            fetch_industry_restriction_codes(
+                notice_no=notice.bid_notice_no or notice.notice_id,
+                notice_ord=notice.bid_notice_ord or "00",
+            )
+        )
+        notice.icore_industry_code_match = (
+            None
+            if notice.industry_restriction_api_status == INDUSTRY_API_ERROR
+            else matches_icore_industry_code(notice.industry_restriction_codes)
+        )
+        db.commit()
+    return _notice_response(notice, matched_keyword, include_attachments=True)
 
 
 @router.delete("/items/{notice_id}", response_model=DismissBidNoticeResponse)
