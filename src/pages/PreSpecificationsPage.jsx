@@ -1459,7 +1459,7 @@ function PreSpecificationsPage() {
                 {formatDateTime(detail.opinion_deadline)}
               </Descriptions.Item>
               <Descriptions.Item label="납품기한">
-                {formatDateTime(detail.delivery_deadline)}
+                {detail.delivery_deadline_text || formatDateTime(detail.delivery_deadline)}
               </Descriptions.Item>
               <Descriptions.Item label="연결 공고">
                 {detail.bid_notice_no
