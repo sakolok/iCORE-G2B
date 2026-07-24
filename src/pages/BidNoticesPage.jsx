@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   Button,
@@ -17,6 +17,7 @@ import {
   Tag,
   Typography,
   message,
+  notification,
 } from "antd";
 import dayjs from "dayjs";
 import { bidNoticesApi, formatApiError } from "../api/client";
@@ -24,6 +25,7 @@ import "./BidNoticesPage.css";
 
 const { Text, Title } = Typography;
 const { RangePicker } = DatePicker;
+const MAX_SELECTION_COUNT = 100;
 
 const HEADER_STATUS_META = {
   MATCH: { type: "success", text: "A:L 헤더가 올바릅니다." },
@@ -133,10 +135,21 @@ function BidNoticesPage() {
   const [detail, setDetail] = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState("");
+  const [selectedById, setSelectedById] = useState(() => new Map());
+  const [previewing, setPreviewing] = useState(false);
+  const [writing, setWriting] = useState(false);
+  const [previewData, setPreviewData] = useState(null);
+  const [previewTarget, setPreviewTarget] = useState(null);
+  const [previewError, setPreviewError] = useState("");
 
   const connectionMeta = connectionResult
     ? HEADER_STATUS_META[connectionResult.header_status] || HEADER_STATUS_META.NOT_CHECKED
     : null;
+  const selectedRowKeys = useMemo(() => [...selectedById.keys()], [selectedById]);
+  const selectedDestination = useMemo(
+    () => destinations.find((item) => item.id === destinationId),
+    [destinationId, destinations]
+  );
 
   const loadList = () => {
     const nextRequestId = requestId.current + 1;
@@ -218,6 +231,7 @@ function BidNoticesPage() {
       setExcludedKeywords(response.data.excluded_keywords || []);
       setProfileOpen(false);
       setPage(1);
+      setSelectedById(new Map());
       message.success("입찰공고 조건을 저장했습니다.");
       loadList();
     } catch (error) {
@@ -228,6 +242,7 @@ function BidNoticesPage() {
   };
 
   const refreshReview = async () => {
+    setSelectedById(new Map());
     await Promise.all([loadList(), loadProfile()]);
     message.success("내 검토 목록을 새로고침했습니다.");
   };
@@ -366,6 +381,100 @@ function BidNoticesPage() {
     setDetailOpen(false);
     setDetail(null);
     setDetailError("");
+  };
+
+  const clearSelection = () => setSelectedById(new Map());
+
+  const toggleSelected = (row, checked) => {
+    if (checked && !selectedById.has(row.id) && selectedById.size >= MAX_SELECTION_COUNT) {
+      message.warning(`한 번에 최대 ${MAX_SELECTION_COUNT}건까지 선택할 수 있습니다.`);
+      return;
+    }
+    setSelectedById((current) => {
+      const next = new Map(current);
+      if (checked) next.set(row.id, row);
+      else next.delete(row.id);
+      return next;
+    });
+  };
+
+  const togglePageSelection = (checked, _selectedRows, changedRows) => {
+    const next = new Map(selectedById);
+    let skipped = 0;
+    changedRows.forEach((row) => {
+      if (!checked) next.delete(row.id);
+      else if (next.size < MAX_SELECTION_COUNT) next.set(row.id, row);
+      else skipped += 1;
+    });
+    setSelectedById(next);
+    if (skipped) message.warning(`${MAX_SELECTION_COUNT}건을 초과한 ${skipped}건은 선택하지 않았습니다.`);
+  };
+
+  const openExportPreview = async () => {
+    if (!selectedById.size) {
+      message.warning("Google Sheet에 반영할 입찰공고를 선택하세요.");
+      return;
+    }
+    if (!selectedDestination) {
+      message.warning("먼저 사용할 Google Sheet 목적지를 선택하세요.");
+      return;
+    }
+    const target = {
+      destinationId: selectedDestination.id,
+      noticeIds: [...selectedById.keys()],
+      url: sheetUrl(selectedDestination.spreadsheet_id),
+    };
+    setPreviewing(true);
+    setPreviewError("");
+    try {
+      const response = await bidNoticesApi.exportSheet({
+        destination_id: target.destinationId,
+        notice_ids: target.noticeIds,
+        dry_run: true,
+      });
+      setPreviewData(response.data);
+      setPreviewTarget(target);
+    } catch (error) {
+      message.error(formatApiError(error, "입찰공고 Sheet 미리보기에 실패했습니다."));
+    } finally {
+      setPreviewing(false);
+    }
+  };
+
+  const closePreview = () => {
+    if (writing) return;
+    setPreviewData(null);
+    setPreviewTarget(null);
+    setPreviewError("");
+  };
+
+  const confirmExport = async () => {
+    if (!previewData || !previewTarget) return;
+    setWriting(true);
+    setPreviewError("");
+    try {
+      const response = await bidNoticesApi.exportSheet({
+        destination_id: previewTarget.destinationId,
+        notice_ids: previewTarget.noticeIds,
+        dry_run: false,
+        expected_preview_token: previewData.preview_token,
+      });
+      const targetUrl = previewTarget.url;
+      setPreviewData(null);
+      setPreviewTarget(null);
+      setPreviewError("");
+      clearSelection();
+      notification.success({
+        message: "입찰공고 Sheet 반영 완료",
+        description: `${response.data.inserted_count}건 추가, ${response.data.updated_count}건 갱신했습니다.`,
+        duration: 8,
+        actions: targetUrl ? <Button type="primary" href={targetUrl} target="_blank" rel="noreferrer">Sheet 열기</Button> : null,
+      });
+    } catch (error) {
+      setPreviewError(formatApiError(error, "Google Sheet 반영에 실패했습니다. 선택은 유지됩니다."));
+    } finally {
+      setWriting(false);
+    }
   };
 
   const columns = [
@@ -507,7 +616,7 @@ function BidNoticesPage() {
           </div>
         </div>
         <div className="bid-notices-condition-row">
-          <Space wrap>
+          <Space wrap size={8} className="bid-notices-keyword-summary">
             <Typography.Text strong>내 포함 키워드</Typography.Text>
             {profileEnabled ? (
               keywords.map((keyword) => <Tag className="bid-notice-keyword-tag" key={keyword}>{keyword}</Tag>)
@@ -533,6 +642,20 @@ function BidNoticesPage() {
           locale={{ emptyText: <Empty description="조건에 맞는 입찰공고가 없습니다." /> }}
           columns={columns}
           dataSource={rows}
+          rowClassName={(row) => (selectedById.has(row.id) ? "bid-notice-row-selected" : "")}
+          rowSelection={{
+            columnWidth: 44,
+            preserveSelectedRowKeys: true,
+            selectedRowKeys,
+            onSelect: toggleSelected,
+            onSelectAll: togglePageSelection,
+            getCheckboxProps: (row) => ({
+              disabled: selectedById.size >= MAX_SELECTION_COUNT && !selectedById.has(row.id),
+              title: selectedById.size >= MAX_SELECTION_COUNT && !selectedById.has(row.id)
+                ? `최대 ${MAX_SELECTION_COUNT}건까지 선택할 수 있습니다.`
+                : "",
+            }),
+          }}
           scroll={{ x: 1430 }}
           pagination={{
             current: page,
@@ -543,6 +666,34 @@ function BidNoticesPage() {
           }}
         />
       </Card>
+
+      {selectedById.size ? (
+        <Card className="bid-notices-selection-dock">
+          <div className="bid-notices-selection-row">
+            <Space wrap>
+              <div className="bid-notices-selection-count">{selectedById.size}</div>
+              <Typography.Text strong>건 선택</Typography.Text>
+              <Button onClick={clearSelection}>전체 해제</Button>
+            </Space>
+            <Space wrap>
+              <Select
+                value={destinationId}
+                onChange={setDestinationId}
+                placeholder="Sheet 목적지 선택"
+                className="bid-notices-destination-select"
+                options={destinations.map((item) => ({ value: item.id, label: `${item.label} · 개인` }))}
+              />
+              {destinations.length ? (
+                <Button type="primary" onClick={openExportPreview} loading={previewing} disabled={!destinationId}>
+                  선택한 {selectedById.size}건 검토
+                </Button>
+              ) : (
+                <Button type="primary" onClick={openDestinationManager}>내 Sheet 연결</Button>
+              )}
+            </Space>
+          </div>
+        </Card>
+      ) : null}
 
       <Drawer title="입찰공고 조건 설정" open={profileOpen} onClose={() => setProfileOpen(false)} width={480}>
         <div className="bid-notices-profile-form">
@@ -656,6 +807,28 @@ function BidNoticesPage() {
             ) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="등록된 Sheet가 없습니다." />}
           </div>
         </Space>
+      </Modal>
+
+      <Modal
+        title="선택한 입찰공고 Sheet 반영"
+        open={Boolean(previewData)}
+        width={1040}
+        onCancel={closePreview}
+        footer={<Space><Button onClick={closePreview} disabled={writing}>취소</Button><Button type="primary" loading={writing} onClick={confirmExport}>최종 반영</Button></Space>}
+      >
+        {previewError ? <Alert type="error" showIcon message={previewError} /> : null}
+        <Alert type="warning" showIcon message="아직 Google Sheet에 반영하지 않았어요." description="아래 내용을 확인한 뒤 최종 반영을 눌러야 실제 쓰기가 실행됩니다." />
+        <Typography.Paragraph>
+          목적지: {previewData?.destination_label} · {previewData?.destination_tab_name} 탭 · 개인
+        </Typography.Paragraph>
+        <Table
+          rowKey="key"
+          size="small"
+          dataSource={(previewData?.preview_rows || []).map((row, rowIndex) => Object.assign({ key: rowIndex }, ...row.map((value, index) => ({ [index]: value }))))}
+          columns={(previewData?.headers || []).map((header, index) => ({ title: header, dataIndex: index, width: 150, ellipsis: true }))}
+          pagination={false}
+          scroll={{ x: 1500, y: 360 }}
+        />
       </Modal>
 
       <Drawer

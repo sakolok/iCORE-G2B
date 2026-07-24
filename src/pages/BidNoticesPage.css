@@ -15,6 +15,8 @@
 .bid-notices-date-filter { width: 270px; }
 .bid-notices-icore-filter { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border: 1px solid var(--icore-border); border-radius: 8px; background: var(--icore-surface-muted); color: var(--icore-text-secondary); font-size: 13px; }
 .bid-notices-condition-row { min-height: 38px; padding-top: 14px; border-top: 1px solid var(--icore-border); }
+.bid-notices-keyword-summary { display: flex !important; flex-flow: row wrap !important; align-items: center; gap: 8px !important; }
+.bid-notices-keyword-summary .ant-space-item { display: flex; align-items: center; }
 .bid-notice-keyword-tag { margin: 0 !important; padding: 3px 9px; border: 0 !important; border-radius: 999px; background: #e8f1ff !important; color: #1d6ee8 !important; font-weight: 650; }
 .bid-notice-keyword-tag.is-excluded { background: #fff0f0 !important; color: #e25151 !important; }
 .bid-notices-table-card .ant-card-body { padding: 0; }
@@ -22,6 +24,7 @@
 .bid-notices-table-card .ant-card-head-title { color: var(--icore-text); font-size: 18px; font-weight: 700; }
 .bid-notices-table-card .ant-table-thead > tr > th { padding: 13px 12px; background: var(--icore-surface-muted); color: var(--icore-text-secondary); font-size: 12px; font-weight: 700; }
 .bid-notices-table-card .ant-table-tbody > tr > td { padding: 13px 12px; color: var(--icore-text); font-size: 14px; }
+.bid-notice-row-selected > td { background: #f0f6ff !important; }
 .bid-notices-table-card .ant-pagination { margin: 20px 24px; }
 .bid-notice-title-cell { display: grid; gap: 4px; }
 .bid-notice-detail-button { display: block; overflow: hidden; width: 100%; height: auto; padding: 0; color: #111111 !important; font-weight: 700; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
@@ -39,4 +42,9 @@
 .bid-notices-destination-item .ant-typography-paragraph { margin: 4px 0 0; }
 .bid-notice-attachments { margin-top: 16px; }
 .bid-notice-attachments .ant-card-head { min-height: 42px; }
-@media (max-width: 720px) { .bid-notices-hero { align-items: flex-start; flex-direction: column; } .bid-notices-search, .bid-notices-filter-select, .bid-notices-date-filter, .bid-notices-filter-row > .ant-btn { width: 100%; } .bid-notices-condition-row, .bid-notices-destination-item { align-items: flex-start; flex-direction: column; } .bid-notices-destination-form { grid-template-columns: 1fr; } }
+.bid-notices-selection-dock { border-color: var(--icore-border); box-shadow: 0 10px 28px rgba(25, 31, 40, .12); }
+.bid-notices-selection-dock .ant-card-body { padding: 12px 18px; }
+.bid-notices-selection-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.bid-notices-selection-count { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; background: var(--icore-primary); color: #fff; font-weight: 750; }
+.bid-notices-destination-select { min-width: 220px; }
+@media (max-width: 720px) { .bid-notices-hero { align-items: flex-start; flex-direction: column; } .bid-notices-search, .bid-notices-filter-select, .bid-notices-date-filter, .bid-notices-filter-row > .ant-btn, .bid-notices-destination-select { width: 100%; } .bid-notices-condition-row, .bid-notices-destination-item, .bid-notices-selection-row { align-items: flex-start; flex-direction: column; } .bid-notices-destination-form { grid-template-columns: 1fr; } }
