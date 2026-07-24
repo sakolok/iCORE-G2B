@@ -1,9 +1,10 @@
-from datetime import date, datetime, timezone
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.g2b.bid_notice import KST
 from app.g2b.keyword_policy import normalize_keywords
 
 
@@ -91,9 +92,9 @@ class BidNoticeListItem(BaseModel):
 
     @field_validator("published_at", "deadline_at", mode="before")
     @classmethod
-    def timezone_for_legacy_rows(cls, value):
+    def timezone_for_database_rows(cls, value):
         if value is not None and value.tzinfo is None:
-            return value.replace(tzinfo=timezone.utc)
+            return value.replace(tzinfo=KST)
         return value
 
 

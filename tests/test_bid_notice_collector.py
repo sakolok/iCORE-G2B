@@ -7,6 +7,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 from app.data.models import Base, ScraperNoticeModel
+from app.g2b.bid_notice import KST
 from app.g2b.bid_notices.collector import (
     INDUSTRY_API_EMPTY,
     INDUSTRY_API_VALUE,
@@ -30,6 +31,7 @@ from app.g2b.bid_notices.models import (
     UserBidNoticeStateModel,
 )
 from app.g2b.bid_notices.router import fetch_bid_notice_detail, list_bid_notices
+from app.g2b.bid_notices.schemas import BidNoticeListItem
 from app.g2b.bid_notices.sheet_export import (
     build_bid_notice_sheet_rows,
     claim_bid_notice_sheet_exports,
@@ -48,6 +50,36 @@ class BidNoticeCollectorTests(unittest.TestCase):
     def tearDown(self):
         self.db.close()
         self.engine.dispose()
+
+    def test_api_response_treats_timezone_less_notice_times_as_kst(self):
+        item = BidNoticeListItem.model_validate(
+            {
+                "id": 1,
+                "bid_notice_no": "R26BK01641343",
+                "bid_notice_ord": "001",
+                "business_name": "국제연수관 옥상 지붕설치 공사",
+                "demand_agency_name": None,
+                "work_type": "공사",
+                "procurement_type": None,
+                "official_base_amount": None,
+                "business_amount": None,
+                "published_at": datetime(2026, 7, 24, 9, 0),
+                "deadline_at": datetime(2026, 7, 31, 18, 0),
+                "notice_url": None,
+                "region_restriction": None,
+                "region_restriction_api_status": None,
+                "industry_restriction_codes": None,
+                "icore_industry_code_match": None,
+                "is_two_stage_bid": None,
+                "joint_supply_allowed": None,
+            }
+        )
+
+        self.assertEqual(item.published_at, datetime(2026, 7, 24, 9, 0, tzinfo=KST))
+        self.assertEqual(item.deadline_at, datetime(2026, 7, 31, 18, 0, tzinfo=KST))
+        serialized = item.model_dump(mode="json")
+        self.assertEqual(serialized["published_at"], "2026-07-24T09:00:00+09:00")
+        self.assertEqual(serialized["deadline_at"], "2026-07-31T18:00:00+09:00")
 
     @patch("app.g2b.bid_notices.collector._fetch_operation")
     def test_collection_keeps_business_and_official_base_amount_separate(self, fetch_operation):
