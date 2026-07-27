@@ -671,7 +671,11 @@ def restore_dismissed_pre_specification(
     ) is not None
 
 
-def response_payload(row: PreSpecificationModel) -> dict:
+def response_payload(
+    row: PreSpecificationModel,
+    *,
+    matched_keyword: str | None = None,
+) -> dict:
     return {
         "bf_spec_rgst_no": row.bf_spec_rgst_no,
         "bid_notice_no": row.bid_notice_no,
@@ -688,6 +692,7 @@ def response_payload(row: PreSpecificationModel) -> dict:
         "delivery_deadline_text": row.delivery_deadline_text,
         "contact_name": row.contact_name,
         "contact_phone": row.contact_phone,
+        "matched_keyword": matched_keyword,
         "attachments": _attachments(row),
         "deadline_status": deadline_status(row.opinion_deadline),
         "first_seen_at": row.first_seen_at,

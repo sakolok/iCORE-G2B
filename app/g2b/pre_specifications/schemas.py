@@ -148,6 +148,7 @@ class PreSpecificationResponse(BaseModel):
     delivery_deadline_text: str | None
     contact_name: str | None
     contact_phone: str | None
+    matched_keyword: str | None = None
     attachments: list[dict] = Field(default_factory=list)
     deadline_status: Literal["OPEN", "TODAY", "CLOSED", "UNKNOWN"]
     first_seen_at: datetime

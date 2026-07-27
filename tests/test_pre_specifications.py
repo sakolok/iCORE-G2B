@@ -637,6 +637,7 @@ class PreSpecificationTests(unittest.TestCase):
         self.assertEqual(profile.keywords, ["AI"])
         self.assertEqual(profile.excluded_keywords, ["제외"])
         self.assertEqual([row.bf_spec_rgst_no for row in response.items], ["R001"])
+        self.assertEqual(response.items[0].matched_keyword, "AI")
         self.assertEqual(
             [item.label for item in settings.sheet_destinations],
             ["내 프로젝트 Sheet"],

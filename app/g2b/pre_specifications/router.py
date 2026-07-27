@@ -13,7 +13,7 @@ from app.g2b.pre_specifications.client import (
     PreSpecificationApiConfigurationError,
     PreSpecificationApiError,
 )
-from app.g2b.keyword_policy import normalize_keywords
+from app.g2b.keyword_policy import evaluate_keyword_title, normalize_keywords
 from app.g2b.pre_specifications.schemas import (
     ArchivedPreSpecificationListResponse,
     ArchivedPreSpecificationResponse,
@@ -195,8 +195,29 @@ def fetch_pre_specifications(
         organization_id=auth["organization_id"],
         user_id=auth["user_id"],
     )
+    profile = get_user_pre_specification_profile(
+        db,
+        organization_id=auth["organization_id"],
+        user_id=auth["user_id"],
+    )
     return PreSpecificationListResponse(
-        items=[PreSpecificationResponse(**response_payload(row)) for row in rows],
+        items=[
+            PreSpecificationResponse(
+                **response_payload(
+                    row,
+                    matched_keyword=(
+                        evaluate_keyword_title(
+                            row.business_name,
+                            profile.keywords,
+                            profile.excluded_keywords,
+                        ).matched_keyword
+                        if profile.enabled
+                        else None
+                    ),
+                )
+            )
+            for row in rows
+        ],
         total=total,
         page=query.page,
         page_size=query.page_size,
