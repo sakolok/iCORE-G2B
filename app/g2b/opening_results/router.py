@@ -59,6 +59,7 @@ from app.g2b.opening_results.matching import (
     resolve_sheet_destination,
     restore_dismissed_result,
     save_sheet_destination,
+    sync_user_matches,
     update_user_result_profile,
 )
 from app.g2b.opening_results.models import BidOpeningEntryModel
@@ -313,6 +314,12 @@ def fetch_results(
     auth: dict = Depends(require_organization_auth),
     db: Session = Depends(get_db),
 ) -> OpeningResultListResponse:
+    sync_user_matches(
+        db,
+        organization_id=auth["organization_id"],
+        user_id=auth["user_id"],
+    )
+    db.commit()
     query = OpeningResultListQuery(
         q=q,
         status=status,
