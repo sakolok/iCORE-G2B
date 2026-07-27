@@ -13,7 +13,6 @@ from app.g2b.bid_notices.collector import (
     INDUSTRY_API_ERROR,
     INDUSTRY_API_EMPTY,
     INDUSTRY_API_NONE,
-    INDUSTRY_API_ORDER_MISMATCH,
     INDUSTRY_API_VALUE,
     REGION_API_EMPTY,
     REGION_API_ERROR,
@@ -21,11 +20,11 @@ from app.g2b.bid_notices.collector import (
     BidNoticeCollectionError,
     collect_bid_notices,
     collect_scheduled_bid_notices,
+    determine_icore_industry_code_match,
     fetch_explicit_region_restriction,
     fetch_notice_detail_source,
     fetch_industry_restriction_codes,
     fetch_participant_region_restriction,
-    matches_icore_industry_code,
 )
 from app.g2b.bid_notices.document_analysis import (
     run_pending_bid_notice_document_analysis,
@@ -95,16 +94,6 @@ from app.services.auth_service import (
 
 router = APIRouter(prefix="/api/v1/bid-notices", tags=["g2b-bid-notices"])
 KST = ZoneInfo("Asia/Seoul")
-
-
-def _icore_industry_code_match(status: str | None, codes: str | None) -> bool | None:
-    if status == INDUSTRY_API_EMPTY:
-        return False
-    if status in {INDUSTRY_API_ERROR, INDUSTRY_API_ORDER_MISMATCH}:
-        return None
-    if status in {INDUSTRY_API_NONE, "DOCUMENT_NONE"}:
-        return True
-    return matches_icore_industry_code(codes)
 
 
 def _destination_response(destination) -> BidNoticeSheetDestinationResponse:
@@ -396,23 +385,6 @@ def list_bid_notices(
             <= datetime.combine(published_to, time.max, tzinfo=KST)
         )
     if icore_codes_only:
-        unresolved_rows = db.execute(
-            statement.where(ScraperNoticeModel.icore_industry_code_match.is_(None))
-        ).all()
-        for notice, _ in unresolved_rows:
-            (
-                notice.industry_restriction_codes,
-                notice.industry_restriction_api_status,
-            ) = fetch_industry_restriction_codes(
-                notice_no=notice.bid_notice_no or notice.notice_id,
-                notice_ord=notice.bid_notice_ord or "00",
-            )
-            notice.icore_industry_code_match = _icore_industry_code_match(
-                notice.industry_restriction_api_status,
-                notice.industry_restriction_codes,
-            )
-        if unresolved_rows:
-            db.commit()
         statement = statement.where(
             ScraperNoticeModel.icore_industry_code_match.is_(True)
         )
@@ -516,7 +488,7 @@ def fetch_bid_notice_detail(
                 notice_ord=notice.bid_notice_ord or "00",
             )
         )
-        notice.icore_industry_code_match = _icore_industry_code_match(
+        notice.icore_industry_code_match = determine_icore_industry_code_match(
             notice.industry_restriction_api_status,
             notice.industry_restriction_codes,
         )

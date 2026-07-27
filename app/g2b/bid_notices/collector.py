@@ -276,6 +276,17 @@ def matches_icore_industry_code(codes: str | None) -> bool:
     return bool(set(re.findall(r"(?<!\d)(\d{4})(?!\d)", codes or "")) & ICORE_INDUSTRY_CODES)
 
 
+def determine_icore_industry_code_match(status: str | None, codes: str | None) -> bool | None:
+    """Return a filter decision only when the official or document result is conclusive."""
+    if status == INDUSTRY_API_EMPTY:
+        return False
+    if status in {INDUSTRY_API_ERROR, INDUSTRY_API_ORDER_MISMATCH}:
+        return None
+    if status in {INDUSTRY_API_NONE, "DOCUMENT_NONE"}:
+        return True
+    return matches_icore_industry_code(codes)
+
+
 def classify_work_type(item: dict[str, Any], operation_work_type: str) -> str:
     if operation_work_type != "용역":
         return operation_work_type

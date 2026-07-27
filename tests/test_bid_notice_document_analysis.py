@@ -91,6 +91,7 @@ class BidNoticeDocumentAnalysisTests(unittest.TestCase):
         self.assertEqual(stored.industry_restriction_codes, "1169")
         self.assertEqual(stored.industry_restriction_api_status, "DOCUMENT_VALUE")
         self.assertEqual(stored.industry_restriction_source, "DOCUMENT")
+        self.assertTrue(stored.icore_industry_code_match)
         self.assertEqual(analysis.status, "SUCCEEDED")
         self.assertIn("업종코드 1169", analysis.evidence)
 
@@ -103,7 +104,7 @@ class BidNoticeDocumentAnalysisTests(unittest.TestCase):
         fetch_industry,
         download_attachment,
     ):
-        self._add_matched_notice()
+        notice = self._add_matched_notice()
         fetch_region.return_value = ("충청북도", REGION_API_VALUE)
         fetch_industry.return_value = ("1169", INDUSTRY_API_VALUE)
 
@@ -112,6 +113,7 @@ class BidNoticeDocumentAnalysisTests(unittest.TestCase):
         self.assertEqual(result["candidate_count"], 1)
         self.assertEqual(result["queued_count"], 0)
         self.assertIsNone(self.db.scalar(select(BidNoticeDocumentAnalysisModel)))
+        self.assertTrue(self.db.get(ScraperNoticeModel, notice.id).icore_industry_code_match)
         download_attachment.assert_not_called()
 
     @patch("app.g2b.bid_notices.document_analysis._extract_text")
@@ -163,3 +165,4 @@ class BidNoticeDocumentAnalysisTests(unittest.TestCase):
         self.assertEqual(stored.region_restriction, "해당없음")
         self.assertEqual(stored.region_restriction_api_status, "DOCUMENT_NONE")
         self.assertEqual(stored.industry_restriction_api_status, "DOCUMENT_NONE")
+        self.assertTrue(stored.icore_industry_code_match)

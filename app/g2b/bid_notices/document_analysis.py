@@ -25,6 +25,7 @@ from app.g2b.bid_notices.collector import (
     INDUSTRY_API_NONE,
     INDUSTRY_API_ORDER_MISMATCH,
     INDUSTRY_API_VALUE,
+    determine_icore_industry_code_match,
     fetch_explicit_region_restriction,
     fetch_industry_restriction_codes,
     fetch_notice_detail_source,
@@ -171,6 +172,10 @@ def _refresh_api_context(notice: ScraperNoticeModel) -> tuple[bool, bool]:
         if status in {INDUSTRY_API_VALUE, INDUSTRY_API_NONE}:
             notice.industry_restriction_source = "API"
             notice.industry_restriction_evidence = None
+    notice.icore_industry_code_match = determine_icore_industry_code_match(
+        notice.industry_restriction_api_status,
+        notice.industry_restriction_codes,
+    )
 
     return (
         _needs_region_document(notice.region_restriction_api_status),
@@ -369,6 +374,10 @@ def _apply_document_results(db: Session, notice: ScraperNoticeModel) -> None:
         notice.industry_restriction_api_status = "DOCUMENT_NONE"
         notice.industry_restriction_source = "DOCUMENT"
         notice.industry_restriction_evidence = industry_evidence
+    notice.icore_industry_code_match = determine_icore_industry_code_match(
+        notice.industry_restriction_api_status,
+        notice.industry_restriction_codes,
+    )
 
 
 def run_pending_bid_notice_document_analysis(

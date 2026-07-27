@@ -453,7 +453,7 @@ class BidNoticeCollectorTests(unittest.TestCase):
         )
 
     @patch("app.g2b.bid_notices.router.fetch_industry_restriction_codes")
-    def test_icore_code_filter_keeps_matching_and_explicit_no_restriction_notices(self, fetch_codes):
+    def test_icore_code_filter_uses_stored_decision_without_external_requests(self, fetch_codes):
         now = datetime.now(timezone.utc)
         matching_notice = ScraperNoticeModel(
             dedup_key="bid-notice-icore-match",
@@ -462,6 +462,9 @@ class BidNoticeCollectorTests(unittest.TestCase):
             first_seen_at=now,
             last_seen_at=now,
             published_at=now,
+            industry_restriction_codes="0036",
+            industry_restriction_api_status=INDUSTRY_API_VALUE,
+            icore_industry_code_match=True,
             source_payload="{}",
         )
         other_notice = ScraperNoticeModel(
@@ -471,6 +474,9 @@ class BidNoticeCollectorTests(unittest.TestCase):
             first_seen_at=now,
             last_seen_at=now,
             published_at=now,
+            industry_restriction_codes="7777",
+            industry_restriction_api_status=INDUSTRY_API_VALUE,
+            icore_industry_code_match=False,
             source_payload="{}",
         )
         no_code_notice = ScraperNoticeModel(
@@ -480,6 +486,8 @@ class BidNoticeCollectorTests(unittest.TestCase):
             first_seen_at=now,
             last_seen_at=now,
             published_at=now,
+            industry_restriction_api_status=INDUSTRY_API_NONE,
+            icore_industry_code_match=True,
             source_payload="{}",
         )
         document_check_notice = ScraperNoticeModel(
@@ -489,6 +497,8 @@ class BidNoticeCollectorTests(unittest.TestCase):
             first_seen_at=now,
             last_seen_at=now,
             published_at=now,
+            industry_restriction_api_status=INDUSTRY_API_EMPTY,
+            icore_industry_code_match=False,
             source_payload="{}",
         )
         self.db.add_all([matching_notice, other_notice, no_code_notice, document_check_notice])
@@ -501,13 +511,6 @@ class BidNoticeCollectorTests(unittest.TestCase):
             keywords=["AI"],
             excluded_keywords=[],
         )
-        fetch_codes.side_effect = lambda *, notice_no, notice_ord: {
-            "R26BK000008": ("0036", INDUSTRY_API_VALUE),
-            "R26BK000009": ("7777", INDUSTRY_API_VALUE),
-            "R26BK000014": (None, INDUSTRY_API_NONE),
-            "R26BK000015": (None, INDUSTRY_API_EMPTY),
-        }[notice_no]
-
         response = list_bid_notices(
             q=None,
             work_type=None,
@@ -521,6 +524,7 @@ class BidNoticeCollectorTests(unittest.TestCase):
 
         self.assertEqual(response.total, 2)
         self.assertEqual({item.id for item in response.items}, {matching_notice.id, no_code_notice.id})
+        fetch_codes.assert_not_called()
 
     def test_review_list_filters_multiple_work_types(self):
         now = datetime.now(timezone.utc)
