@@ -329,12 +329,16 @@ def _schedule_api_error_retry(
 def _default_enrich_notice_context(
     db: Session,
     round_row: BidOpeningRoundModel,
-) -> int:
+) -> object:
     from app.g2b.bid_notices.service import (
         enrich_bid_notice_contexts_for_opening_rounds,
     )
 
-    return enrich_bid_notice_contexts_for_opening_rounds(db, [round_row])
+    return enrich_bid_notice_contexts_for_opening_rounds(
+        db,
+        [round_row],
+        return_outcome=True,
+    )
 
 
 def process_notice_enrichment_jobs(
@@ -343,7 +347,7 @@ def process_notice_enrichment_jobs(
     limit: int = 20,
     now: datetime | None = None,
     enrich_notice_context: (
-        Callable[[Session, BidOpeningRoundModel], int] | None
+        Callable[[Session, BidOpeningRoundModel], object] | None
     ) = None,
 ) -> NoticeEnrichmentRunResult:
     if limit < 1 or limit > 100:
@@ -372,20 +376,32 @@ def process_notice_enrichment_jobs(
                 db.commit()
                 continue
 
-            enriched_count = enrich_context(db, round_row)
+            enrichment_outcome = enrich_context(db, round_row)
+            enriched_count = int(
+                getattr(enrichment_outcome, "enriched_count", enrichment_outcome)
+            )
+            failure_error = getattr(enrichment_outcome, "failure_error", None)
             contexts = _load_contexts_for_job(db, job)
             if not contexts:
-                retrying = _schedule_api_error_retry(
-                    job,
-                    current=current,
-                    error=(
-                        "NOTICE_CONTEXT_API_ERROR"
-                        if enriched_count == 0
-                        else "NOTICE_CONTEXT_MISSING"
-                    ),
-                )
-                retry_scheduled_count += int(retrying)
-                needs_review_count += int(not retrying)
+                if failure_error in {
+                    "NOTICE_CONTEXT_NOT_FOUND",
+                    "NOTICE_CONTEXT_UNSUPPORTED",
+                }:
+                    _complete_job(
+                        job,
+                        status=ENRICHMENT_STATUS_NEEDS_REVIEW,
+                        current=current,
+                        error=failure_error,
+                    )
+                    needs_review_count += 1
+                else:
+                    retrying = _schedule_api_error_retry(
+                        job,
+                        current=current,
+                        error=failure_error or "NOTICE_CONTEXT_API_ERROR",
+                    )
+                    retry_scheduled_count += int(retrying)
+                    needs_review_count += int(not retrying)
                 db.commit()
                 continue
 

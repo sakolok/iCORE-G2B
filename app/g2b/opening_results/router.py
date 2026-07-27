@@ -62,7 +62,10 @@ from app.g2b.opening_results.matching import (
     sync_user_matches,
     update_user_result_profile,
 )
-from app.g2b.opening_results.models import BidOpeningEntryModel
+from app.g2b.opening_results.models import (
+    BidNoticeEnrichmentJobModel,
+    BidOpeningEntryModel,
+)
 from app.g2b.opening_results.notice_context_repository import (
     AmbiguousBidNoticeContextError,
     canonical_notice_key,
@@ -111,6 +114,24 @@ def _destination_response(destination) -> SheetDestinationResponse:
     )
 
 
+def _missing_context_status(
+    job: BidNoticeEnrichmentJobModel | None,
+) -> tuple[str, str]:
+    if job is None:
+        return "NOTICE_CONTEXT_MISSING", "bid_notice_context"
+    if job.status in {"PENDING", "RUNNING"}:
+        return "NOTICE_CONTEXT_PENDING", "bid_notice_context_pending"
+    if job.status == "RETRY_WAIT":
+        return "NOTICE_CONTEXT_RETRY", "bid_notice_context_retry"
+    if job.last_error == "NOTICE_CONTEXT_API_ERROR":
+        return "NOTICE_CONTEXT_API_ERROR", "bid_notice_context_api_error"
+    if job.last_error == "NOTICE_CONTEXT_NOT_FOUND":
+        return "NOTICE_CONTEXT_NOT_FOUND", "bid_notice_context_not_found"
+    if job.last_error == "NOTICE_CONTEXT_UNSUPPORTED":
+        return "NOTICE_CONTEXT_UNSUPPORTED", "bid_notice_context_unsupported"
+    return "NOTICE_CONTEXT_MISSING", "bid_notice_context"
+
+
 def _summary_responses(
     db: Session,
     rows,
@@ -119,6 +140,24 @@ def _summary_responses(
         db,
         [(row.bid_notice_no, row.bid_notice_ord) for row in rows],
     )
+    requested_keys = {
+        canonical_notice_key(row.bid_notice_no, row.bid_notice_ord) for row in rows
+    }
+    jobs_by_key: dict[tuple[str, str], BidNoticeEnrichmentJobModel] = {}
+    if requested_keys:
+        notice_numbers = {key[0] for key in requested_keys}
+        jobs = db.execute(
+            select(BidNoticeEnrichmentJobModel)
+            .where(
+                BidNoticeEnrichmentJobModel.task_type == "NOTICE_CONTEXT",
+                BidNoticeEnrichmentJobModel.bid_notice_no.in_(notice_numbers),
+            )
+            .order_by(BidNoticeEnrichmentJobModel.id.desc())
+        ).scalars()
+        for job in jobs:
+            key = canonical_notice_key(job.bid_notice_no, job.bid_notice_ord)
+            if key in requested_keys:
+                jobs_by_key.setdefault(key, job)
     entries_by_round: dict[int, list[BidOpeningEntryModel]] = {}
     round_ids = [row.id for row in rows]
     if round_ids:
@@ -151,7 +190,8 @@ def _summary_responses(
         if key in ambiguous_keys:
             block_reasons.append("ambiguous_bid_notice_context")
         elif context is None:
-            block_reasons.append("bid_notice_context")
+            export_status, block_reason = _missing_context_status(jobs_by_key.get(key))
+            block_reasons.append(block_reason)
         else:
             block_reasons.extend(
                 missing_bid_notice_context_fields(
@@ -164,10 +204,12 @@ def _summary_responses(
             export_status = "DETAIL_PENDING"
         elif key in ambiguous_keys:
             export_status = "NOTICE_CONTEXT_AMBIGUOUS"
-        elif block_reasons:
+        elif context is not None and block_reasons:
             export_status = "NOTICE_CONTEXT_MISSING"
-        else:
+        elif not block_reasons:
             export_status = "READY"
+        else:
+            export_status, _ = _missing_context_status(jobs_by_key.get(key))
 
         responses.append(
             base.model_copy(
@@ -285,7 +327,7 @@ def enrich_notice_context_on_schedule(
 ) -> NoticeEnrichmentRunResponse:
     enqueued_count = enqueue_notice_enrichment_jobs(db)
     db.commit()
-    result = process_notice_enrichment_jobs(db, limit=10)
+    result = process_notice_enrichment_jobs(db, limit=50)
     return NoticeEnrichmentRunResponse(
         enqueued_count=enqueued_count,
         claimed_count=result.claimed_count,
@@ -306,6 +348,11 @@ def fetch_results(
         "DETAIL_PENDING",
         "NOTICE_CONTEXT_MISSING",
         "NOTICE_CONTEXT_AMBIGUOUS",
+        "NOTICE_CONTEXT_PENDING",
+        "NOTICE_CONTEXT_RETRY",
+        "NOTICE_CONTEXT_API_ERROR",
+        "NOTICE_CONTEXT_NOT_FOUND",
+        "NOTICE_CONTEXT_UNSUPPORTED",
         "BLOCKED",
     ]
     | None = None,

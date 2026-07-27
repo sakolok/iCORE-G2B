@@ -12,7 +12,12 @@ from app.data.models import (
     UserResultProfileModel,
     UserModel,
 )
-from app.g2b.opening_results.models import SheetDestinationModel
+from app.g2b.bid_notice import canonical_bid_notice_identity
+from app.g2b.opening_results.models import (
+    BidNoticeEnrichmentJobModel,
+    BidOpeningRoundModel,
+    SheetDestinationModel,
+)
 from app.g2b.pre_specifications.models import (
     PreSpecificationSheetExportModel,
     UserPreSpecificationStateModel,
@@ -26,6 +31,9 @@ LEGACY_ORGANIZATION_SHEET_DESTINATIONS_PURGED_KEY = (
 )
 LEGACY_PRE_SPECIFICATION_EXPORT_HISTORY_PURGED_KEY = (
     "2026-07-legacy-pre-specification-export-history-purged"
+)
+OPENING_CONTEXT_NON_SERVICE_REQUEUE_KEY = (
+    "2026-07-opening-context-non-service-requeue"
 )
 LEGACY_DEFAULT_ADMIN_PASSWORD = "icore1234!"
 
@@ -480,6 +488,54 @@ def seed_defaults(db: Session) -> None:
                 key=LEGACY_PRE_SPECIFICATION_EXPORT_HISTORY_PURGED_KEY
             )
         )
+
+    non_service_context_requeue = db.get(
+        SystemMigrationModel,
+        OPENING_CONTEXT_NON_SERVICE_REQUEUE_KEY,
+    )
+    if non_service_context_requeue is None:
+        non_service_context_keys = {
+            identity
+            for identity in (
+                canonical_bid_notice_identity(
+                    row.bid_notice_no,
+                    row.bid_notice_ord,
+                )
+                for row in db.scalars(
+                    select(BidOpeningRoundModel).where(
+                        BidOpeningRoundModel.business_type.in_(
+                            ["GOODS", "CONSTRUCTION"]
+                        )
+                    )
+                )
+            )
+            if identity is not None
+        }
+        jobs = db.execute(
+            select(BidNoticeEnrichmentJobModel)
+            .where(
+                BidNoticeEnrichmentJobModel.task_type == "NOTICE_CONTEXT",
+                BidNoticeEnrichmentJobModel.status == "NEEDS_REVIEW",
+                BidNoticeEnrichmentJobModel.last_error.in_(
+                    ["NOTICE_CONTEXT_API_ERROR", "NOTICE_CONTEXT_MISSING"]
+                ),
+            )
+        ).scalars()
+        for job in jobs:
+            if canonical_bid_notice_identity(
+                job.bid_notice_no,
+                job.bid_notice_ord,
+            ) not in non_service_context_keys:
+                continue
+            job.status = "PENDING"
+            job.priority = max(job.priority, 100)
+            job.retry_count = 0
+            job.claim_token = None
+            job.claimed_at = None
+            job.next_retry_at = None
+            job.completed_at = None
+            job.last_error = None
+        db.add(SystemMigrationModel(key=OPENING_CONTEXT_NON_SERVICE_REQUEUE_KEY))
 
     from app.g2b.opening_results.matching import (
         sync_organization_matches,

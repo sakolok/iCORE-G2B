@@ -3,6 +3,7 @@ import json
 import logging
 import os
 from collections.abc import Callable, Iterable
+from dataclasses import dataclass
 from datetime import datetime, time, timedelta, timezone
 from decimal import Decimal
 from typing import Any
@@ -59,6 +60,23 @@ DEFAULT_G2B_BID_NOTICE_SOURCE_URL = (
     "https://apis.data.go.kr/1230000/ad/BidPublicInfoService/"
     "getBidPblancListInfoServc"
 )
+OFFICIAL_BID_NOTICE_OPERATIONS = {
+    "SERVICE": "getBidPblancListInfoServc",
+    "GOODS": "getBidPblancListInfoThng",
+    "CONSTRUCTION": "getBidPblancListInfoCnstwk",
+}
+
+
+@dataclass(frozen=True)
+class NoticeContextEnrichmentOutcome:
+    enriched_count: int
+    failure_error: str | None = None
+
+
+@dataclass(frozen=True)
+class OfficialBidNoticeContextFetchResult:
+    notice: ScraperNotice | None
+    failure_error: str | None = None
 
 
 def _parse_notify_times(raw: object) -> list[time]:
@@ -728,14 +746,27 @@ def _decimal_text(value: Decimal | None) -> str:
 def _fetch_official_bid_notice_context(
     round_row: BidOpeningRoundModel,
 ) -> ScraperNotice | None:
-    if round_row.business_type != "SERVICE":
-        return None
+    return _fetch_official_bid_notice_context_result(round_row).notice
+
+
+def _fetch_official_bid_notice_context_result(
+    round_row: BidOpeningRoundModel,
+) -> OfficialBidNoticeContextFetchResult:
+    operation = OFFICIAL_BID_NOTICE_OPERATIONS.get(round_row.business_type)
+    if operation is None:
+        return OfficialBidNoticeContextFetchResult(
+            notice=None,
+            failure_error="NOTICE_CONTEXT_UNSUPPORTED",
+        )
     identity = canonical_bid_notice_identity(
         round_row.bid_notice_no,
         round_row.bid_notice_ord,
     )
     if identity is None:
-        return None
+        return OfficialBidNoticeContextFetchResult(
+            notice=None,
+            failure_error="NOTICE_CONTEXT_NOT_FOUND",
+        )
     notice_no, _ = identity
     notice_ord = (round_row.bid_notice_ord or "00").strip() or "00"
     common_params = {
@@ -745,17 +776,23 @@ def _fetch_official_bid_notice_context(
         "bidNtceNo": notice_no,
     }
 
-    source_url = _resolve_bid_notice_operation_url("getBidPblancListInfoServc")
+    source_url = _resolve_bid_notice_operation_url(operation)
     succeeded, items = _fetch_bid_notice_api_items(
         url=source_url,
         params=common_params,
         source_label=f"G2B notice context {notice_no}|{notice_ord}",
     )
     if not succeeded:
-        return None
+        return OfficialBidNoticeContextFetchResult(
+            notice=None,
+            failure_error="NOTICE_CONTEXT_API_ERROR",
+        )
     matching_items = _matching_bid_notice_items(items, identity)
     if not matching_items:
-        return None
+        return OfficialBidNoticeContextFetchResult(
+            notice=None,
+            failure_error="NOTICE_CONTEXT_NOT_FOUND",
+        )
     item = matching_items[0]
 
     price_method = clean_optional_text(item.get("prearngPrceDcsnMthdNm"))
@@ -799,46 +836,48 @@ def _fetch_official_bid_notice_context(
 
     estimated_price = parse_official_amount(item.get("presmptPrce"))
     proposal_deadline = parse_g2b_datetime(item.get("bidClseDt"))
-    return ScraperNotice(
-        notice_id=clean_optional_text(item.get("bidNtceNo")) or notice_no,
-        title=(
-            clean_optional_text(item.get("bidNtceNm"))
-            or round_row.title
-            or notice_no
-        ),
-        agency=(
-            clean_optional_text(item.get("ntceInsttNm"))
-            or clean_optional_text(item.get("dminsttNm"))
-            or ""
-        ),
-        estimated_price=_decimal_text(estimated_price),
-        published_at=parse_g2b_datetime(item.get("bidNtceDt")),
-        deadline_at=proposal_deadline,
-        notice_url=clean_optional_text(item.get("bidNtceDtlUrl")) or "",
-        bid_notice_no=clean_optional_text(item.get("bidNtceNo")) or notice_no,
-        bid_notice_ord=(
-            clean_optional_text(item.get("bidNtceOrd")) or notice_ord
-        ),
-        business_name=(
-            clean_optional_text(item.get("bidNtceNm"))
-            or round_row.title
-            or notice_no
-        ),
-        demand_agency_name=(
-            clean_optional_text(item.get("dminsttNm"))
-            or round_row.demand_agency_name
-        ),
-        # DB 필드명은 호환성상 base_amount지만 값은 사업금액이다.
-        base_amount=business_amount,
-        prearranged_price_decision_method=price_method,
-        proposal_deadline=proposal_deadline,
-        region_restriction=region_restriction,
-        region_restriction_api_status=region_api_status,
-        is_two_stage_bid=infer_two_stage_bid(
-            None,
-            item.get("bidMethdNm"),
-            item.get("cntrctCnclsMthdNm"),
-            item.get("sucsfbidMthdNm"),
+    return OfficialBidNoticeContextFetchResult(
+        notice=ScraperNotice(
+            notice_id=clean_optional_text(item.get("bidNtceNo")) or notice_no,
+            title=(
+                clean_optional_text(item.get("bidNtceNm"))
+                or round_row.title
+                or notice_no
+            ),
+            agency=(
+                clean_optional_text(item.get("ntceInsttNm"))
+                or clean_optional_text(item.get("dminsttNm"))
+                or ""
+            ),
+            estimated_price=_decimal_text(estimated_price),
+            published_at=parse_g2b_datetime(item.get("bidNtceDt")),
+            deadline_at=proposal_deadline,
+            notice_url=clean_optional_text(item.get("bidNtceDtlUrl")) or "",
+            bid_notice_no=clean_optional_text(item.get("bidNtceNo")) or notice_no,
+            bid_notice_ord=(
+                clean_optional_text(item.get("bidNtceOrd")) or notice_ord
+            ),
+            business_name=(
+                clean_optional_text(item.get("bidNtceNm"))
+                or round_row.title
+                or notice_no
+            ),
+            demand_agency_name=(
+                clean_optional_text(item.get("dminsttNm"))
+                or round_row.demand_agency_name
+            ),
+            # DB 필드명은 호환성상 base_amount지만 값은 사업금액이다.
+            base_amount=business_amount,
+            prearranged_price_decision_method=price_method,
+            proposal_deadline=proposal_deadline,
+            region_restriction=region_restriction,
+            region_restriction_api_status=region_api_status,
+            is_two_stage_bid=infer_two_stage_bid(
+                None,
+                item.get("bidMethdNm"),
+                item.get("cntrctCnclsMthdNm"),
+                item.get("sucsfbidMthdNm"),
+            ),
         ),
     )
 
@@ -850,11 +889,10 @@ def enrich_bid_notice_contexts_for_opening_rounds(
     fetch_context: (
         Callable[[BidOpeningRoundModel], ScraperNotice | None] | None
     ) = None,
-) -> int:
+    return_outcome: bool = False,
+) -> int | NoticeContextEnrichmentOutcome:
     rounds_by_key: dict[tuple[str, str], BidOpeningRoundModel] = {}
     for round_row in rounds:
-        if round_row.business_type != "SERVICE":
-            continue
         identity = canonical_bid_notice_identity(
             round_row.bid_notice_no,
             round_row.bid_notice_ord,
@@ -862,7 +900,8 @@ def enrich_bid_notice_contexts_for_opening_rounds(
         if identity is not None:
             rounds_by_key.setdefault(identity, round_row)
     if not rounds_by_key:
-        return 0
+        outcome = NoticeContextEnrichmentOutcome(enriched_count=0)
+        return outcome if return_outcome else outcome.enriched_count
 
     notice_numbers = {key[0] for key in rounds_by_key}
     stored_by_key: dict[tuple[str, str], list[ScraperNoticeModel]] = {}
@@ -879,9 +918,9 @@ def enrich_bid_notice_contexts_for_opening_rounds(
         if identity in rounds_by_key:
             stored_by_key.setdefault(identity, []).append(stored)
 
-    context_fetcher = fetch_context or _fetch_official_bid_notice_context
     now = datetime.now(timezone.utc)
     enriched_count = 0
+    failure_error: str | None = None
     for identity, round_row in rounds_by_key.items():
         existing_rows = stored_by_key.get(identity, [])
         stored = select_canonical_scraper_notice(existing_rows)
@@ -892,13 +931,22 @@ def enrich_bid_notice_contexts_for_opening_rounds(
         ):
             continue
         try:
-            notice = context_fetcher(round_row)
+            if fetch_context is None:
+                fetch_result = _fetch_official_bid_notice_context_result(round_row)
+                notice = fetch_result.notice
+                failure_error = fetch_result.failure_error
+            else:
+                notice = fetch_context(round_row)
+                failure_error = (
+                    None if notice is not None else "NOTICE_CONTEXT_API_ERROR"
+                )
         except Exception:
             logger.exception(
                 "Bid notice context enrichment failed for %s|%s",
                 identity[0],
                 identity[1],
             )
+            failure_error = "NOTICE_CONTEXT_API_ERROR"
             continue
         if notice is None or canonical_bid_notice_identity(
             notice.bid_notice_no,
@@ -927,7 +975,11 @@ def enrich_bid_notice_contexts_for_opening_rounds(
 
     if enriched_count:
         db.flush()
-    return enriched_count
+    outcome = NoticeContextEnrichmentOutcome(
+        enriched_count=enriched_count,
+        failure_error=None if enriched_count else failure_error,
+    )
+    return outcome if return_outcome else outcome.enriched_count
 
 
 def get_last_scraper_run_time(db: Session) -> datetime | None:

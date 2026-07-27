@@ -399,6 +399,42 @@ class ScraperNoticePersistenceTests(unittest.TestCase):
             REGION_API_ERROR,
         )
 
+    def test_official_context_uses_goods_and_construction_apis(self):
+        for business_type, operation in (
+            ("GOODS", "getBidPblancListInfoThng"),
+            ("CONSTRUCTION", "getBidPblancListInfoCnstwk"),
+        ):
+            with self.subTest(business_type=business_type):
+                round_row = BidOpeningRoundModel(
+                    external_key=f"{business_type}:R26BK00000001:00:0:0",
+                    business_type=business_type,
+                    bid_notice_no="R26BK00000001",
+                    bid_notice_ord="00",
+                    bid_class_no="0",
+                    rebid_no="0",
+                    title="AI 구축 공고",
+                )
+                notice_item = {
+                    "bidNtceNo": "R26BK00000001",
+                    "bidNtceOrd": "00",
+                    "bidNtceNm": "AI 구축 공고",
+                    "dminsttNm": "OO기관",
+                    "presmptPrce": "81818182",
+                    "VAT": "8181818",
+                    "bidClseDt": "202607201500",
+                }
+                with patch(
+                    "app.g2b.bid_notices.service._fetch_bid_notice_api_items",
+                    side_effect=[(True, [notice_item]), (True, [])],
+                ) as fetch_items:
+                    notice = _fetch_official_bid_notice_context(round_row)
+
+                self.assertIsNotNone(notice)
+                self.assertEqual(notice.base_amount, Decimal("90000000"))
+                self.assertTrue(
+                    fetch_items.call_args_list[0].kwargs["url"].endswith(operation)
+                )
+
     def test_official_context_marks_mismatched_region_response_for_review(self):
         result_id = self.add_opening_result()
         round_row = self.db.get(BidOpeningRoundModel, result_id)

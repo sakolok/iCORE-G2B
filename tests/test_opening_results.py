@@ -1467,6 +1467,31 @@ class OpeningResultServiceTests(unittest.TestCase):
             "https://www.g2b.go.kr/notice/current",
         )
 
+    def test_missing_context_shows_enrichment_state_from_job(self):
+        collect_opening_results(self.db, self.request, self.make_client())
+        job = self.db.scalar(select(BidNoticeEnrichmentJobModel))
+        job.status = "RETRY_WAIT"
+        job.last_error = "NOTICE_CONTEXT_API_ERROR"
+        job.next_retry_at = datetime(2026, 7, 16, tzinfo=timezone.utc)
+        self.db.commit()
+
+        response = fetch_results(
+            q=None,
+            status=None,
+            opened_from=datetime(2026, 7, 14, tzinfo=timezone.utc),
+            opened_to=datetime(2026, 7, 16, tzinfo=timezone.utc),
+            page=1,
+            page_size=30,
+            auth=self.auth,
+            db=self.db,
+        )
+
+        self.assertEqual(response.items[0].sheet_export_status, "NOTICE_CONTEXT_RETRY")
+        self.assertEqual(
+            response.items[0].sheet_block_reasons,
+            ["bid_notice_context_retry"],
+        )
+
     @patch("app.g2b.bid_notices.service._fetch_bid_notice_api_items")
     def test_opening_context_uses_explicit_no_region_limit_from_detail_api(self, fetch_items):
         round_row = BidOpeningRoundModel(
@@ -1623,8 +1648,8 @@ class OpeningResultServiceTests(unittest.TestCase):
             auth=self.auth,
             db=self.db,
         )
-        self.assertEqual(missing.items[0].sheet_export_status, "NOTICE_CONTEXT_MISSING")
-        self.assertEqual(missing.items[0].sheet_block_reasons, ["bid_notice_context"])
+        self.assertEqual(missing.items[0].sheet_export_status, "NOTICE_CONTEXT_PENDING")
+        self.assertEqual(missing.items[0].sheet_block_reasons, ["bid_notice_context_pending"])
 
         self.add_bid_notice(bid_notice_ord="00", dedup_suffix="first")
         self.add_bid_notice(bid_notice_ord="000", dedup_suffix="second")

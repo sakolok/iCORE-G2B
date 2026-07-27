@@ -142,6 +142,11 @@ class OpeningResultSummaryResponse(BaseModel):
         "DETAIL_PENDING",
         "NOTICE_CONTEXT_MISSING",
         "NOTICE_CONTEXT_AMBIGUOUS",
+        "NOTICE_CONTEXT_PENDING",
+        "NOTICE_CONTEXT_RETRY",
+        "NOTICE_CONTEXT_API_ERROR",
+        "NOTICE_CONTEXT_NOT_FOUND",
+        "NOTICE_CONTEXT_UNSUPPORTED",
     ] = "NOTICE_CONTEXT_MISSING"
     sheet_exportable: bool = False
     sheet_block_reasons: list[str] = Field(default_factory=list)

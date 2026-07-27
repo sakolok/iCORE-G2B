@@ -19,6 +19,7 @@ from app.g2b.opening_results.models import (
     UserOpeningResultMatchModel,
     UserOpeningResultStateModel,
 )
+from app.g2b.bid_notices.service import NoticeContextEnrichmentOutcome
 
 
 class BidNoticeEnrichmentJobModelTests(unittest.TestCase):
@@ -378,6 +379,24 @@ class BidNoticeEnrichmentJobModelTests(unittest.TestCase):
         self.assertEqual(result.retry_scheduled_count, 1)
         self.assertEqual(job.status, "RETRY_WAIT")
         self.assertEqual(job.last_error, "NOTICE_CONTEXT_API_ERROR")
+
+    def test_official_notice_not_found_becomes_review_without_api_retry(self):
+        _, job = self._add_enrichment_job()
+
+        result = process_notice_enrichment_jobs(
+            self.db,
+            now=datetime(2026, 7, 22, 0, 0, tzinfo=timezone.utc),
+            enrich_notice_context=lambda db, selected_round: NoticeContextEnrichmentOutcome(
+                enriched_count=0,
+                failure_error="NOTICE_CONTEXT_NOT_FOUND",
+            ),
+        )
+        self.db.refresh(job)
+
+        self.assertEqual(result.retry_scheduled_count, 0)
+        self.assertEqual(result.needs_review_count, 1)
+        self.assertEqual(job.status, "NEEDS_REVIEW")
+        self.assertEqual(job.last_error, "NOTICE_CONTEXT_NOT_FOUND")
 
     def test_successful_context_without_amount_needs_review(self):
         round_row, job = self._add_enrichment_job()
