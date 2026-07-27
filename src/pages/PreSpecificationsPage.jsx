@@ -692,11 +692,11 @@ function PreSpecificationsPage() {
       },
     },
     {
-      title: "규격서",
-      dataIndex: "attachments",
-      width: 80,
+      title: "매칭",
+      dataIndex: "matched_keyword",
+      width: 110,
       align: "center",
-      render: (attachments = []) => (attachments.length ? `${attachments.length}개` : "-"),
+      render: (value) => (value ? <Tag color="blue">{value}</Tag> : "-"),
     },
     {
       title: "작업",
