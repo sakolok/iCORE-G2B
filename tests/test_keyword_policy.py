@@ -74,6 +74,20 @@ class KeywordPolicyTests(unittest.TestCase):
         self.assertFalse(evaluate_keyword_title("maintenance 용역", ["AI"]).keep)
         self.assertFalse(evaluate_keyword_title("training 시스템", ["AI"]).keep)
 
+    def test_keyword_matching_ignores_whitespace_for_include_and_exclude(self):
+        title = "대기질모델개발시스템의 AI 인프라 구축(Ⅰ)"
+
+        self.assertTrue(evaluate_keyword_title(title, ["AI인프라"]).keep)
+        self.assertTrue(evaluate_keyword_title("AI인프라 구축", ["AI 인프라"]).keep)
+        self.assertTrue(evaluate_keyword_title("대기질 모델 개발", ["대기질모델"]).keep)
+        self.assertEqual(
+            normalize_keywords(["AI 인프라", "AI인프라"]),
+            ["AI 인프라"],
+        )
+        self.assertFalse(
+            evaluate_keyword_title(title, ["AI"], ["AI인프라"]).keep
+        )
+
     def test_api_scraper_source_setting_remains_available(self):
         with patch("app.g2b.bid_notices.service.requests.get") as mocked_get:
             mocked_get.return_value.raise_for_status.return_value = None

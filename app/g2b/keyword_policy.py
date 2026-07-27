@@ -20,7 +20,8 @@ def _clean_keyword(value: Any) -> str:
 
 
 def _comparison_value(value: Any) -> str:
-    return _clean_keyword(value).casefold()
+    # 나라장터 공고명은 같은 단어도 공백 유무가 제각각이라 비교 시 공백을 무시한다.
+    return "".join(_clean_keyword(value).casefold().split())
 
 
 def normalize_keywords(values: Iterable[Any] | str | None) -> list[str]:
@@ -31,7 +32,7 @@ def normalize_keywords(values: Iterable[Any] | str | None) -> list[str]:
     normalized: list[str] = []
     for value in candidates:
         cleaned = _clean_keyword(value)
-        comparison = cleaned.casefold()
+        comparison = _comparison_value(cleaned)
         if not comparison or comparison in seen:
             continue
         seen.add(comparison)
