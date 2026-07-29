@@ -26,6 +26,10 @@ import "./BidNoticesPage.css";
 const { Text, Title } = Typography;
 const { RangePicker } = DatePicker;
 const MAX_SELECTION_COUNT = 100;
+const ARCHIVE_STATE_META = {
+  DISMISSED: { color: "default", label: "목록 제외" },
+  EXPORTED: { color: "green", label: "Sheet 반영" },
+};
 
 const HEADER_STATUS_META = {
   MATCH: { type: "success", text: "A:J 헤더가 올바릅니다." },
@@ -112,6 +116,12 @@ function sheetUrl(spreadsheetId) {
   return spreadsheetId
     ? `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit`
     : null;
+}
+
+function archiveDaysRemaining(expiresAt) {
+  const expires = dayjs(expiresAt);
+  if (!expires.isValid()) return 0;
+  return Math.max(0, Math.ceil(expires.diff(dayjs(), "day", true)));
 }
 
 function BidNoticesPage() {
@@ -382,13 +392,21 @@ function BidNoticesPage() {
     const nextRequestId = detailRequestId.current + 1;
     detailRequestId.current = nextRequestId;
     setDetailOpen(true);
-    setDetail({ ...row, from_archive: fromArchive });
+    const archiveMeta = fromArchive
+      ? {
+          from_archive: true,
+          handled_state: row.handled_state,
+          expires_at: row.expires_at,
+          can_restore: row.can_restore,
+        }
+      : { from_archive: false };
+    setDetail({ ...row, ...archiveMeta });
     setDetailLoading(true);
     setDetailError("");
     try {
       const response = await bidNoticesApi.detail(row.id);
       if (detailRequestId.current === nextRequestId) {
-        setDetail({ ...response.data, from_archive: fromArchive });
+        setDetail({ ...response.data, ...archiveMeta });
       }
     } catch (error) {
       if (detailRequestId.current === nextRequestId) {
@@ -557,10 +575,22 @@ function BidNoticesPage() {
     },
     ...columns.slice(3, -1),
     {
+      title: "처리 상태",
+      dataIndex: "handled_state",
+      key: "handled_state",
+      width: 110,
+      render: (value) => {
+        const meta = ARCHIVE_STATE_META[value] || ARCHIVE_STATE_META.DISMISSED;
+        return <Tag color={meta.color}>{meta.label}</Tag>;
+      },
+    },
+    {
       title: "작업",
       key: "restore",
       width: 92,
-      render: (_, row) => <Button type="link" loading={restoringId === row.id} onClick={() => restoreNotice(row.id)}>복구</Button>,
+      render: (_, row) => row.can_restore ? (
+        <Button type="link" loading={restoringId === row.id} onClick={() => restoreNotice(row.id)}>복구</Button>
+      ) : null,
     },
   ];
 
@@ -863,14 +893,25 @@ function BidNoticesPage() {
           <Popconfirm title="이 공고를 검토함에서 제외할까요?" description="14일 보관함에서 다시 검토 목록으로 복구할 수 있습니다." onConfirm={() => dismissNotice(detail.id)} okText="제외" cancelText="취소">
             <Button danger>내 목록에서 제외</Button>
           </Popconfirm>
-        ) : detail?.id ? (
+        ) : detail?.id && detail.can_restore ? (
           <Button type="primary" loading={restoringId === detail.id} onClick={() => restoreNotice(detail.id)}>검토 목록으로 복구</Button>
         ) : null}
       >
         {detailError ? <Alert type="error" showIcon message={detailError} /> : null}
         {detailLoading ? <div className="bid-notice-detail-loading">상세 정보를 불러오고 있습니다.</div> : null}
         {detail ? (
-          <Descriptions bordered size="small" column={2}>
+          <>
+            {detail.from_archive ? (
+              <Alert
+                type={detail.can_restore ? "info" : "success"}
+                showIcon
+                message={detail.can_restore
+                  ? `목록 제외 · ${archiveDaysRemaining(detail.expires_at)}일 남음`
+                  : `Sheet 반영 완료 · ${archiveDaysRemaining(detail.expires_at)}일 남음`}
+                style={{ marginBottom: 16 }}
+              />
+            ) : null}
+            <Descriptions bordered size="small" column={2}>
             <Descriptions.Item label="공고번호">{detail.bid_notice_no ? `${detail.bid_notice_no}-${detail.bid_notice_ord || "00"}` : "-"}</Descriptions.Item>
             <Descriptions.Item label="업무구분">{formatWorkType(detail.work_type)}</Descriptions.Item>
             <Descriptions.Item label="수요기관">{detail.demand_agency_name || "-"}</Descriptions.Item>
@@ -893,7 +934,8 @@ function BidNoticesPage() {
             <Descriptions.Item label="공식 공고" span={2}>
               {externalUrl(detail.notice_url) ? <Button type="link" href={externalUrl(detail.notice_url)} target="_blank" rel="noopener noreferrer">나라장터 공고 바로가기</Button> : <Text type="secondary">연결된 공식 공고 링크가 없습니다.</Text>}
             </Descriptions.Item>
-          </Descriptions>
+            </Descriptions>
+          </>
         ) : null}
         {detail ? (
           <Card className="bid-notice-attachments" size="small" title={`공고 첨부파일 ${detail.attachments.length}개`}>
