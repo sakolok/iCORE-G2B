@@ -38,7 +38,6 @@
   gap: 10px;
 }
 
-.layout-shell-brand-mark,
 .layout-shell-avatar {
   display: grid;
   flex: 0 0 auto;
@@ -46,20 +45,11 @@
   font-weight: 750;
 }
 
-.layout-shell-brand-mark {
-  width: 34px;
-  height: 34px;
-  border-radius: 11px;
-  background: var(--icore-primary);
-  color: #ffffff;
-  font-size: 19px;
-  letter-spacing: -0.04em;
-}
-
-.layout-shell-brand strong {
-  color: var(--icore-text);
-  font-size: 18px;
-  letter-spacing: -0.025em;
+.layout-shell-brand-logo {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  object-fit: contain;
 }
 
 .layout-shell-divider {

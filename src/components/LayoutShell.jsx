@@ -15,9 +15,12 @@ function LayoutShell({ session, activePage, onLogout, children }) {
       <header className="layout-shell-header">
         <div className="layout-shell-header-inner">
           <div className="layout-shell-brand-group">
-            <div className="layout-shell-brand" aria-label="iCore">
-              <span className="layout-shell-brand-mark" aria-hidden="true">i</span>
-              <strong>iCore</strong>
+            <div className="layout-shell-brand" aria-label="iCORE">
+              <img
+                src="/icore-logo.jpg"
+                alt="iCORE"
+                className="layout-shell-brand-logo"
+              />
             </div>
             <span className="layout-shell-divider" aria-hidden="true" />
             <nav className="layout-shell-nav" aria-label="업무 페이지">
