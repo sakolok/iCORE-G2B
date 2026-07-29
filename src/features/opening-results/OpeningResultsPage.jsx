@@ -984,11 +984,11 @@ function OpeningResultsPage() {
       <section className="opening-results-hero">
         <div>
           <Typography.Text className="opening-results-eyebrow">
-            최근 14일
+            개찰결과
           </Typography.Text>
-          <Typography.Title level={2}>키워드에 맞는 개찰결과를 모았어요</Typography.Title>
+          <Typography.Title level={2}>키워드에 맞는 개찰결과를 확인해요</Typography.Title>
           <Typography.Paragraph>
-            내용을 확인하고 필요한 항목만 Google Sheets에 반영해요.
+            업체별 순위와 점수를 비교하고 필요한 항목만 정리할 수 있어요.
           </Typography.Paragraph>
         </div>
         <div className="opening-results-hero-actions">

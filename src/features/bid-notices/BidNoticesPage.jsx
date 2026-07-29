@@ -568,7 +568,7 @@ function BidNoticesPage() {
     <div className="bid-notices-page">
       <section className="bid-notices-hero">
         <div>
-          <span className="bid-notices-eyebrow">G2B 입찰공고</span>
+          <span className="bid-notices-eyebrow">입찰공고</span>
           <Title level={2}>입찰공고를 검토해요</Title>
           <Text>공통 원본에서 내 포함·제외 키워드에 맞는 공고만 확인합니다.</Text>
         </div>

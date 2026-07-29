@@ -801,7 +801,7 @@ function PreSpecificationsPage() {
     <section className="pre-specifications-page" aria-labelledby="pre-specifications-title">
       <header className="pre-specifications-hero">
         <div>
-          <span className="pre-specifications-eyebrow">나라장터 사전규격</span>
+          <span className="pre-specifications-eyebrow">사전규격</span>
           <Typography.Title id="pre-specifications-title" level={2}>
             사전규격을 검토해요
           </Typography.Title>
