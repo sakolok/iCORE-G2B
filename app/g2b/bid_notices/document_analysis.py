@@ -33,11 +33,9 @@ from app.g2b.bid_notices.collector import (
     fetch_notice_detail_source,
     fetch_participant_region_restriction,
 )
-from app.g2b.bid_notices.matching import sync_user_bid_notice_matches
 from app.g2b.bid_notices.models import (
     BidNoticeDocumentAnalysisModel,
     UserBidNoticeMatchModel,
-    UserBidNoticeProfileModel,
 )
 
 try:  # pragma: no cover - exercised in the deploy image
@@ -469,18 +467,6 @@ def _queue_candidates(
     current: datetime,
 ) -> tuple[int, int, int]:
     cutoff = current - timedelta(days=RECENT_NOTICE_DAYS)
-    profiles = db.execute(
-        select(UserBidNoticeProfileModel).where(UserBidNoticeProfileModel.enabled.is_(True))
-    ).scalars().all()
-    for profile in profiles:
-        sync_user_bid_notice_matches(
-            db,
-            organization_id=profile.organization_id,
-            user_id=profile.user_id,
-            now=current,
-        )
-    db.flush()
-
     candidate_ids = db.execute(
         select(distinct(UserBidNoticeMatchModel.notice_id))
         .join(ScraperNoticeModel, ScraperNoticeModel.id == UserBidNoticeMatchModel.notice_id)
@@ -673,11 +659,14 @@ def run_pending_bid_notice_document_analysis(
     *,
     now: datetime | None = None,
     batch_size: int = DEFAULT_BATCH_SIZE,
+    prepare_queue: bool = True,
 ) -> dict[str, int]:
     current = now or _utcnow()
     bounded_batch_size = max(1, min(batch_size, MAX_BATCH_SIZE))
-    candidate_count, queued, review_required = _queue_candidates(db, current=current)
-    db.commit()
+    candidate_count = queued = review_required = 0
+    if prepare_queue:
+        candidate_count, queued, review_required = _queue_candidates(db, current=current)
+        db.commit()
     claim_token, claimed_rows = _claim_analysis_batch(
         db,
         current=current,

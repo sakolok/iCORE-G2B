@@ -26,7 +26,10 @@ from app.g2b.bid_notice import (
     parse_g2b_datetime,
     parse_official_amount,
 )
-from app.g2b.bid_notices.matching import get_enabled_bid_notice_keywords
+from app.g2b.bid_notices.matching import (
+    get_enabled_bid_notice_keywords,
+    sync_enabled_bid_notice_matches,
+)
 from app.g2b.bid_notices.models import BidNoticeCollectionRunModel
 from app.g2b.opening_results.notice_context_repository import (
     select_canonical_scraper_notice,
@@ -529,7 +532,7 @@ def collect_scheduled_bid_notices(
         }
     collection_date = collected_at.astimezone(KST).date()
     window_start_date = collection_date - timedelta(days=13)
-    return collect_bid_notices(
+    result = collect_bid_notices(
         db,
         start_date=window_start_date,
         end_date=collection_date,
@@ -541,3 +544,6 @@ def collect_scheduled_bid_notices(
         window_start=datetime.combine(window_start_date, time.min, tzinfo=KST),
         window_end=collected_at.astimezone(KST),
     )
+    sync_enabled_bid_notice_matches(db, now=collected_at)
+    db.commit()
+    return result

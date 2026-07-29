@@ -13,7 +13,10 @@ from app.g2b.bid_notices.collector import (
     INDUSTRY_API_ERROR,
     INDUSTRY_API_VALUE,
 )
-from app.g2b.bid_notices.document_analysis import run_pending_bid_notice_document_analysis
+from app.g2b.bid_notices.document_analysis import (
+    _queue_candidates,
+    run_pending_bid_notice_document_analysis,
+)
 from app.g2b.bid_notices.matching import (
     sync_user_bid_notice_matches,
     update_user_bid_notice_profile,
@@ -210,6 +213,40 @@ class BidNoticeDocumentAnalysisTests(unittest.TestCase):
         self.assertEqual(second["claimed_count"], 2)
         self.assertEqual(second["analyzed_count"], 2)
         self.assertEqual(download_attachment.call_count, 12)
+
+    @patch("app.g2b.bid_notices.document_analysis._extract_text")
+    @patch("app.g2b.bid_notices.document_analysis._download_attachment")
+    @patch("app.g2b.bid_notices.document_analysis.fetch_explicit_region_restriction")
+    @patch("app.g2b.bid_notices.document_analysis.fetch_industry_restriction_codes")
+    @patch("app.g2b.bid_notices.document_analysis.fetch_participant_region_restriction")
+    def test_worker_run_claims_a_prepared_queue_without_rematching(
+        self,
+        fetch_region,
+        fetch_industry,
+        fetch_explicit_region,
+        download_attachment,
+        extract_text,
+    ):
+        self._add_matched_notice()
+        fetch_region.return_value = (None, REGION_API_EMPTY)
+        fetch_explicit_region.return_value = (None, None)
+        fetch_industry.return_value = (None, INDUSTRY_API_EMPTY)
+        download_attachment.return_value = (b"pdf", "application/pdf")
+        extract_text.return_value = "지역제한 없음\n업종제한 없음"
+
+        _, queued, _ = _queue_candidates(self.db, current=self.now)
+        self.db.commit()
+        result = run_pending_bid_notice_document_analysis(
+            self.db,
+            now=self.now,
+            prepare_queue=False,
+        )
+
+        self.assertEqual(queued, 1)
+        self.assertEqual(result["candidate_count"], 0)
+        self.assertEqual(result["queued_count"], 0)
+        self.assertEqual(result["claimed_count"], 1)
+        self.assertEqual(result["analyzed_count"], 1)
 
     @patch("app.g2b.bid_notices.document_analysis._download_attachment")
     @patch("app.g2b.bid_notices.document_analysis.fetch_explicit_region_restriction")

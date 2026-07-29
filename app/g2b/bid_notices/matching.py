@@ -73,6 +73,26 @@ def get_enabled_bid_notice_keywords(db: Session) -> list[str]:
     return keywords
 
 
+def sync_enabled_bid_notice_matches(
+    db: Session,
+    *,
+    now: datetime | None = None,
+) -> int:
+    current = now or _utcnow()
+    profiles = db.execute(
+        select(UserBidNoticeProfileModel).where(UserBidNoticeProfileModel.enabled.is_(True))
+    ).scalars().all()
+    return sum(
+        sync_user_bid_notice_matches(
+            db,
+            organization_id=profile.organization_id,
+            user_id=profile.user_id,
+            now=current,
+        )
+        for profile in profiles
+    )
+
+
 def sync_user_bid_notice_matches(
     db: Session,
     *,

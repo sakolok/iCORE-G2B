@@ -387,30 +387,36 @@ jobs:
             exit 1
           fi
 
-          BID_NOTICE_DOCUMENT_ANALYSIS_TARGET_URL="$API_URL/api/v1/bid-notices/internal/analyze-documents?batch_size=10"
-          BID_NOTICE_DOCUMENT_ANALYSIS_SCHEDULE="5 8,11,14,17 * * *"
+          BID_NOTICE_DOCUMENT_ANALYSIS_PREPARE_TARGET_URL="$API_URL/api/v1/bid-notices/internal/analyze-documents?batch_size=10&prepare_queue=true"
+          BID_NOTICE_DOCUMENT_ANALYSIS_WORKER_TARGET_URL="$API_URL/api/v1/bid-notices/internal/analyze-documents?batch_size=10&prepare_queue=false"
+          BID_NOTICE_DOCUMENT_ANALYSIS_PREPARE_SCHEDULE="5 8,11,14,17 * * *"
+          BID_NOTICE_DOCUMENT_ANALYSIS_WORKER_SCHEDULE="10 8,11,14,17 * * *"
           BID_NOTICE_DOCUMENT_ANALYSIS_WORKER_COUNT=4
-          bid_notice_document_analysis_args=(
-            --project="${{ env.PROJECT_ID }}"
-            --location="${{ env.CLOUD_SCHEDULER_LOCATION }}"
-            --schedule="$BID_NOTICE_DOCUMENT_ANALYSIS_SCHEDULE"
-            --time-zone="$EXPECTED_TIME_ZONE"
-            --uri="$BID_NOTICE_DOCUMENT_ANALYSIS_TARGET_URL"
-            --http-method=POST
-            --message-body='{}'
-            --oidc-service-account-email="$INVOKER_SERVICE_ACCOUNT"
-            --oidc-token-audience="$API_URL"
-            --attempt-deadline=30m
-            --max-retry-attempts=2
-            --min-backoff=60s
-            --max-backoff=600s
-            --max-doublings=3
-          )
           for worker_index in $(seq 1 "$BID_NOTICE_DOCUMENT_ANALYSIS_WORKER_COUNT"); do
             scheduler_job_id="${{ env.BID_NOTICE_DOCUMENT_ANALYSIS_SCHEDULER_JOB_ID }}"
+            document_analysis_target_url="$BID_NOTICE_DOCUMENT_ANALYSIS_PREPARE_TARGET_URL"
+            document_analysis_schedule="$BID_NOTICE_DOCUMENT_ANALYSIS_PREPARE_SCHEDULE"
             if [ "$worker_index" -gt 1 ]; then
               scheduler_job_id="${scheduler_job_id}-${worker_index}"
+              document_analysis_target_url="$BID_NOTICE_DOCUMENT_ANALYSIS_WORKER_TARGET_URL"
+              document_analysis_schedule="$BID_NOTICE_DOCUMENT_ANALYSIS_WORKER_SCHEDULE"
             fi
+            bid_notice_document_analysis_args=(
+              --project="${{ env.PROJECT_ID }}"
+              --location="${{ env.CLOUD_SCHEDULER_LOCATION }}"
+              --schedule="$document_analysis_schedule"
+              --time-zone="$EXPECTED_TIME_ZONE"
+              --uri="$document_analysis_target_url"
+              --http-method=POST
+              --message-body='{}'
+              --oidc-service-account-email="$INVOKER_SERVICE_ACCOUNT"
+              --oidc-token-audience="$API_URL"
+              --attempt-deadline=30m
+              --max-retry-attempts=2
+              --min-backoff=60s
+              --max-backoff=600s
+              --max-doublings=3
+            )
             if gcloud scheduler jobs describe "$scheduler_job_id" \
               --project="${{ env.PROJECT_ID }}" \
               --location="${{ env.CLOUD_SCHEDULER_LOCATION }}" >/dev/null 2>&1; then
@@ -429,7 +435,7 @@ jobs:
               --project="${{ env.PROJECT_ID }}" \
               --location="${{ env.CLOUD_SCHEDULER_LOCATION }}" \
               --format=json | jq -r '[.schedule, .timeZone, .state, .httpTarget.uri, .httpTarget.httpMethod, .httpTarget.oidcToken.serviceAccountEmail, .httpTarget.oidcToken.audience] | join(" ")')
-            bid_notice_document_analysis_expected="$BID_NOTICE_DOCUMENT_ANALYSIS_SCHEDULE $EXPECTED_TIME_ZONE ENABLED $BID_NOTICE_DOCUMENT_ANALYSIS_TARGET_URL POST $INVOKER_SERVICE_ACCOUNT $API_URL"
+            bid_notice_document_analysis_expected="$document_analysis_schedule $EXPECTED_TIME_ZONE ENABLED $document_analysis_target_url POST $INVOKER_SERVICE_ACCOUNT $API_URL"
             if [ "$bid_notice_document_analysis_actual" != "$bid_notice_document_analysis_expected" ]; then
               echo "Bid notice document analysis scheduler verification failed for $scheduler_job_id."
               exit 1

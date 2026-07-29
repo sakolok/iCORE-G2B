@@ -34,7 +34,7 @@ from app.g2b.bid_notices.matching import (
     get_user_bid_notice_profile,
     list_archived_bid_notices,
     restore_user_bid_notice,
-    sync_user_bid_notice_matches,
+    sync_enabled_bid_notice_matches,
     update_user_bid_notice_profile,
 )
 from app.g2b.bid_notices.models import (
@@ -252,6 +252,8 @@ def collect_bid_notice_data(
             business_types=request.business_types,
             keywords=keywords,
         )
+        sync_enabled_bid_notice_matches(db)
+        db.commit()
     except BidNoticeCollectionError as error:
         raise HTTPException(status_code=502, detail=str(error)) from error
     return CollectBidNoticesResponse(**result)
@@ -280,9 +282,14 @@ def analyze_bid_notice_documents_on_schedule(
     __: None = Depends(verify_cloud_scheduler_oidc_token),
     db: Session = Depends(get_db),
     batch_size: int = Query(default=10, ge=1, le=20),
+    prepare_queue: bool = Query(default=True),
 ) -> BidNoticeDocumentAnalysisRunResponse:
     return BidNoticeDocumentAnalysisRunResponse(
-        **run_pending_bid_notice_document_analysis(db, batch_size=batch_size)
+        **run_pending_bid_notice_document_analysis(
+            db,
+            batch_size=batch_size,
+            prepare_queue=prepare_queue,
+        )
     )
 
 
@@ -345,10 +352,6 @@ def list_bid_notices(
     auth: dict = Depends(require_organization_auth),
     db: Session = Depends(get_db),
 ) -> BidNoticeListResponse:
-    sync_user_bid_notice_matches(
-        db, organization_id=auth["organization_id"], user_id=auth["user_id"]
-    )
-    db.commit()
     cutoff = datetime.now(timezone.utc) - timedelta(days=14)
     has_valid_personal_export = (
         select(BidNoticeSheetExportModel.id)

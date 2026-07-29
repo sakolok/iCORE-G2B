@@ -213,6 +213,12 @@ class BidNoticeCollectorTests(unittest.TestCase):
         self.assertEqual(first["updated_count"], 0)
         self.assertEqual(second["inserted_count"], 0)
         self.assertEqual(second["updated_count"], 0)
+        current_matches = self.db.scalars(
+            select(UserBidNoticeMatchModel).where(
+                UserBidNoticeMatchModel.is_current_match.is_(True)
+            )
+        ).all()
+        self.assertEqual({item.user_id for item in current_matches}, {10, 11})
         searched_keywords = {call.kwargs["keyword"] for call in fetch_operation.call_args_list}
         self.assertEqual(searched_keywords, {"AI", "클라우드"})
         self.assertTrue(
