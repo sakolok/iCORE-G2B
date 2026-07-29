@@ -116,7 +116,7 @@ function LoginPage({ onSuccess }) {
         });
         const googleButtonWidth = Math.max(
           200,
-          Math.min(360, Math.floor(googleButtonRef.current.clientWidth || 360))
+          Math.min(400, Math.floor(googleButtonRef.current.clientWidth || 400))
         );
         google.accounts.id.renderButton(googleButtonRef.current, {
           type: "standard",
@@ -148,84 +148,93 @@ function LoginPage({ onSuccess }) {
 
   return (
     <main className="login-page">
-      <header className="login-topbar">
-        <div className="login-brand" aria-label="iCore">
-          <span className="login-brand-mark" aria-hidden="true">i</span>
-          <strong>iCore</strong>
-        </div>
-        <span className="login-topbar-note">회사 전용 워크스페이스</span>
-      </header>
-
-      <div className="login-frame">
-        <section className="login-intro" aria-labelledby="login-product-title">
-          <div className="login-intro-copy">
-            <Typography.Text className="login-eyebrow">개찰결과 검토함</Typography.Text>
-            <Typography.Title id="login-product-title" level={1}>
-              필요한 개찰결과만
-              <br />
-              골라서 기록해요
-            </Typography.Title>
-            <Typography.Paragraph>
-              내 키워드에 맞는 최근 결과를 확인하고,
-              선택한 항목만 개인 Google Sheets에 반영해요.
-            </Typography.Paragraph>
-          </div>
-
-          <ol className="login-flow" aria-label="업무 흐름">
-            <li><span>1</span><strong>키워드로 모아요</strong><small>포함·제외 조건으로 필요한 결과만 보여줘요.</small></li>
-            <li><span>2</span><strong>직접 확인해요</strong><small>공고 정보와 상위 업체 점수를 함께 확인해요.</small></li>
-            <li><span>3</span><strong>고른 결과만 반영해요</strong><small>미리보기를 확인한 뒤 내 Sheet에 기록해요.</small></li>
-          </ol>
-
-          <p className="login-intro-footnote">12시간마다 새 결과를 모으고 최근 14일 동안 보여줘요.</p>
-        </section>
-
-        <section className="login-access" aria-labelledby="login-access-title">
-          <div>
-            <Typography.Text className="login-access-kicker">로그인</Typography.Text>
-            <Typography.Title id="login-access-title" level={2}>업무 계정으로 시작해요</Typography.Title>
-            <Typography.Paragraph>
-              회사 Google Workspace 계정만 사용할 수 있어요.
-            </Typography.Paragraph>
-          </div>
-
-          <div className="login-domain-list" aria-label="허용 이메일 도메인">
-            <span>@iceu.kr</span>
-            <span>@iceu.co.kr</span>
-          </div>
-
-          {errorMessage ? (
-            <Alert
-              type="error"
-              showIcon
-              message="로그인을 진행할 수 없습니다."
-              description={errorMessage}
-              action={clientId ? <Button onClick={retryGoogleScript}>다시 시도</Button> : null}
+      <div className="login-center">
+        <section className="login-card">
+          {/* ── Brand ── */}
+          <div className="login-brand">
+            <img
+              src="/icore-logo.jpg"
+              alt="iCORE Education & Consultancy"
+              className="login-logo"
             />
-          ) : null}
-
-          <div
-            className={`login-google-stage${submitting ? " is-submitting" : ""}`}
-            aria-busy={!googleReady || submitting}
-          >
-            {!googleReady ? (
-              <div className="login-google-loading" role="status">
-                <Spin size="small" />
-                <span>Google 로그인을 준비하고 있습니다.</span>
-              </div>
-            ) : null}
-            <div ref={googleButtonRef} className="login-google-button" />
-            {submitting ? (
-              <div className="login-submit-overlay" role="status">
-                <Spin size="small" />
-                <span>계정을 확인하고 있습니다.</span>
-              </div>
-            ) : null}
+            <Typography.Title level={1} className="login-title">
+              G2B iCORE
+            </Typography.Title>
+            <Typography.Paragraph className="login-subtitle">
+              나라장터 조달 정보를 한곳에서 정리하세요
+            </Typography.Paragraph>
           </div>
 
-          <div className="login-security-note">
-            <strong>선택한 결과만 외부로 기록해요.</strong>
-            <p>목록을 보거나 새로고침할 때는 Google Sheets를 호출하지 않아요.</p>
+          {/* ── Feature pills ── */}
+          <div className="login-pills">
+            <span className="login-pill">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" />
+                <path d="M14 2v6h6" />
+                <path d="M16 13H8" />
+                <path d="M16 17H8" />
+              </svg>
+              사전규격
+            </span>
+            <span className="login-pill">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
+                <path d="M14 2v4a2 2 0 0 0 2 2h4" />
+                <circle cx="11.5" cy="14.5" r="2.5" />
+                <path d="M13.3 16.3 15 18" />
+              </svg>
+              입찰공고
+            </span>
+            <span className="login-pill">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 20V10" />
+                <path d="M18 20V4" />
+                <path d="M6 20v-4" />
+              </svg>
+              개찰결과
+            </span>
+          </div>
+
+          {/* ── Divider ── */}
+          <div className="login-divider" />
+
+          {/* ── Login section ── */}
+          <div className="login-auth">
+            <Typography.Text className="login-auth-label">업무 계정으로 시작하기</Typography.Text>
+
+            <div className="login-domain-list" aria-label="허용 이메일 도메인">
+              <span>@iceu.kr</span>
+              <span>@iceu.co.kr</span>
+            </div>
+
+            {errorMessage ? (
+              <Alert
+                type="error"
+                showIcon
+                message="로그인을 진행할 수 없습니다."
+                description={errorMessage}
+                action={clientId ? <Button onClick={retryGoogleScript}>다시 시도</Button> : null}
+              />
+            ) : null}
+
+            <div
+              className={`login-google-stage${submitting ? " is-submitting" : ""}`}
+              aria-busy={!googleReady || submitting}
+            >
+              {!googleReady ? (
+                <div className="login-google-loading" role="status">
+                  <Spin size="small" />
+                  <span>Google 로그인을 준비하고 있습니다.</span>
+                </div>
+              ) : null}
+              <div ref={googleButtonRef} className="login-google-button" />
+              {submitting ? (
+                <div className="login-submit-overlay" role="status">
+                  <Spin size="small" />
+                  <span>계정을 확인하고 있습니다.</span>
+                </div>
+              ) : null}
+            </div>
           </div>
 
           <p className="login-policy">
