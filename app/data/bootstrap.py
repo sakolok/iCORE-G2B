@@ -1,5 +1,6 @@
 from sqlalchemy import Text, delete, inspect, select, text
 from sqlalchemy.engine import Engine
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -169,6 +170,27 @@ def _ensure_mysql_text_column(
         )
 
 
+def _is_mysql_lock_wait_timeout(error: OperationalError) -> bool:
+    original = getattr(error, "orig", None)
+    arguments = getattr(original, "args", ())
+    return bool(arguments and arguments[0] == 1205)
+
+
+def _backfill_source_payload(engine: Engine) -> None:
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "UPDATE scraper_notices "
+                    "SET source_payload = '{}' "
+                    "WHERE source_payload IS NULL"
+                )
+            )
+    except OperationalError as error:
+        if not _is_mysql_lock_wait_timeout(error):
+            raise
+
+
 def ensure_schema_compatibility(engine: Engine) -> None:
     _ensure_columns(
         engine,
@@ -227,14 +249,7 @@ def ensure_schema_compatibility(engine: Engine) -> None:
     )
     _ensure_mysql_text_column(engine, "scraper_notices", "region_restriction")
     if "scraper_notices" in inspect(engine).get_table_names():
-        with engine.begin() as connection:
-            connection.execute(
-                text(
-                    "UPDATE scraper_notices "
-                    "SET source_payload = '{}' "
-                    "WHERE source_payload IS NULL"
-                )
-            )
+        _backfill_source_payload(engine)
     _ensure_index(
         engine,
         "scraper_notices",
