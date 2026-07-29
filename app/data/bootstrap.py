@@ -288,6 +288,22 @@ def ensure_schema_compatibility(engine: Engine) -> None:
             "updated_at": "DATETIME NULL",
         },
     )
+    _ensure_columns(
+        engine,
+        "g2b_bid_notice_document_analyses",
+        {
+            "is_primary_notice_document": "BOOLEAN NOT NULL DEFAULT FALSE",
+            "claim_token": "VARCHAR(36) NULL",
+            "claimed_at": "DATETIME NULL",
+            "next_retry_at": "DATETIME NULL",
+        },
+    )
+    _ensure_index(
+        engine,
+        "g2b_bid_notice_document_analyses",
+        "ix_bid_notice_document_analysis_primary_status",
+        ["is_primary_notice_document", "status"],
+    )
     _ensure_unique_index(
         engine,
         "sheet_destinations",

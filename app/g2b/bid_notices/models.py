@@ -46,6 +46,9 @@ class BidNoticeDocumentAnalysisModel(Base):
     attachment_name: Mapped[str] = mapped_column(String(500), nullable=False)
     attachment_url: Mapped[str] = mapped_column(Text, nullable=False)
     analyzer_version: Mapped[str] = mapped_column(String(40), nullable=False)
+    is_primary_notice_document: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
     content_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="PENDING")
     needs_region: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
@@ -57,6 +60,11 @@ class BidNoticeDocumentAnalysisModel(Base):
     evidence: Mapped[str | None] = mapped_column(Text, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    claim_token: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    next_retry_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
     analyzed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_utcnow

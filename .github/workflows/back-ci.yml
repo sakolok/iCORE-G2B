@@ -387,8 +387,9 @@ jobs:
             exit 1
           fi
 
-          BID_NOTICE_DOCUMENT_ANALYSIS_TARGET_URL="$API_URL/api/v1/bid-notices/internal/analyze-documents"
+          BID_NOTICE_DOCUMENT_ANALYSIS_TARGET_URL="$API_URL/api/v1/bid-notices/internal/analyze-documents?batch_size=10"
           BID_NOTICE_DOCUMENT_ANALYSIS_SCHEDULE="5 8,11,14,17 * * *"
+          BID_NOTICE_DOCUMENT_ANALYSIS_WORKER_COUNT=4
           bid_notice_document_analysis_args=(
             --project="${{ env.PROJECT_ID }}"
             --location="${{ env.CLOUD_SCHEDULER_LOCATION }}"
@@ -405,29 +406,35 @@ jobs:
             --max-backoff=600s
             --max-doublings=3
           )
-          if gcloud scheduler jobs describe "${{ env.BID_NOTICE_DOCUMENT_ANALYSIS_SCHEDULER_JOB_ID }}" \
-            --project="${{ env.PROJECT_ID }}" \
-            --location="${{ env.CLOUD_SCHEDULER_LOCATION }}" >/dev/null 2>&1; then
-            gcloud scheduler jobs update http "${{ env.BID_NOTICE_DOCUMENT_ANALYSIS_SCHEDULER_JOB_ID }}" \
-              "${bid_notice_document_analysis_args[@]}" \
-              --update-headers="Content-Type=application/json,X-Scraper-Internal-Token=$INTERNAL_TOKEN"
-          else
-            gcloud scheduler jobs create http "${{ env.BID_NOTICE_DOCUMENT_ANALYSIS_SCHEDULER_JOB_ID }}" \
-              "${bid_notice_document_analysis_args[@]}" \
-              --headers="Content-Type=application/json,X-Scraper-Internal-Token=$INTERNAL_TOKEN"
-          fi
-          gcloud scheduler jobs resume "${{ env.BID_NOTICE_DOCUMENT_ANALYSIS_SCHEDULER_JOB_ID }}" \
-            --project="${{ env.PROJECT_ID }}" \
-            --location="${{ env.CLOUD_SCHEDULER_LOCATION }}" || true
-          bid_notice_document_analysis_actual=$(gcloud scheduler jobs describe "${{ env.BID_NOTICE_DOCUMENT_ANALYSIS_SCHEDULER_JOB_ID }}" \
-            --project="${{ env.PROJECT_ID }}" \
-            --location="${{ env.CLOUD_SCHEDULER_LOCATION }}" \
-            --format=json | jq -r '[.schedule, .timeZone, .state, .httpTarget.uri, .httpTarget.httpMethod, .httpTarget.oidcToken.serviceAccountEmail, .httpTarget.oidcToken.audience] | join(" ")')
-          bid_notice_document_analysis_expected="$BID_NOTICE_DOCUMENT_ANALYSIS_SCHEDULE $EXPECTED_TIME_ZONE ENABLED $BID_NOTICE_DOCUMENT_ANALYSIS_TARGET_URL POST $INVOKER_SERVICE_ACCOUNT $API_URL"
-          if [ "$bid_notice_document_analysis_actual" != "$bid_notice_document_analysis_expected" ]; then
-            echo "Bid notice document analysis scheduler verification failed."
-            exit 1
-          fi
+          for worker_index in $(seq 1 "$BID_NOTICE_DOCUMENT_ANALYSIS_WORKER_COUNT"); do
+            scheduler_job_id="${{ env.BID_NOTICE_DOCUMENT_ANALYSIS_SCHEDULER_JOB_ID }}"
+            if [ "$worker_index" -gt 1 ]; then
+              scheduler_job_id="${scheduler_job_id}-${worker_index}"
+            fi
+            if gcloud scheduler jobs describe "$scheduler_job_id" \
+              --project="${{ env.PROJECT_ID }}" \
+              --location="${{ env.CLOUD_SCHEDULER_LOCATION }}" >/dev/null 2>&1; then
+              gcloud scheduler jobs update http "$scheduler_job_id" \
+                "${bid_notice_document_analysis_args[@]}" \
+                --update-headers="Content-Type=application/json,X-Scraper-Internal-Token=$INTERNAL_TOKEN"
+            else
+              gcloud scheduler jobs create http "$scheduler_job_id" \
+                "${bid_notice_document_analysis_args[@]}" \
+                --headers="Content-Type=application/json,X-Scraper-Internal-Token=$INTERNAL_TOKEN"
+            fi
+            gcloud scheduler jobs resume "$scheduler_job_id" \
+              --project="${{ env.PROJECT_ID }}" \
+              --location="${{ env.CLOUD_SCHEDULER_LOCATION }}" || true
+            bid_notice_document_analysis_actual=$(gcloud scheduler jobs describe "$scheduler_job_id" \
+              --project="${{ env.PROJECT_ID }}" \
+              --location="${{ env.CLOUD_SCHEDULER_LOCATION }}" \
+              --format=json | jq -r '[.schedule, .timeZone, .state, .httpTarget.uri, .httpTarget.httpMethod, .httpTarget.oidcToken.serviceAccountEmail, .httpTarget.oidcToken.audience] | join(" ")')
+            bid_notice_document_analysis_expected="$BID_NOTICE_DOCUMENT_ANALYSIS_SCHEDULE $EXPECTED_TIME_ZONE ENABLED $BID_NOTICE_DOCUMENT_ANALYSIS_TARGET_URL POST $INVOKER_SERVICE_ACCOUNT $API_URL"
+            if [ "$bid_notice_document_analysis_actual" != "$bid_notice_document_analysis_expected" ]; then
+              echo "Bid notice document analysis scheduler verification failed for $scheduler_job_id."
+              exit 1
+            fi
+          done
 
           PRE_SPECIFICATIONS_TARGET_URL="$API_URL/api/v1/pre-specifications/internal/collect"
           PRE_SPECIFICATIONS_SCHEDULE="0 9 * * *"

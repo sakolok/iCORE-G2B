@@ -93,6 +93,7 @@ from app.g2b.opening_results.sheet_export import (
     get_sheet_service_account_email,
     organize_entry_rankings,
 )
+from app.g2b.source_retention import purge_expired_source_data
 from app.services.auth_service import (
     require_organization_auth,
     verify_cloud_scheduler_oidc_token,
@@ -305,6 +306,7 @@ def collect_results_on_schedule(
                 status_code=409,
                 detail="같은 정기 수집 슬롯의 작업이 아직 완료되지 않았습니다.",
             )
+        purge_expired_source_data(db)
         return response
     except OpeningResultApiConfigurationError as error:
         raise HTTPException(status_code=503, detail=str(error)) from error

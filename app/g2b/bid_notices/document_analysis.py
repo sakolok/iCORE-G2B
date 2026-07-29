@@ -2,6 +2,7 @@ import hashlib
 import io
 import json
 import re
+import uuid
 import zipfile
 from datetime import datetime, timedelta, timezone
 from html import unescape
@@ -9,7 +10,8 @@ from urllib.parse import urlparse
 from xml.etree import ElementTree
 
 import requests
-from sqlalchemy import distinct, select
+from sqlalchemy import and_, distinct, or_, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.data.models import ScraperNoticeModel
@@ -48,6 +50,24 @@ ANALYZER_VERSION = "document-rules-v1"
 MAX_ATTACHMENT_BYTES = 12 * 1024 * 1024
 MAX_EXTRACTED_TEXT_LENGTH = 250_000
 RECENT_NOTICE_DAYS = 14
+DEFAULT_BATCH_SIZE = 10
+MAX_BATCH_SIZE = 20
+MAX_ANALYSIS_ATTEMPTS = 3
+RETRY_DELAYS = (timedelta(minutes=5), timedelta(minutes=20), timedelta(hours=1))
+STALE_CLAIM_AFTER = timedelta(minutes=35)
+PRIMARY_NOTICE_DOCUMENT_TOKENS = ("입찰공고서", "입찰공고안", "입찰공고", "공고문")
+NON_PRIMARY_DOCUMENT_TOKENS = (
+    "제안요청",
+    "규격",
+    "사양",
+    "입찰참가",
+    "서식",
+    "양식",
+    "과업지시",
+    "계약조건",
+    "질의",
+    "답변",
+)
 REGION_NAMES = (
     "서울특별시",
     "부산광역시",
@@ -124,11 +144,11 @@ def _ensure_notice_attachments(notice: ScraperNoticeModel) -> list[tuple[str, st
     return _attachment_manifest(source)
 
 
-def _needs_region_document(status: str | None) -> bool:
+def _needs_region_api_refresh(status: str | None) -> bool:
     return status in {None, REGION_API_EMPTY, REGION_API_ERROR, REGION_API_ORDER_MISMATCH}
 
 
-def _needs_industry_document(status: str | None) -> bool:
+def _needs_industry_api_refresh(status: str | None) -> bool:
     return status in {
         None,
         INDUSTRY_API_EMPTY,
@@ -137,9 +157,16 @@ def _needs_industry_document(status: str | None) -> bool:
     }
 
 
+def _needs_region_document(status: str | None) -> bool:
+    return status == REGION_API_EMPTY
+
+
+def _needs_industry_document(status: str | None) -> bool:
+    return status == INDUSTRY_API_EMPTY
+
+
 def _refresh_api_context(notice: ScraperNoticeModel) -> tuple[bool, bool]:
-    needs_region = _needs_region_document(notice.region_restriction_api_status)
-    if needs_region:
+    if _needs_region_api_refresh(notice.region_restriction_api_status):
         region, status = fetch_participant_region_restriction(
             notice_no=notice.bid_notice_no or notice.notice_id,
             notice_ord=notice.bid_notice_ord or "00",
@@ -161,8 +188,7 @@ def _refresh_api_context(notice: ScraperNoticeModel) -> tuple[bool, bool]:
                 notice.region_restriction_source = "API"
                 notice.region_restriction_evidence = evidence
 
-    needs_industry = _needs_industry_document(notice.industry_restriction_api_status)
-    if needs_industry:
+    if _needs_industry_api_refresh(notice.industry_restriction_api_status):
         codes, status = fetch_industry_restriction_codes(
             notice_no=notice.bid_notice_no or notice.notice_id,
             notice_ord=notice.bid_notice_ord or "00",
@@ -310,21 +336,77 @@ def _analysis_row(
         )
     ).scalar_one_or_none()
     if row is None:
-        row = BidNoticeDocumentAnalysisModel(
+        candidate = BidNoticeDocumentAnalysisModel(
             notice_id=notice_id,
             attachment_key=attachment_key,
             attachment_name=attachment_name[:500],
             attachment_url=attachment_url,
             analyzer_version=ANALYZER_VERSION,
+            is_primary_notice_document=True,
             needs_region=needs_region,
             needs_industry=needs_industry,
         )
-        db.add(row)
-        db.flush()
+        try:
+            with db.begin_nested():
+                db.add(candidate)
+                db.flush()
+            row = candidate
+        except IntegrityError:
+            row = db.execute(
+                select(BidNoticeDocumentAnalysisModel).where(
+                    BidNoticeDocumentAnalysisModel.notice_id == notice_id,
+                    BidNoticeDocumentAnalysisModel.attachment_key == attachment_key,
+                    BidNoticeDocumentAnalysisModel.analyzer_version == ANALYZER_VERSION,
+                )
+            ).scalar_one()
     else:
-        row.needs_region = row.needs_region or needs_region
-        row.needs_industry = row.needs_industry or needs_industry
+        row.is_primary_notice_document = True
+    row.needs_region = row.needs_region or needs_region
+    row.needs_industry = row.needs_industry or needs_industry
     return row
+
+
+def _primary_notice_attachment(
+    attachments: list[tuple[str, str]],
+) -> tuple[str, str] | None:
+    candidates: list[tuple[int, int, str, str]] = []
+    for position, (name, url) in enumerate(attachments):
+        normalized_name = re.sub(r"[\s_\-·()\[\]]+", "", name).casefold()
+        if any(token in normalized_name for token in NON_PRIMARY_DOCUMENT_TOKENS):
+            continue
+        for rank, token in enumerate(PRIMARY_NOTICE_DOCUMENT_TOKENS):
+            if token in normalized_name:
+                candidates.append((rank, position, name, url))
+                break
+    if not candidates:
+        return None
+    _, _, name, url = min(candidates, key=lambda item: (item[0], item[1]))
+    return name, url
+
+
+def _mark_missing_primary_document(
+    db: Session,
+    *,
+    notice_id: int,
+    needs_region: bool,
+    needs_industry: bool,
+) -> bool:
+    attachment_name = "입찰공고 문서 없음"
+    attachment_url = ""
+    row = _analysis_row(
+        db,
+        notice_id=notice_id,
+        attachment_name=attachment_name,
+        attachment_url=attachment_url,
+        needs_region=needs_region,
+        needs_industry=needs_industry,
+    )
+    if row.status in {"SUCCEEDED", "REVIEW_REQUIRED", "UNSUPPORTED"}:
+        return False
+    row.status = "REVIEW_REQUIRED"
+    row.error_message = "분석 가능한 입찰공고 또는 공고문 첨부파일이 없습니다."
+    row.analyzed_at = _utcnow()
+    return True
 
 
 def _apply_document_results(db: Session, notice: ScraperNoticeModel) -> None:
@@ -332,6 +414,7 @@ def _apply_document_results(db: Session, notice: ScraperNoticeModel) -> None:
         select(BidNoticeDocumentAnalysisModel).where(
             BidNoticeDocumentAnalysisModel.notice_id == notice.id,
             BidNoticeDocumentAnalysisModel.status == "SUCCEEDED",
+            BidNoticeDocumentAnalysisModel.is_primary_notice_document.is_(True),
         )
     ).scalars().all()
     regions: list[str] = []
@@ -380,12 +463,11 @@ def _apply_document_results(db: Session, notice: ScraperNoticeModel) -> None:
     )
 
 
-def run_pending_bid_notice_document_analysis(
+def _queue_candidates(
     db: Session,
     *,
-    now: datetime | None = None,
-) -> dict[str, int]:
-    current = now or _utcnow()
+    current: datetime,
+) -> tuple[int, int, int]:
     cutoff = current - timedelta(days=RECENT_NOTICE_DAYS)
     profiles = db.execute(
         select(UserBidNoticeProfileModel).where(UserBidNoticeProfileModel.enabled.is_(True))
@@ -407,8 +489,7 @@ def run_pending_bid_notice_document_analysis(
             ScraperNoticeModel.published_at >= cutoff,
         )
     ).scalars().all()
-    queued = analyzed = review_required = failed = 0
-
+    queued = review_required = 0
     for notice_id in candidate_ids:
         notice = db.get(ScraperNoticeModel, notice_id)
         if notice is None:
@@ -416,61 +497,208 @@ def run_pending_bid_notice_document_analysis(
         needs_region, needs_industry = _refresh_api_context(notice)
         if not needs_region and not needs_industry:
             continue
-        attachments = _ensure_notice_attachments(notice)
-        for attachment_name, attachment_url in attachments:
-            row = _analysis_row(
-                db,
-                notice_id=notice.id,
-                attachment_name=attachment_name,
-                attachment_url=attachment_url,
-                needs_region=needs_region,
-                needs_industry=needs_industry,
+        attachment = _primary_notice_attachment(_ensure_notice_attachments(notice))
+        if attachment is None:
+            review_required += int(
+                _mark_missing_primary_document(
+                    db,
+                    notice_id=notice.id,
+                    needs_region=needs_region,
+                    needs_industry=needs_industry,
+                )
             )
-            if row.status in {"SUCCEEDED", "REVIEW_REQUIRED", "UNSUPPORTED"}:
-                continue
+            continue
+        attachment_name, attachment_url = attachment
+        row = _analysis_row(
+            db,
+            notice_id=notice.id,
+            attachment_name=attachment_name,
+            attachment_url=attachment_url,
+            needs_region=needs_region,
+            needs_industry=needs_industry,
+        )
+        if row.status not in {"SUCCEEDED", "REVIEW_REQUIRED", "UNSUPPORTED", "RUNNING"}:
             queued += 1
-            row.attempt_count += 1
-            try:
-                content, content_type = _download_attachment(attachment_url)
-                row.content_sha256 = hashlib.sha256(content).hexdigest()
-                findings = _analyze_text(_extract_text(attachment_name, content, content_type))
-                row.region_result = findings["region_result"]
-                row.region_status = findings["region_status"]
-                row.industry_codes = findings["industry_codes"]
-                row.industry_status = findings["industry_status"]
-                evidence = findings["region_evidence"] or findings["industry_evidence"]
-                row.evidence = (
-                    f"{attachment_name}: {evidence}"[:1200] if evidence else attachment_name
-                )
-                row.status = (
-                    "SUCCEEDED"
-                    if (
-                        row.region_result
-                        or row.industry_codes
-                        or row.region_status == "DOCUMENT_NONE"
-                        or row.industry_status == "DOCUMENT_NONE"
-                    )
-                    else "REVIEW_REQUIRED"
-                )
-                row.error_message = None
-                row.analyzed_at = current
-                analyzed += int(row.status == "SUCCEEDED")
-                review_required += int(row.status == "REVIEW_REQUIRED")
-            except ValueError as error:
-                row.status = "UNSUPPORTED" if "지원하지 않는" in str(error) or "구형 HWP" in str(error) else "REVIEW_REQUIRED"
-                row.error_message = str(error)[:1200]
-                row.analyzed_at = current
-                review_required += 1
-            except requests.RequestException as error:
-                row.status = "FAILED"
-                row.error_message = str(error)[:1200]
-                failed += 1
-            _apply_document_results(db, notice)
+    return len(candidate_ids), queued, review_required
+
+
+def _claimable_analysis_condition(current: datetime):
+    stale_before = current - STALE_CLAIM_AFTER
+    return or_(
+        BidNoticeDocumentAnalysisModel.status == "PENDING",
+        and_(
+            BidNoticeDocumentAnalysisModel.status == "FAILED",
+            BidNoticeDocumentAnalysisModel.attempt_count < MAX_ANALYSIS_ATTEMPTS,
+            or_(
+                BidNoticeDocumentAnalysisModel.next_retry_at.is_(None),
+                BidNoticeDocumentAnalysisModel.next_retry_at <= current,
+            ),
+        ),
+        and_(
+            BidNoticeDocumentAnalysisModel.status == "RUNNING",
+            BidNoticeDocumentAnalysisModel.claimed_at.is_not(None),
+            BidNoticeDocumentAnalysisModel.claimed_at < stale_before,
+        ),
+    )
+
+
+def _claim_analysis_batch(
+    db: Session,
+    *,
+    current: datetime,
+    batch_size: int,
+) -> tuple[str, list[BidNoticeDocumentAnalysisModel]]:
+    claim_token = str(uuid.uuid4())
+    condition = _claimable_analysis_condition(current)
+    candidate_ids = db.scalars(
+        select(BidNoticeDocumentAnalysisModel.id)
+        .where(
+            BidNoticeDocumentAnalysisModel.is_primary_notice_document.is_(True),
+            condition,
+        )
+        .order_by(BidNoticeDocumentAnalysisModel.created_at, BidNoticeDocumentAnalysisModel.id)
+        .limit(batch_size * 3)
+    ).all()
+    claimed_ids: list[int] = []
+    for analysis_id in candidate_ids:
+        if len(claimed_ids) == batch_size:
+            break
+        result = db.execute(
+            update(BidNoticeDocumentAnalysisModel)
+            .where(
+                BidNoticeDocumentAnalysisModel.id == analysis_id,
+                BidNoticeDocumentAnalysisModel.is_primary_notice_document.is_(True),
+                _claimable_analysis_condition(current),
+            )
+            .values(
+                status="RUNNING",
+                claim_token=claim_token,
+                claimed_at=current,
+                next_retry_at=None,
+            )
+        )
+        if result.rowcount:
+            claimed_ids.append(analysis_id)
+    db.commit()
+    if not claimed_ids:
+        return claim_token, []
+    rows = db.scalars(
+        select(BidNoticeDocumentAnalysisModel)
+        .where(
+            BidNoticeDocumentAnalysisModel.id.in_(claimed_ids),
+            BidNoticeDocumentAnalysisModel.claim_token == claim_token,
+        )
+        .order_by(BidNoticeDocumentAnalysisModel.id)
+    ).all()
+    return claim_token, rows
+
+
+def _retry_at(current: datetime, attempt_count: int) -> datetime | None:
+    if attempt_count >= MAX_ANALYSIS_ATTEMPTS:
+        return None
+    return current + RETRY_DELAYS[min(attempt_count - 1, len(RETRY_DELAYS) - 1)]
+
+
+def _process_claimed_analysis(
+    db: Session,
+    *,
+    row: BidNoticeDocumentAnalysisModel,
+    claim_token: str,
+    current: datetime,
+) -> tuple[int, int, int]:
+    notice = db.get(ScraperNoticeModel, row.notice_id)
+    if notice is None or row.claim_token != claim_token or row.status != "RUNNING":
+        return 0, 0, 0
+    row.attempt_count += 1
+    try:
+        content, content_type = _download_attachment(row.attachment_url)
+        row.content_sha256 = hashlib.sha256(content).hexdigest()
+        findings = _analyze_text(_extract_text(row.attachment_name, content, content_type))
+        row.region_result = findings["region_result"]
+        row.region_status = findings["region_status"]
+        row.industry_codes = findings["industry_codes"]
+        row.industry_status = findings["industry_status"]
+        evidence = findings["region_evidence"] or findings["industry_evidence"]
+        row.evidence = f"{row.attachment_name}: {evidence}"[:1200] if evidence else row.attachment_name
+        row.status = (
+            "SUCCEEDED"
+            if (
+                row.region_result
+                or row.industry_codes
+                or row.region_status == "DOCUMENT_NONE"
+                or row.industry_status == "DOCUMENT_NONE"
+            )
+            else "REVIEW_REQUIRED"
+        )
+        row.error_message = None
+        row.analyzed_at = current
+        row.claim_token = None
+        row.claimed_at = None
+        _apply_document_results(db, notice)
         db.commit()
+        return int(row.status == "SUCCEEDED"), int(row.status == "REVIEW_REQUIRED"), 0
+    except ValueError as error:
+        message = str(error)
+        row.status = (
+            "UNSUPPORTED"
+            if "지원하지 않는" in message or "구형 HWP" in message
+            else "REVIEW_REQUIRED"
+        )
+        row.error_message = message[:1200]
+        row.analyzed_at = current
+        row.claim_token = None
+        row.claimed_at = None
+        db.commit()
+        return 0, 1, 0
+    except requests.RequestException as error:
+        row.status = "FAILED"
+        row.error_message = str(error)[:1200]
+        row.next_retry_at = _retry_at(current, row.attempt_count)
+        row.claim_token = None
+        row.claimed_at = None
+        db.commit()
+        return 0, 0, 1
+    except Exception as error:
+        row.status = "FAILED"
+        row.error_message = str(error)[:1200]
+        row.next_retry_at = _retry_at(current, row.attempt_count)
+        row.claim_token = None
+        row.claimed_at = None
+        db.commit()
+        return 0, 0, 1
+
+
+def run_pending_bid_notice_document_analysis(
+    db: Session,
+    *,
+    now: datetime | None = None,
+    batch_size: int = DEFAULT_BATCH_SIZE,
+) -> dict[str, int]:
+    current = now or _utcnow()
+    bounded_batch_size = max(1, min(batch_size, MAX_BATCH_SIZE))
+    candidate_count, queued, review_required = _queue_candidates(db, current=current)
+    db.commit()
+    claim_token, claimed_rows = _claim_analysis_batch(
+        db,
+        current=current,
+        batch_size=bounded_batch_size,
+    )
+    analyzed = failed = 0
+    for row in claimed_rows:
+        processed, reviewed, failed_count = _process_claimed_analysis(
+            db,
+            row=row,
+            claim_token=claim_token,
+            current=current,
+        )
+        analyzed += processed
+        review_required += reviewed
+        failed += failed_count
 
     return {
-        "candidate_count": len(candidate_ids),
+        "candidate_count": candidate_count,
         "queued_count": queued,
+        "claimed_count": len(claimed_rows),
         "analyzed_count": analyzed,
         "review_required_count": review_required,
         "failed_count": failed,

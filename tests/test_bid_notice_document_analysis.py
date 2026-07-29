@@ -1,16 +1,19 @@
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
+import requests
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 from app.data.models import Base, ScraperNoticeModel
-from app.g2b.bid_notice import REGION_API_EMPTY, REGION_API_VALUE
-from app.g2b.bid_notices.collector import INDUSTRY_API_EMPTY, INDUSTRY_API_VALUE
-from app.g2b.bid_notices.document_analysis import (
-    run_pending_bid_notice_document_analysis,
+from app.g2b.bid_notice import REGION_API_EMPTY, REGION_API_ERROR, REGION_API_VALUE
+from app.g2b.bid_notices.collector import (
+    INDUSTRY_API_EMPTY,
+    INDUSTRY_API_ERROR,
+    INDUSTRY_API_VALUE,
 )
+from app.g2b.bid_notices.document_analysis import run_pending_bid_notice_document_analysis
 from app.g2b.bid_notices.matching import (
     sync_user_bid_notice_matches,
     update_user_bid_notice_profile,
@@ -23,27 +26,33 @@ class BidNoticeDocumentAnalysisTests(unittest.TestCase):
         self.engine = create_engine("sqlite+pysqlite:///:memory:")
         Base.metadata.create_all(self.engine)
         self.db = Session(self.engine)
+        self.now = datetime(2026, 7, 29, 9, tzinfo=timezone.utc)
 
     def tearDown(self):
         self.db.close()
         self.engine.dispose()
 
-    def _add_matched_notice(self):
-        now = datetime.now(timezone.utc)
+    def _add_matched_notice(self, index: int = 1) -> ScraperNoticeModel:
         notice = ScraperNoticeModel(
-            dedup_key="document-analysis-test",
-            notice_id="R26BK000100",
-            bid_notice_no="R26BK000100",
+            dedup_key=f"document-analysis-test-{index}",
+            notice_id=f"R26BK000{index:03d}",
+            bid_notice_no=f"R26BK000{index:03d}",
             bid_notice_ord="000",
-            title="AI 문서 분석 공고",
-            business_name="AI 문서 분석 공고",
+            title=f"AI 문서 분석 공고 {index}",
+            business_name=f"AI 문서 분석 공고 {index}",
             work_type="용역",
-            published_at=now,
-            first_seen_at=now,
-            last_seen_at=now,
+            published_at=self.now,
+            first_seen_at=self.now,
+            last_seen_at=self.now,
             source_payload=(
-                '{"ntceSpecFileNm1":"제안요청서.pdf",'
-                '"ntceSpecDocUrl1":"https://www.g2b.go.kr/file/request.pdf"}'
+                "{"
+                '"ntceSpecFileNm1":"제안요청서.pdf",'
+                f'"ntceSpecDocUrl1":"https://www.g2b.go.kr/file/request-{index}.pdf",'
+                '"ntceSpecFileNm2":"입찰공고안.pdf",'
+                f'"ntceSpecDocUrl2":"https://www.g2b.go.kr/file/notice-{index}.pdf",'
+                '"ntceSpecFileNm3":"물품규격서.pdf",'
+                f'"ntceSpecDocUrl3":"https://www.g2b.go.kr/file/spec-{index}.pdf"'
+                "}"
             ),
         )
         self.db.add(notice)
@@ -56,23 +65,26 @@ class BidNoticeDocumentAnalysisTests(unittest.TestCase):
             keywords=["AI"],
             excluded_keywords=[],
         )
-        sync_user_bid_notice_matches(self.db, organization_id=1, user_id=10, now=now)
+        sync_user_bid_notice_matches(self.db, organization_id=1, user_id=10, now=self.now)
         self.db.commit()
         return notice
 
     @patch("app.g2b.bid_notices.document_analysis._extract_text")
     @patch("app.g2b.bid_notices.document_analysis._download_attachment")
+    @patch("app.g2b.bid_notices.document_analysis.fetch_explicit_region_restriction")
     @patch("app.g2b.bid_notices.document_analysis.fetch_industry_restriction_codes")
     @patch("app.g2b.bid_notices.document_analysis.fetch_participant_region_restriction")
-    def test_document_analysis_fills_only_api_missing_fields(
+    def test_analyzes_only_primary_notice_document_for_api_empty_fields(
         self,
         fetch_region,
         fetch_industry,
+        fetch_explicit_region,
         download_attachment,
         extract_text,
     ):
         notice = self._add_matched_notice()
         fetch_region.return_value = (None, REGION_API_EMPTY)
+        fetch_explicit_region.return_value = (None, None)
         fetch_industry.return_value = (None, INDUSTRY_API_EMPTY)
         download_attachment.return_value = (b"pdf", "application/pdf")
         extract_text.return_value = (
@@ -80,60 +92,83 @@ class BidNoticeDocumentAnalysisTests(unittest.TestCase):
             "사업자등록 업종코드 1169 보유 업체"
         )
 
-        result = run_pending_bid_notice_document_analysis(self.db)
+        result = run_pending_bid_notice_document_analysis(self.db, now=self.now)
 
         stored = self.db.get(ScraperNoticeModel, notice.id)
         analysis = self.db.scalar(select(BidNoticeDocumentAnalysisModel))
+        self.assertEqual(result["claimed_count"], 1)
         self.assertEqual(result["analyzed_count"], 1)
         self.assertEqual(stored.region_restriction, "충청북도")
         self.assertEqual(stored.region_restriction_api_status, "DOCUMENT_VALUE")
-        self.assertEqual(stored.region_restriction_source, "DOCUMENT")
         self.assertEqual(stored.industry_restriction_codes, "1169")
         self.assertEqual(stored.industry_restriction_api_status, "DOCUMENT_VALUE")
-        self.assertEqual(stored.industry_restriction_source, "DOCUMENT")
         self.assertTrue(stored.icore_industry_code_match)
-        self.assertEqual(analysis.status, "SUCCEEDED")
-        self.assertIn("업종코드 1169", analysis.evidence)
+        self.assertTrue(analysis.is_primary_notice_document)
+        self.assertEqual(analysis.attachment_name, "입찰공고안.pdf")
+        download_attachment.assert_called_once_with("https://www.g2b.go.kr/file/notice-1.pdf")
 
     @patch("app.g2b.bid_notices.document_analysis._download_attachment")
     @patch("app.g2b.bid_notices.document_analysis.fetch_industry_restriction_codes")
     @patch("app.g2b.bid_notices.document_analysis.fetch_participant_region_restriction")
-    def test_document_analysis_skips_api_confirmed_notice(
+    def test_skips_document_analysis_when_api_confirms_fields(
         self,
         fetch_region,
         fetch_industry,
         download_attachment,
     ):
-        notice = self._add_matched_notice()
+        self._add_matched_notice()
         fetch_region.return_value = ("충청북도", REGION_API_VALUE)
         fetch_industry.return_value = ("1169", INDUSTRY_API_VALUE)
 
-        result = run_pending_bid_notice_document_analysis(self.db)
+        result = run_pending_bid_notice_document_analysis(self.db, now=self.now)
 
         self.assertEqual(result["candidate_count"], 1)
         self.assertEqual(result["queued_count"], 0)
+        self.assertEqual(result["claimed_count"], 0)
         self.assertIsNone(self.db.scalar(select(BidNoticeDocumentAnalysisModel)))
-        self.assertTrue(self.db.get(ScraperNoticeModel, notice.id).icore_industry_code_match)
+        download_attachment.assert_not_called()
+
+    @patch("app.g2b.bid_notices.document_analysis._download_attachment")
+    @patch("app.g2b.bid_notices.document_analysis.fetch_industry_restriction_codes")
+    @patch("app.g2b.bid_notices.document_analysis.fetch_participant_region_restriction")
+    def test_does_not_use_document_analysis_for_api_errors(
+        self,
+        fetch_region,
+        fetch_industry,
+        download_attachment,
+    ):
+        self._add_matched_notice()
+        fetch_region.return_value = (None, REGION_API_ERROR)
+        fetch_industry.return_value = (None, INDUSTRY_API_ERROR)
+
+        result = run_pending_bid_notice_document_analysis(self.db, now=self.now)
+
+        self.assertEqual(result["queued_count"], 0)
+        self.assertEqual(result["claimed_count"], 0)
+        self.assertIsNone(self.db.scalar(select(BidNoticeDocumentAnalysisModel)))
         download_attachment.assert_not_called()
 
     @patch("app.g2b.bid_notices.document_analysis._extract_text")
     @patch("app.g2b.bid_notices.document_analysis._download_attachment")
+    @patch("app.g2b.bid_notices.document_analysis.fetch_explicit_region_restriction")
     @patch("app.g2b.bid_notices.document_analysis.fetch_industry_restriction_codes")
     @patch("app.g2b.bid_notices.document_analysis.fetch_participant_region_restriction")
-    def test_document_analysis_does_not_turn_missing_code_into_none(
+    def test_keeps_document_confirmation_required_when_no_value_is_found(
         self,
         fetch_region,
         fetch_industry,
+        fetch_explicit_region,
         download_attachment,
         extract_text,
     ):
         notice = self._add_matched_notice()
         fetch_region.return_value = (None, REGION_API_EMPTY)
+        fetch_explicit_region.return_value = (None, None)
         fetch_industry.return_value = (None, INDUSTRY_API_EMPTY)
         download_attachment.return_value = (b"pdf", "application/pdf")
         extract_text.return_value = "입찰 관련 일반 안내문"
 
-        result = run_pending_bid_notice_document_analysis(self.db)
+        result = run_pending_bid_notice_document_analysis(self.db, now=self.now)
 
         stored = self.db.get(ScraperNoticeModel, notice.id)
         analysis = self.db.scalar(select(BidNoticeDocumentAnalysisModel))
@@ -144,25 +179,68 @@ class BidNoticeDocumentAnalysisTests(unittest.TestCase):
 
     @patch("app.g2b.bid_notices.document_analysis._extract_text")
     @patch("app.g2b.bid_notices.document_analysis._download_attachment")
+    @patch("app.g2b.bid_notices.document_analysis.fetch_explicit_region_restriction")
     @patch("app.g2b.bid_notices.document_analysis.fetch_industry_restriction_codes")
     @patch("app.g2b.bid_notices.document_analysis.fetch_participant_region_restriction")
-    def test_document_analysis_keeps_explicit_none_separate_from_api_empty(
+    def test_processes_at_most_ten_notices_per_worker_run(
         self,
         fetch_region,
         fetch_industry,
+        fetch_explicit_region,
         download_attachment,
         extract_text,
     ):
-        notice = self._add_matched_notice()
+        for index in range(1, 13):
+            self._add_matched_notice(index)
         fetch_region.return_value = (None, REGION_API_EMPTY)
+        fetch_explicit_region.return_value = (None, None)
         fetch_industry.return_value = (None, INDUSTRY_API_EMPTY)
         download_attachment.return_value = (b"pdf", "application/pdf")
         extract_text.return_value = "지역제한 없음\n업종제한 없음"
 
-        run_pending_bid_notice_document_analysis(self.db)
+        first = run_pending_bid_notice_document_analysis(
+            self.db, now=self.now, batch_size=10
+        )
+        second = run_pending_bid_notice_document_analysis(
+            self.db, now=self.now + timedelta(minutes=1), batch_size=10
+        )
 
-        stored = self.db.get(ScraperNoticeModel, notice.id)
-        self.assertEqual(stored.region_restriction, "해당없음")
-        self.assertEqual(stored.region_restriction_api_status, "DOCUMENT_NONE")
-        self.assertEqual(stored.industry_restriction_api_status, "DOCUMENT_NONE")
-        self.assertTrue(stored.icore_industry_code_match)
+        self.assertEqual(first["claimed_count"], 10)
+        self.assertEqual(first["analyzed_count"], 10)
+        self.assertEqual(second["claimed_count"], 2)
+        self.assertEqual(second["analyzed_count"], 2)
+        self.assertEqual(download_attachment.call_count, 12)
+
+    @patch("app.g2b.bid_notices.document_analysis._download_attachment")
+    @patch("app.g2b.bid_notices.document_analysis.fetch_explicit_region_restriction")
+    @patch("app.g2b.bid_notices.document_analysis.fetch_industry_restriction_codes")
+    @patch("app.g2b.bid_notices.document_analysis.fetch_participant_region_restriction")
+    def test_network_failure_is_retried_after_lease_delay(
+        self,
+        fetch_region,
+        fetch_industry,
+        fetch_explicit_region,
+        download_attachment,
+    ):
+        notice = self._add_matched_notice()
+        fetch_region.return_value = (None, REGION_API_EMPTY)
+        fetch_explicit_region.return_value = (None, None)
+        fetch_industry.return_value = (None, INDUSTRY_API_EMPTY)
+        download_attachment.side_effect = requests.ConnectionError("temporary failure")
+
+        first = run_pending_bid_notice_document_analysis(self.db, now=self.now)
+        before_retry = run_pending_bid_notice_document_analysis(self.db, now=self.now)
+        after_retry = run_pending_bid_notice_document_analysis(
+            self.db, now=self.now + timedelta(minutes=6)
+        )
+
+        analysis = self.db.scalar(
+            select(BidNoticeDocumentAnalysisModel).where(
+                BidNoticeDocumentAnalysisModel.notice_id == notice.id
+            )
+        )
+        self.assertEqual(first["failed_count"], 1)
+        self.assertEqual(before_retry["claimed_count"], 0)
+        self.assertEqual(after_retry["failed_count"], 1)
+        self.assertEqual(analysis.status, "FAILED")
+        self.assertEqual(analysis.attempt_count, 2)

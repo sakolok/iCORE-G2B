@@ -37,6 +37,7 @@ class CollectBidNoticesResponse(BaseModel):
 class BidNoticeDocumentAnalysisRunResponse(BaseModel):
     candidate_count: int
     queued_count: int
+    claimed_count: int
     analyzed_count: int
     review_required_count: int
     failed_count: int

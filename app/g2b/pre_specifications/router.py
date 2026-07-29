@@ -73,6 +73,7 @@ from app.g2b.opening_results.schemas import (
     SheetDestinationVerifyResponse,
 )
 from app.g2b.opening_results.sheet_export import get_sheet_service_account_email
+from app.g2b.source_retention import purge_expired_source_data
 from app.services.auth_service import (
     require_organization_auth,
     verify_cloud_scheduler_oidc_token,
@@ -138,9 +139,9 @@ def collect_pre_specification_data_on_schedule(
     db: Session = Depends(get_db),
 ) -> CollectPreSpecificationsResponse:
     try:
-        return CollectPreSpecificationsResponse(
-            **run_scheduled_pre_specifications(db)
-        )
+        response = CollectPreSpecificationsResponse(**run_scheduled_pre_specifications(db))
+        purge_expired_source_data(db)
+        return response
     except PreSpecificationApiConfigurationError as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
     except PreSpecificationApiError as error:

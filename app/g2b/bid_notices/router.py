@@ -89,6 +89,7 @@ from app.g2b.opening_results.sheet_export import (
     SheetExportConfigurationError,
     get_sheet_service_account_email,
 )
+from app.g2b.source_retention import purge_expired_source_data
 from app.services.auth_service import (
     require_organization_auth,
     verify_cloud_scheduler_oidc_token,
@@ -263,7 +264,9 @@ def collect_bid_notice_data_on_schedule(
     db: Session = Depends(get_db),
 ) -> CollectBidNoticesResponse:
     try:
-        return CollectBidNoticesResponse(**collect_scheduled_bid_notices(db))
+        response = CollectBidNoticesResponse(**collect_scheduled_bid_notices(db))
+        purge_expired_source_data(db)
+        return response
     except BidNoticeCollectionError as error:
         raise HTTPException(status_code=502, detail=str(error)) from error
 
@@ -276,9 +279,10 @@ def analyze_bid_notice_documents_on_schedule(
     _: None = Depends(verify_scraper_internal_token),
     __: None = Depends(verify_cloud_scheduler_oidc_token),
     db: Session = Depends(get_db),
+    batch_size: int = Query(default=10, ge=1, le=20),
 ) -> BidNoticeDocumentAnalysisRunResponse:
     return BidNoticeDocumentAnalysisRunResponse(
-        **run_pending_bid_notice_document_analysis(db)
+        **run_pending_bid_notice_document_analysis(db, batch_size=batch_size)
     )
 
 

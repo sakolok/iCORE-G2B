@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.data.models import ScraperNoticeModel
@@ -107,16 +108,33 @@ def sync_user_bid_notice_matches(
             current_ids.add(notice.id)
             match = existing_by_notice_id.get(notice.id)
             if match is None:
-                db.add(
-                    UserBidNoticeMatchModel(
-                        organization_id=organization_id,
-                        user_id=user_id,
-                        notice_id=notice.id,
-                        matched_keyword=decision.matched_keyword,
-                        is_current_match=True,
-                    )
+                candidate = UserBidNoticeMatchModel(
+                    organization_id=organization_id,
+                    user_id=user_id,
+                    notice_id=notice.id,
+                    matched_keyword=decision.matched_keyword,
+                    is_current_match=True,
                 )
-                changed += 1
+                try:
+                    with db.begin_nested():
+                        db.add(candidate)
+                        db.flush()
+                    existing.append(candidate)
+                    existing_by_notice_id[notice.id] = candidate
+                    changed += 1
+                except IntegrityError:
+                    match = db.execute(
+                        select(UserBidNoticeMatchModel).where(
+                            UserBidNoticeMatchModel.user_id == user_id,
+                            UserBidNoticeMatchModel.notice_id == notice.id,
+                        )
+                    ).scalar_one()
+                    match.organization_id = organization_id
+                    match.matched_keyword = decision.matched_keyword
+                    match.is_current_match = True
+                    match.matched_at = current
+                    existing.append(match)
+                    existing_by_notice_id[notice.id] = match
             else:
                 if not match.is_current_match or match.matched_keyword != decision.matched_keyword:
                     changed += 1
