@@ -15,7 +15,7 @@
 .layout-shell-header-inner {
   display: flex;
   width: min(1600px, 100%);
-  min-height: 66px;
+  min-height: 78px;
   align-items: center;
   justify-content: space-between;
   gap: 24px;
@@ -46,8 +46,8 @@
 }
 
 .layout-shell-brand-logo {
-  width: 48px;
-  height: 48px;
+  width: 58px;
+  height: 58px;
   object-fit: contain;
 }
 

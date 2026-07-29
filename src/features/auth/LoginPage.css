@@ -42,8 +42,8 @@
 }
 
 .login-logo {
-  width: 72px;
-  height: 72px;
+  width: 88px;
+  height: 88px;
   object-fit: contain;
   border-radius: 50%;
   margin-bottom: 18px;
@@ -218,8 +218,8 @@
   }
 
   .login-logo {
-    width: 60px;
-    height: 60px;
+    width: 68px;
+    height: 68px;
   }
 
   .login-title {

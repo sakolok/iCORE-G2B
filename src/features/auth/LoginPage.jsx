@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Alert, Button, Spin, Typography } from "antd";
 import { API_BASE_URL, authApi, AUTH_TOKEN_KEY, formatApiError } from "../../api/client";
+import icoreLogo from "../../assets/icore-logo.jpg";
 import "./LoginPage.css";
 
 const GOOGLE_IDENTITY_SCRIPT_ID = "google-identity-services";
@@ -153,7 +154,7 @@ function LoginPage({ onSuccess }) {
           {/* ── Brand ── */}
           <div className="login-brand">
             <img
-              src="/icore-logo.jpg"
+              src={icoreLogo}
               alt="iCORE Education & Consultancy"
               className="login-logo"
             />

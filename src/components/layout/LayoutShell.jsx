@@ -1,4 +1,5 @@
 import "./LayoutShell.css";
+import icoreLogo from "../../assets/icore-logo.jpg";
 
 const NAV_ITEMS = [
   { key: "pre-specifications", label: "사전규격", href: "#pre-specifications" },
@@ -17,7 +18,7 @@ function LayoutShell({ session, activePage, onLogout, children }) {
           <div className="layout-shell-brand-group">
             <div className="layout-shell-brand" aria-label="iCORE">
               <img
-                src="/icore-logo.jpg"
+                src={icoreLogo}
                 alt="iCORE"
                 className="layout-shell-brand-logo"
               />
