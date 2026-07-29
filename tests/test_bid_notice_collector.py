@@ -23,6 +23,7 @@ from app.g2b.bid_notices.collector import (
 )
 from app.g2b.bid_notices.matching import (
     dismiss_user_bid_notice,
+    list_archived_bid_notices,
     restore_user_bid_notice,
     sync_user_bid_notice_matches,
     update_user_bid_notice_profile,
@@ -952,6 +953,93 @@ class BidNoticeCollectorTests(unittest.TestCase):
         complete_bid_notice_sheet_exports(self.db, claim=claim)
         history = self.db.scalar(select(BidNoticeSheetExportModel))
         self.assertEqual(history.status, "SUCCEEDED")
+        state = self.db.scalar(select(UserBidNoticeStateModel))
+        self.assertEqual(state.state, "EXPORTED")
+        archived, total = list_archived_bid_notices(
+            self.db,
+            organization_id=1,
+            user_id=10,
+        )
+        self.assertEqual(total, 1)
+        self.assertEqual(archived[0].handled_state, "EXPORTED")
+        self.assertFalse(archived[0].can_restore)
+        with self.assertRaises(LookupError):
+            restore_user_bid_notice(
+                self.db,
+                organization_id=1,
+                user_id=10,
+                notice_id=notice.id,
+            )
+
+    def test_successful_personal_export_is_hidden_until_its_destination_is_inactive(self):
+        now = datetime.now(timezone.utc)
+        notice = ScraperNoticeModel(
+            dedup_key="bid-notice-exported-review-list",
+            notice_id="R26BK000003A",
+            title="AI Sheet 반영 공고",
+            first_seen_at=now,
+            last_seen_at=now,
+            published_at=now,
+            source_payload="{}",
+        )
+        destination = SheetDestinationModel(
+            organization_id=1,
+            owner_user_id=10,
+            label="내 입찰공고",
+            spreadsheet_id="sheet-id-review-list",
+            tab_name="입찰공고",
+        )
+        self.db.add_all([notice, destination])
+        self.db.commit()
+        update_user_bid_notice_profile(
+            self.db,
+            organization_id=1,
+            user_id=10,
+            enabled=True,
+            keywords=["AI"],
+            excluded_keywords=[],
+        )
+        claim = claim_bid_notice_sheet_exports(
+            self.db,
+            destination=destination,
+            organization_id=1,
+            user_id=10,
+            notices=[notice],
+        )
+        complete_bid_notice_sheet_exports(self.db, claim=claim)
+
+        hidden_response = list_bid_notices(
+            q=None,
+            work_type=None,
+            region=None,
+            icore_codes_only=False,
+            page=1,
+            page_size=30,
+            auth={"organization_id": 1, "user_id": 10},
+            db=self.db,
+        )
+        self.assertEqual(hidden_response.total, 0)
+
+        destination.is_active = False
+        self.db.commit()
+        visible_response = list_bid_notices(
+            q=None,
+            work_type=None,
+            region=None,
+            icore_codes_only=False,
+            page=1,
+            page_size=30,
+            auth={"organization_id": 1, "user_id": 10},
+            db=self.db,
+        )
+        self.assertEqual(visible_response.total, 1)
+        archived, total = list_archived_bid_notices(
+            self.db,
+            organization_id=1,
+            user_id=10,
+        )
+        self.assertEqual(total, 0)
+        self.assertEqual(archived, [])
 
     def test_legacy_sheet_rows_migrate_to_the_new_bid_notice_columns(self):
         rows = _migrate_legacy_rows(

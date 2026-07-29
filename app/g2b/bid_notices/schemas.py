@@ -118,8 +118,18 @@ class BidNoticeListResponse(BaseModel):
     page_size: int
 
 
-class BidNoticeArchiveResponse(BidNoticeListResponse):
-    pass
+class ArchivedBidNoticeListItem(BidNoticeListItem):
+    handled_state: Literal["DISMISSED", "EXPORTED"]
+    handled_at: datetime
+    expires_at: datetime
+    can_restore: bool
+
+
+class BidNoticeArchiveResponse(BaseModel):
+    items: list[ArchivedBidNoticeListItem]
+    total: int
+    page: int
+    page_size: int
 
 
 class DismissBidNoticeResponse(BaseModel):

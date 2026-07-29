@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.data.models import ScraperNoticeModel
 from app.g2b.bid_notice import KST
+from app.g2b.bid_notices.matching import mark_user_bid_notice_exported
 from app.g2b.bid_notices.models import BidNoticeSheetExportModel
 from app.g2b.opening_results.matching import SheetExportConflictError
 from app.g2b.opening_results.models import SheetDestinationModel
@@ -445,6 +446,18 @@ def complete_bid_notice_sheet_exports(
         .where(BidNoticeSheetExportModel.id.in_(claim.export_ids))
         .values(status="SUCCEEDED", error_message=None, succeeded_at=now)
     )
+    records = db.execute(
+        select(BidNoticeSheetExportModel).where(
+            BidNoticeSheetExportModel.id.in_(claim.export_ids)
+        )
+    ).scalars()
+    for record in records:
+        mark_user_bid_notice_exported(
+            db,
+            organization_id=record.organization_id,
+            user_id=record.user_id,
+            notice_id=record.notice_id,
+        )
     db.commit()
 
 

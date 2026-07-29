@@ -32,11 +32,13 @@ from app.g2b.bid_notices.document_analysis import (
 from app.g2b.bid_notices.matching import (
     dismiss_user_bid_notice,
     get_user_bid_notice_profile,
+    list_archived_bid_notices,
     restore_user_bid_notice,
     sync_user_bid_notice_matches,
     update_user_bid_notice_profile,
 )
 from app.g2b.bid_notices.models import (
+    BidNoticeSheetExportModel,
     UserBidNoticeMatchModel,
     UserBidNoticeStateModel,
 )
@@ -44,6 +46,7 @@ from app.g2b.bid_notices.schemas import (
     BidNoticeListItem,
     BidNoticeListResponse,
     BidNoticeArchiveResponse,
+    ArchivedBidNoticeListItem,
     BidNoticeAttachment,
     BidNoticeDocumentAnalysisRunResponse,
     DismissBidNoticeResponse,
@@ -81,6 +84,7 @@ from app.g2b.opening_results.matching import (
     resolve_sheet_destination,
     save_sheet_destination,
 )
+from app.g2b.opening_results.models import SheetDestinationModel
 from app.g2b.opening_results.sheet_export import (
     SheetExportConfigurationError,
     get_sheet_service_account_email,
@@ -212,6 +216,16 @@ def _notice_response(
     )
 
 
+def _archived_notice_response(item) -> ArchivedBidNoticeListItem:
+    return ArchivedBidNoticeListItem(
+        **_notice_response(item.row, item.matched_keyword).model_dump(),
+        handled_state=item.handled_state,
+        handled_at=item.handled_at,
+        expires_at=item.handled_at + timedelta(days=14),
+        can_restore=item.can_restore,
+    )
+
+
 @router.post("/collect", response_model=CollectBidNoticesResponse)
 def collect_bid_notice_data(
     request: CollectBidNoticesRequest,
@@ -332,6 +346,23 @@ def list_bid_notices(
     )
     db.commit()
     cutoff = datetime.now(timezone.utc) - timedelta(days=14)
+    has_valid_personal_export = (
+        select(BidNoticeSheetExportModel.id)
+        .join(
+            SheetDestinationModel,
+            SheetDestinationModel.id == BidNoticeSheetExportModel.destination_id,
+        )
+        .where(
+            BidNoticeSheetExportModel.notice_id == ScraperNoticeModel.id,
+            BidNoticeSheetExportModel.organization_id == auth["organization_id"],
+            BidNoticeSheetExportModel.user_id == auth["user_id"],
+            BidNoticeSheetExportModel.status == "SUCCEEDED",
+            SheetDestinationModel.organization_id == auth["organization_id"],
+            SheetDestinationModel.owner_user_id == auth["user_id"],
+            SheetDestinationModel.is_active.is_(True),
+        )
+        .exists()
+    )
     statement = (
         select(ScraperNoticeModel, UserBidNoticeMatchModel.matched_keyword)
         .join(
@@ -351,6 +382,7 @@ def list_bid_notices(
             UserBidNoticeMatchModel.is_current_match.is_(True),
             ScraperNoticeModel.published_at >= cutoff,
             UserBidNoticeStateModel.id.is_(None),
+            ~has_valid_personal_export,
         )
     )
     if q and q.strip():
@@ -406,35 +438,15 @@ def list_bid_notice_archive(
     auth: dict = Depends(require_organization_auth),
     db: Session = Depends(get_db),
 ) -> BidNoticeArchiveResponse:
-    cutoff = datetime.now(timezone.utc) - timedelta(days=14)
-    statement = (
-        select(ScraperNoticeModel, UserBidNoticeMatchModel.matched_keyword)
-        .join(
-            UserBidNoticeStateModel,
-            and_(
-                UserBidNoticeStateModel.notice_id == ScraperNoticeModel.id,
-                UserBidNoticeStateModel.user_id == auth["user_id"],
-                UserBidNoticeStateModel.state == "DISMISSED",
-            ),
-        )
-        .join(
-            UserBidNoticeMatchModel,
-            and_(
-                UserBidNoticeMatchModel.notice_id == ScraperNoticeModel.id,
-                UserBidNoticeMatchModel.user_id == auth["user_id"],
-            ),
-        )
-        .where(ScraperNoticeModel.published_at >= cutoff)
+    archived, total = list_archived_bid_notices(
+        db,
+        organization_id=auth["organization_id"],
+        user_id=auth["user_id"],
+        page=page,
+        page_size=page_size,
+        q=q,
     )
-    if q and q.strip():
-        statement = statement.where(ScraperNoticeModel.title.like(f"%{q.strip()}%"))
-    total = db.execute(select(func.count()).select_from(statement.subquery())).scalar_one()
-    rows = db.execute(
-        statement.order_by(UserBidNoticeStateModel.acted_at.desc())
-        .offset((page - 1) * page_size)
-        .limit(page_size)
-    ).all()
-    items = [_notice_response(notice, matched_keyword) for notice, matched_keyword in rows]
+    items = [_archived_notice_response(item) for item in archived]
     return BidNoticeArchiveResponse(items=items, total=total, page=page, page_size=page_size)
 
 

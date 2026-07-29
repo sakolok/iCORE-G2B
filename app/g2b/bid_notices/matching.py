@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
@@ -5,18 +6,36 @@ from sqlalchemy.orm import Session
 
 from app.data.models import ScraperNoticeModel
 from app.g2b.bid_notices.models import (
+    BidNoticeSheetExportModel,
     UserBidNoticeMatchModel,
     UserBidNoticeProfileModel,
     UserBidNoticeStateModel,
 )
 from app.g2b.keyword_policy import evaluate_keyword_title, normalize_keywords
+from app.g2b.opening_results.models import SheetDestinationModel
 
 
 MATCH_LOOKBACK_DAYS = 14
+ARCHIVE_RETENTION_DAYS = 14
+
+
+@dataclass(frozen=True)
+class ArchivedBidNotice:
+    row: ScraperNoticeModel
+    matched_keyword: str | None
+    handled_state: str
+    handled_at: datetime
+    can_restore: bool
 
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _as_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
 def get_user_bid_notice_profile(
@@ -139,6 +158,51 @@ def update_user_bid_notice_profile(
     return profile
 
 
+def _set_user_bid_notice_state(
+    db: Session,
+    *,
+    organization_id: int,
+    user_id: int,
+    notice_id: int,
+    state: str,
+) -> None:
+    row = db.execute(
+        select(UserBidNoticeStateModel).where(
+            UserBidNoticeStateModel.user_id == user_id,
+            UserBidNoticeStateModel.notice_id == notice_id,
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        db.add(
+            UserBidNoticeStateModel(
+                organization_id=organization_id,
+                user_id=user_id,
+                notice_id=notice_id,
+                state=state,
+            )
+        )
+        return
+    row.organization_id = organization_id
+    row.state = state
+    row.acted_at = _utcnow()
+
+
+def mark_user_bid_notice_exported(
+    db: Session,
+    *,
+    organization_id: int,
+    user_id: int,
+    notice_id: int,
+) -> None:
+    _set_user_bid_notice_state(
+        db,
+        organization_id=organization_id,
+        user_id=user_id,
+        notice_id=notice_id,
+        state="EXPORTED",
+    )
+
+
 def dismiss_user_bid_notice(
     db: Session,
     *,
@@ -155,24 +219,124 @@ def dismiss_user_bid_notice(
     ).scalar_one_or_none()
     if visible is None:
         raise LookupError("선택한 입찰공고를 내 검토 목록에서 찾을 수 없습니다.")
-    state = db.execute(
-        select(UserBidNoticeStateModel).where(
-            UserBidNoticeStateModel.user_id == user_id,
-            UserBidNoticeStateModel.notice_id == notice_id,
-        )
-    ).scalar_one_or_none()
-    if state is None:
-        state = UserBidNoticeStateModel(
-            organization_id=organization_id,
-            user_id=user_id,
-            notice_id=notice_id,
-        )
-        db.add(state)
-    else:
-        state.organization_id = organization_id
-        state.state = "DISMISSED"
-        state.acted_at = _utcnow()
+    _set_user_bid_notice_state(
+        db,
+        organization_id=organization_id,
+        user_id=user_id,
+        notice_id=notice_id,
+        state="DISMISSED",
+    )
     db.commit()
+
+
+def list_archived_bid_notices(
+    db: Session,
+    *,
+    organization_id: int,
+    user_id: int,
+    page: int = 1,
+    page_size: int = 30,
+    q: str | None = None,
+    now: datetime | None = None,
+) -> tuple[list[ArchivedBidNotice], int]:
+    current = _as_utc(now) if now is not None else _utcnow()
+    cutoff = current - timedelta(days=ARCHIVE_RETENTION_DAYS)
+    archived_by_notice_id: dict[int, ArchivedBidNotice] = {}
+
+    state_statement = (
+        select(
+            ScraperNoticeModel,
+            UserBidNoticeStateModel,
+            UserBidNoticeMatchModel.matched_keyword,
+        )
+        .join(
+            UserBidNoticeStateModel,
+            UserBidNoticeStateModel.notice_id == ScraperNoticeModel.id,
+        )
+        .outerjoin(
+            UserBidNoticeMatchModel,
+            (UserBidNoticeMatchModel.notice_id == ScraperNoticeModel.id)
+            & (UserBidNoticeMatchModel.user_id == user_id),
+        )
+        .where(
+            UserBidNoticeStateModel.organization_id == organization_id,
+            UserBidNoticeStateModel.user_id == user_id,
+            UserBidNoticeStateModel.state == "DISMISSED",
+            UserBidNoticeStateModel.acted_at >= cutoff,
+        )
+    )
+    if q and q.strip():
+        keyword = q.strip()
+        state_statement = state_statement.where(
+            (ScraperNoticeModel.title.like(f"%{keyword}%"))
+            | (ScraperNoticeModel.business_name.like(f"%{keyword}%"))
+        )
+    for notice, state, matched_keyword in db.execute(state_statement).all():
+        handled_at = _as_utc(state.acted_at)
+        archived_by_notice_id[notice.id] = ArchivedBidNotice(
+            row=notice,
+            matched_keyword=matched_keyword,
+            handled_state="DISMISSED",
+            handled_at=handled_at,
+            can_restore=True,
+        )
+
+    export_statement = (
+        select(
+            ScraperNoticeModel,
+            BidNoticeSheetExportModel,
+            UserBidNoticeMatchModel.matched_keyword,
+        )
+        .join(
+            BidNoticeSheetExportModel,
+            BidNoticeSheetExportModel.notice_id == ScraperNoticeModel.id,
+        )
+        .join(
+            SheetDestinationModel,
+            SheetDestinationModel.id == BidNoticeSheetExportModel.destination_id,
+        )
+        .outerjoin(
+            UserBidNoticeMatchModel,
+            (UserBidNoticeMatchModel.notice_id == ScraperNoticeModel.id)
+            & (UserBidNoticeMatchModel.user_id == user_id),
+        )
+        .where(
+            BidNoticeSheetExportModel.organization_id == organization_id,
+            BidNoticeSheetExportModel.user_id == user_id,
+            BidNoticeSheetExportModel.status == "SUCCEEDED",
+            BidNoticeSheetExportModel.succeeded_at.is_not(None),
+            BidNoticeSheetExportModel.succeeded_at >= cutoff,
+            SheetDestinationModel.organization_id == organization_id,
+            SheetDestinationModel.owner_user_id == user_id,
+            SheetDestinationModel.is_active.is_(True),
+        )
+    )
+    if q and q.strip():
+        keyword = q.strip()
+        export_statement = export_statement.where(
+            (ScraperNoticeModel.title.like(f"%{keyword}%"))
+            | (ScraperNoticeModel.business_name.like(f"%{keyword}%"))
+        )
+    for notice, export, matched_keyword in db.execute(export_statement).all():
+        handled_at = _as_utc(export.succeeded_at)
+        existing = archived_by_notice_id.get(notice.id)
+        if existing is None or handled_at > existing.handled_at:
+            archived_by_notice_id[notice.id] = ArchivedBidNotice(
+                row=notice,
+                matched_keyword=matched_keyword,
+                handled_state="EXPORTED",
+                handled_at=handled_at,
+                can_restore=False,
+            )
+
+    archived = sorted(
+        archived_by_notice_id.values(),
+        key=lambda item: (item.handled_at, item.row.id),
+        reverse=True,
+    )
+    total = len(archived)
+    start = (page - 1) * page_size
+    return archived[start : start + page_size], total
 
 
 def restore_user_bid_notice(
@@ -184,11 +348,15 @@ def restore_user_bid_notice(
 ) -> bool:
     state = db.execute(
         select(UserBidNoticeStateModel).where(
+            UserBidNoticeStateModel.organization_id == organization_id,
             UserBidNoticeStateModel.user_id == user_id,
             UserBidNoticeStateModel.notice_id == notice_id,
+            UserBidNoticeStateModel.state == "DISMISSED",
         )
     ).scalar_one_or_none()
-    if state is None:
+    if state is None or _as_utc(state.acted_at) < _utcnow() - timedelta(
+        days=ARCHIVE_RETENTION_DAYS
+    ):
         raise LookupError("보관함에서 입찰공고를 찾을 수 없습니다.")
     db.delete(state)
     db.commit()
