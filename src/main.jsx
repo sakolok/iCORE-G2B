@@ -2,8 +2,8 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { ConfigProvider } from "antd";
 import "antd/dist/reset.css";
-import "./App.css";
-import App from "./App";
+import "./app/App.css";
+import App from "./app/App";
 
 ReactDOM.createRoot(document.getElementById("root")).render(
   <React.StrictMode>

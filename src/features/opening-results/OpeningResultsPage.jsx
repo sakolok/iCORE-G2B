@@ -20,7 +20,7 @@ import {
   notification,
 } from "antd";
 import dayjs from "dayjs";
-import { formatApiError, openingResultsApi } from "../api/client";
+import { formatApiError, openingResultsApi } from "../../api/client";
 import "./OpeningResultsPage.css";
 
 const { RangePicker } = DatePicker;

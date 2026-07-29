@@ -20,7 +20,7 @@ import {
   notification,
 } from "antd";
 import dayjs from "dayjs";
-import { bidNoticesApi, formatApiError } from "../api/client";
+import { bidNoticesApi, formatApiError } from "../../api/client";
 import "./BidNoticesPage.css";
 
 const { Text, Title } = Typography;

@@ -23,7 +23,7 @@ import dayjs from "dayjs";
 import {
   formatApiError,
   preSpecificationsApi,
-} from "../api/client";
+} from "../../api/client";
 import "./PreSpecificationsPage.css";
 
 const { RangePicker } = DatePicker;

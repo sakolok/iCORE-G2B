@@ -1,11 +1,11 @@
 import { useEffect, useState } from "react";
 import { Alert, Button, Spin } from "antd";
-import LayoutShell from "./components/LayoutShell";
-import LoginPage from "./pages/LoginPage";
-import OpeningResultsPage from "./pages/OpeningResultsPage";
-import PreSpecificationsPage from "./pages/PreSpecificationsPage";
-import BidNoticesPage from "./pages/BidNoticesPage";
-import { authApi, AUTH_TOKEN_KEY, formatApiError } from "./api/client";
+import LayoutShell from "../components/layout/LayoutShell";
+import LoginPage from "../features/auth/LoginPage";
+import OpeningResultsPage from "../features/opening-results/OpeningResultsPage";
+import PreSpecificationsPage from "../features/pre-specifications/PreSpecificationsPage";
+import BidNoticesPage from "../features/bid-notices/BidNoticesPage";
+import { authApi, AUTH_TOKEN_KEY, formatApiError } from "../api/client";
 
 const LOCAL_SINGLE_USER_ENABLED =
   import.meta.env.DEV &&

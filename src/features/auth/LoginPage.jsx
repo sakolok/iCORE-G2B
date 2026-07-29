@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Alert, Button, Spin, Typography } from "antd";
-import { API_BASE_URL, authApi, AUTH_TOKEN_KEY, formatApiError } from "../api/client";
+import { API_BASE_URL, authApi, AUTH_TOKEN_KEY, formatApiError } from "../../api/client";
 import "./LoginPage.css";
 
 const GOOGLE_IDENTITY_SCRIPT_ID = "google-identity-services";

@@ -15,7 +15,7 @@ import {
 } from "antd";
 import { QuestionCircleOutlined } from "@ant-design/icons";
 import dayjs from "dayjs";
-import { formatApiError, scraperApi } from "../api/client";
+import { formatApiError, scraperApi } from "../../api/client";
 import "./ScraperControl.css";
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
