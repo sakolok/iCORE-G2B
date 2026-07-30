@@ -925,6 +925,11 @@ function BidNoticesPage() {
             <Descriptions.Item label="매칭 키워드">{detail.matched_keyword ? <Tag color="blue">{detail.matched_keyword}</Tag> : "-"}</Descriptions.Item>
             <Descriptions.Item label="업종제한 코드">{formatIndustryRestriction(detail)}</Descriptions.Item>
             <Descriptions.Item label="공동수급 가능">{detail.joint_supply_allowed == null ? "" : detail.joint_supply_allowed ? "가능" : "불가"}</Descriptions.Item>
+            {detail.document_analysis_status ? (
+              <Descriptions.Item label="문서 분석 결과" span={2}>
+                <Text type="secondary">{detail.document_analysis_reason || "문서 분석 완료"}</Text>
+              </Descriptions.Item>
+            ) : null}
             {(detail.region_restriction_source === "DOCUMENT" || detail.industry_restriction_source === "DOCUMENT") ? (
               <Descriptions.Item label="문서 분석 근거" span={2}>
                 <Space direction="vertical" size={2}>
