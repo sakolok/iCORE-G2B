@@ -2,11 +2,12 @@ import hashlib
 import io
 import json
 import re
+import time
 import uuid
 import zipfile
 from datetime import datetime, timedelta, timezone
 from html import unescape
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 from xml.etree import ElementTree
 
 import requests
@@ -53,6 +54,15 @@ MAX_BATCH_SIZE = 20
 MAX_ANALYSIS_ATTEMPTS = 3
 RETRY_DELAYS = (timedelta(minutes=5), timedelta(minutes=20), timedelta(hours=1))
 STALE_CLAIM_AFTER = timedelta(minutes=35)
+DOWNLOAD_CONNECT_TIMEOUT_SECONDS = 5
+DOWNLOAD_READ_TIMEOUT_SECONDS = 25
+DOWNLOAD_REQUEST_ATTEMPTS = 2
+DOWNLOAD_RETRY_DELAY_SECONDS = 1
+MAX_ATTACHMENT_REDIRECTS = 3
+DOWNLOAD_HEADERS = {
+    "Accept": "application/pdf,application/octet-stream;q=0.9,*/*;q=0.8",
+    "User-Agent": "Mozilla/5.0 (compatible; iCORE-G2B-DocumentAnalysis/1.0)",
+}
 PRIMARY_NOTICE_DOCUMENT_TOKENS = ("입찰공고서", "입찰공고안", "입찰공고", "공고문")
 NON_PRIMARY_DOCUMENT_TOKENS = (
     "제안요청",
@@ -90,6 +100,13 @@ REGION_NAMES = (
 )
 REGION_CONTEXT_TERMS = ("참가가능지역", "지역제한", "주된 영업소", "소재지")
 INDUSTRY_CONTEXT_TERMS = ("업종", "사업자등록", "면허", "업종코드", "등록코드")
+
+
+class AttachmentDownloadError(Exception):
+    def __init__(self, code: str, *, retryable: bool):
+        super().__init__(code)
+        self.code = code
+        self.retryable = retryable
 
 
 def _utcnow() -> datetime:
@@ -207,19 +224,101 @@ def _refresh_api_context(notice: ScraperNoticeModel) -> tuple[bool, bool]:
     )
 
 
+def _download_error_code(error: requests.RequestException) -> str:
+    if isinstance(error, requests.ConnectTimeout):
+        return "DOWNLOAD_CONNECT_TIMEOUT"
+    if isinstance(error, requests.ReadTimeout):
+        return "DOWNLOAD_READ_TIMEOUT"
+    if isinstance(error, requests.Timeout):
+        return "DOWNLOAD_TIMEOUT"
+    if isinstance(error, requests.ConnectionError):
+        return "DOWNLOAD_NETWORK"
+    if isinstance(error, requests.HTTPError):
+        status_code = getattr(error.response, "status_code", None)
+        if status_code == 429:
+            return "DOWNLOAD_HTTP_429"
+        if status_code and 500 <= status_code <= 599:
+            return "DOWNLOAD_HTTP_5XX"
+        if status_code and 400 <= status_code <= 499:
+            return f"DOWNLOAD_HTTP_{status_code}"
+    return "DOWNLOAD_REQUEST_ERROR"
+
+
+def _is_retryable_download_error(error: requests.RequestException) -> bool:
+    if isinstance(
+        error,
+        (
+            requests.ConnectTimeout,
+            requests.ReadTimeout,
+            requests.Timeout,
+            requests.ConnectionError,
+        ),
+    ):
+        return True
+    if isinstance(error, requests.HTTPError):
+        status_code = getattr(error.response, "status_code", None)
+        return status_code in {408, 425, 429} or bool(status_code and status_code >= 500)
+    return False
+
+
+def _download_attachment_once(url: str) -> tuple[bytes, str]:
+    current_url = url
+    for _ in range(MAX_ATTACHMENT_REDIRECTS + 1):
+        response = requests.get(
+            current_url,
+            timeout=(DOWNLOAD_CONNECT_TIMEOUT_SECONDS, DOWNLOAD_READ_TIMEOUT_SECONDS),
+            stream=True,
+            allow_redirects=False,
+            headers=DOWNLOAD_HEADERS,
+        )
+        try:
+            status_code = response.status_code
+            location = response.headers.get("Location")
+            if status_code in {301, 302, 303, 307, 308}:
+                if not location:
+                    raise AttachmentDownloadError(
+                        "DOWNLOAD_REDIRECT_INVALID", retryable=False
+                    )
+                redirect_url = urljoin(current_url, location)
+                if not _is_g2b_url(redirect_url):
+                    raise AttachmentDownloadError(
+                        "DOWNLOAD_REDIRECT_BLOCKED", retryable=False
+                    )
+                current_url = redirect_url
+                continue
+
+            response.raise_for_status()
+            if not _is_g2b_url(response.url):
+                raise AttachmentDownloadError("DOWNLOAD_REDIRECT_BLOCKED", retryable=False)
+            content = bytearray()
+            for chunk in response.iter_content(chunk_size=64 * 1024):
+                content.extend(chunk)
+                if len(content) > MAX_ATTACHMENT_BYTES:
+                    raise AttachmentDownloadError("DOWNLOAD_SIZE_LIMIT", retryable=False)
+            return bytes(content), (response.headers.get("Content-Type") or "").lower()
+        finally:
+            response.close()
+    raise AttachmentDownloadError("DOWNLOAD_REDIRECT_LIMIT", retryable=False)
+
+
 def _download_attachment(url: str) -> tuple[bytes, str]:
     if not _is_g2b_url(url):
-        raise ValueError("나라장터 첨부파일 주소만 분석할 수 있습니다.")
-    response = requests.get(url, timeout=25, stream=True, headers={"Accept": "*/*"})
-    response.raise_for_status()
-    if not _is_g2b_url(response.url):
-        raise ValueError("첨부파일 이동 주소가 나라장터 주소가 아닙니다.")
-    content = bytearray()
-    for chunk in response.iter_content(chunk_size=64 * 1024):
-        content.extend(chunk)
-        if len(content) > MAX_ATTACHMENT_BYTES:
-            raise ValueError("첨부파일이 분석 허용 크기를 초과했습니다.")
-    return bytes(content), (response.headers.get("Content-Type") or "").lower()
+        raise AttachmentDownloadError("DOWNLOAD_INVALID_SOURCE", retryable=False)
+
+    for request_attempt in range(DOWNLOAD_REQUEST_ATTEMPTS):
+        try:
+            return _download_attachment_once(url)
+        except AttachmentDownloadError:
+            raise
+        except requests.RequestException as error:
+            retryable = _is_retryable_download_error(error)
+            if not retryable or request_attempt == DOWNLOAD_REQUEST_ATTEMPTS - 1:
+                raise AttachmentDownloadError(
+                    _download_error_code(error), retryable=retryable
+                ) from error
+            time.sleep(DOWNLOAD_RETRY_DELAY_SECONDS)
+
+    raise AttachmentDownloadError("DOWNLOAD_REQUEST_ERROR", retryable=True)
 
 
 def _extract_hwpx_text(content: bytes) -> str:
@@ -869,6 +968,19 @@ def _process_claimed_analysis(
         _apply_document_results(db, notice)
         db.commit()
         return int(row.status == "SUCCEEDED"), int(row.status == "REVIEW_REQUIRED"), 0
+    except AttachmentDownloadError as error:
+        row.status = "FAILED"
+        row.error_message = error.code
+        if error.retryable:
+            row.next_retry_at = _retry_at(current, row.attempt_count)
+        else:
+            row.attempt_count = MAX_ANALYSIS_ATTEMPTS
+            row.next_retry_at = None
+        row.analyzed_at = current
+        row.claim_token = None
+        row.claimed_at = None
+        db.commit()
+        return 0, 0, 1
     except ValueError as error:
         message = str(error)
         row.status = (
@@ -882,14 +994,6 @@ def _process_claimed_analysis(
         row.claimed_at = None
         db.commit()
         return 0, 1, 0
-    except requests.RequestException as error:
-        row.status = "FAILED"
-        row.error_message = f"DOWNLOAD_ERROR: {error}"[:1200]
-        row.next_retry_at = _retry_at(current, row.attempt_count)
-        row.claim_token = None
-        row.claimed_at = None
-        db.commit()
-        return 0, 0, 1
     except Exception as error:
         row.status = "FAILED"
         row.error_message = f"PROCESSING_ERROR: {error}"[:1200]

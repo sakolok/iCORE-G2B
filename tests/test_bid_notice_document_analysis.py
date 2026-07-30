@@ -14,6 +14,8 @@ from app.g2b.bid_notices.collector import (
     INDUSTRY_API_VALUE,
 )
 from app.g2b.bid_notices.document_analysis import (
+    AttachmentDownloadError,
+    _download_attachment,
     force_bid_notice_document_reanalysis,
     queue_new_matched_bid_notice_document_preparations,
     run_pending_bid_notice_document_analysis,
@@ -27,6 +29,35 @@ from app.g2b.bid_notices.models import (
 )
 from app.g2b.bid_notices.router import _notice_response
 from app.g2b.bid_notices.sheet_export import build_bid_notice_sheet_rows
+
+
+class _DownloadResponse:
+    def __init__(
+        self,
+        *,
+        status_code: int = 200,
+        url: str = "https://www.g2b.go.kr/file/notice.pdf",
+        headers: dict[str, str] | None = None,
+        content: bytes = b"pdf",
+    ):
+        self.status_code = status_code
+        self.url = url
+        self.headers = headers or {"Content-Type": "application/pdf"}
+        self._content = content
+        self.closed = False
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            error = requests.HTTPError(f"HTTP {self.status_code}")
+            error.response = self
+            raise error
+
+    def iter_content(self, chunk_size: int):
+        del chunk_size
+        yield self._content
+
+    def close(self):
+        self.closed = True
 
 
 class BidNoticeDocumentAnalysisTests(unittest.TestCase):
@@ -84,6 +115,67 @@ class BidNoticeDocumentAnalysisTests(unittest.TestCase):
         )
         self.db.commit()
         return queued
+
+    @patch("app.g2b.bid_notices.document_analysis.requests.get")
+    def test_download_follows_only_g2b_redirects(self, requests_get):
+        redirect = _DownloadResponse(
+            status_code=302,
+            headers={"Location": "/file/final-notice.pdf"},
+        )
+        complete = _DownloadResponse(
+            url="https://www.g2b.go.kr/file/final-notice.pdf",
+            content=b"final-pdf",
+        )
+        requests_get.side_effect = [redirect, complete]
+
+        content, content_type = _download_attachment("https://www.g2b.go.kr/file/start.pdf")
+
+        self.assertEqual(content, b"final-pdf")
+        self.assertEqual(content_type, "application/pdf")
+        self.assertTrue(redirect.closed)
+        self.assertTrue(complete.closed)
+        self.assertEqual(requests_get.call_count, 2)
+        self.assertFalse(requests_get.call_args.kwargs["allow_redirects"])
+        self.assertEqual(requests_get.call_args.kwargs["timeout"], (5, 25))
+        self.assertIn("User-Agent", requests_get.call_args.kwargs["headers"])
+
+    @patch("app.g2b.bid_notices.document_analysis.requests.get")
+    def test_download_rejects_non_g2b_redirect(self, requests_get):
+        redirect = _DownloadResponse(
+            status_code=302,
+            headers={"Location": "https://example.com/file.pdf"},
+        )
+        requests_get.return_value = redirect
+
+        with self.assertRaises(AttachmentDownloadError) as raised:
+            _download_attachment("https://www.g2b.go.kr/file/start.pdf")
+
+        self.assertEqual(raised.exception.code, "DOWNLOAD_REDIRECT_BLOCKED")
+        self.assertFalse(raised.exception.retryable)
+        self.assertTrue(redirect.closed)
+
+    @patch("app.g2b.bid_notices.document_analysis.time.sleep")
+    @patch("app.g2b.bid_notices.document_analysis.requests.get")
+    def test_download_retries_transient_connection_error(self, requests_get, sleep):
+        complete = _DownloadResponse(content=b"final-pdf")
+        requests_get.side_effect = [requests.ConnectTimeout("temporary"), complete]
+
+        content, _ = _download_attachment("https://www.g2b.go.kr/file/start.pdf")
+
+        self.assertEqual(content, b"final-pdf")
+        self.assertEqual(requests_get.call_count, 2)
+        sleep.assert_called_once_with(1)
+
+    @patch("app.g2b.bid_notices.document_analysis.requests.get")
+    def test_download_does_not_retry_not_found_attachment(self, requests_get):
+        requests_get.return_value = _DownloadResponse(status_code=404)
+
+        with self.assertRaises(AttachmentDownloadError) as raised:
+            _download_attachment("https://www.g2b.go.kr/file/missing.pdf")
+
+        self.assertEqual(raised.exception.code, "DOWNLOAD_HTTP_404")
+        self.assertFalse(raised.exception.retryable)
+        self.assertEqual(requests_get.call_count, 1)
 
     @patch("app.g2b.bid_notices.document_analysis._extract_text")
     @patch("app.g2b.bid_notices.document_analysis._download_attachment")
@@ -344,7 +436,9 @@ class BidNoticeDocumentAnalysisTests(unittest.TestCase):
         fetch_region.return_value = (None, REGION_API_EMPTY)
         fetch_explicit_region.return_value = (None, None)
         fetch_industry.return_value = (None, INDUSTRY_API_EMPTY)
-        download_attachment.side_effect = requests.ConnectionError("temporary failure")
+        download_attachment.side_effect = AttachmentDownloadError(
+            "DOWNLOAD_NETWORK", retryable=True
+        )
 
         self.assertEqual(self._queue_for_document_analysis(notice), 1)
 
@@ -364,6 +458,44 @@ class BidNoticeDocumentAnalysisTests(unittest.TestCase):
         self.assertEqual(after_retry["failed_count"], 1)
         self.assertEqual(analysis.status, "FAILED")
         self.assertEqual(analysis.attempt_count, 2)
-        self.assertTrue(analysis.error_message.startswith("DOWNLOAD_ERROR:"))
+        self.assertEqual(analysis.error_message, "DOWNLOAD_NETWORK")
         response = _notice_response(self.db.get(ScraperNoticeModel, notice.id), "AI", document_analysis=analysis)
-        self.assertEqual(response.document_analysis_reason, "첨부파일 다운로드 실패 · 재시도 대기")
+        self.assertEqual(response.document_analysis_reason, "첨부파일 연결 실패 · 재시도 대기")
+
+    @patch("app.g2b.bid_notices.document_analysis._download_attachment")
+    @patch("app.g2b.bid_notices.document_analysis.fetch_explicit_region_restriction")
+    @patch("app.g2b.bid_notices.document_analysis.fetch_industry_restriction_codes")
+    @patch("app.g2b.bid_notices.document_analysis.fetch_participant_region_restriction")
+    def test_non_retryable_download_failure_is_not_reclaimed(
+        self,
+        fetch_region,
+        fetch_industry,
+        fetch_explicit_region,
+        download_attachment,
+    ):
+        notice = self._add_matched_notice()
+        fetch_region.return_value = (None, REGION_API_EMPTY)
+        fetch_explicit_region.return_value = (None, None)
+        fetch_industry.return_value = (None, INDUSTRY_API_EMPTY)
+        download_attachment.side_effect = AttachmentDownloadError(
+            "DOWNLOAD_HTTP_404", retryable=False
+        )
+
+        self.assertEqual(self._queue_for_document_analysis(notice), 1)
+        first = run_pending_bid_notice_document_analysis(self.db, now=self.now)
+        later = run_pending_bid_notice_document_analysis(
+            self.db, now=self.now + timedelta(hours=2)
+        )
+
+        analysis = self.db.scalar(
+            select(BidNoticeDocumentAnalysisModel).where(
+                BidNoticeDocumentAnalysisModel.notice_id == notice.id
+            )
+        )
+        self.assertEqual(first["failed_count"], 1)
+        self.assertEqual(later["claimed_count"], 0)
+        self.assertEqual(analysis.attempt_count, 3)
+        response = _notice_response(
+            self.db.get(ScraperNoticeModel, notice.id), "AI", document_analysis=analysis
+        )
+        self.assertEqual(response.document_analysis_reason, "첨부파일을 찾을 수 없음")

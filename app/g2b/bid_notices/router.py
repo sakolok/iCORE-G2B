@@ -211,13 +211,26 @@ def _notice_response(
         elif document_analysis.status == "UNSUPPORTED":
             document_analysis_reason = "지원하지 않는 문서 형식"
         elif document_analysis.status == "FAILED":
-            document_analysis_reason = (
-                "첨부파일 다운로드 실패 · 재시도 대기"
-                if (document_analysis.error_message or "").startswith("DOWNLOAD_ERROR:")
-                else "문서 텍스트 추출 실패 · 재시도 대기"
-                if (document_analysis.error_message or "").startswith("PROCESSING_ERROR:")
-                else "문서 분석 실패 · 재시도 대기"
-            )
+            failure_code = (document_analysis.error_message or "").split(":", 1)[0]
+            document_analysis_reason = {
+                "DOWNLOAD_CONNECT_TIMEOUT": "첨부파일 연결 시간 초과 · 재시도 대기",
+                "DOWNLOAD_READ_TIMEOUT": "첨부파일 다운로드 시간 초과 · 재시도 대기",
+                "DOWNLOAD_TIMEOUT": "첨부파일 다운로드 시간 초과 · 재시도 대기",
+                "DOWNLOAD_NETWORK": "첨부파일 연결 실패 · 재시도 대기",
+                "DOWNLOAD_HTTP_429": "첨부파일 요청 지연 · 재시도 대기",
+                "DOWNLOAD_HTTP_5XX": "나라장터 첨부파일 서버 오류 · 재시도 대기",
+                "DOWNLOAD_HTTP_403": "첨부파일 접근 제한",
+                "DOWNLOAD_HTTP_404": "첨부파일을 찾을 수 없음",
+                "DOWNLOAD_HTTP_4XX": "첨부파일 요청이 거부됨",
+                "DOWNLOAD_REDIRECT_INVALID": "첨부파일 이동 주소 확인 필요",
+                "DOWNLOAD_REDIRECT_BLOCKED": "첨부파일 이동 주소 확인 필요",
+                "DOWNLOAD_REDIRECT_LIMIT": "첨부파일 이동 횟수 초과",
+                "DOWNLOAD_SIZE_LIMIT": "첨부파일 용량 초과",
+                "DOWNLOAD_INVALID_SOURCE": "첨부파일 주소 확인 필요",
+                "DOWNLOAD_REQUEST_ERROR": "첨부파일 다운로드 실패 · 재시도 대기",
+                "DOWNLOAD_ERROR": "첨부파일 다운로드 실패 · 재시도 대기",
+                "PROCESSING_ERROR": "문서 텍스트 추출 실패 · 재시도 대기",
+            }.get(failure_code, "문서 분석 실패 · 재시도 대기")
         elif document_analysis.status == "RUNNING":
             document_analysis_reason = "문서 분석 중"
         elif document_analysis.status == "PENDING":
