@@ -50,7 +50,7 @@ KST = ZoneInfo("Asia/Seoul")
 COLLECTION_SLOT_HOURS = (8, 11, 14, 17)
 COLLECTION_LEASE_MINUTES = 45
 FRONT_LIST_DAYS = 14
-MAX_ENTRY_DETAIL_FETCHES_PER_COLLECTION = 60
+MAX_ENTRY_DETAIL_FETCHES_PER_COLLECTION = 120
 logger = logging.getLogger(__name__)
 
 
@@ -803,17 +803,6 @@ def run_scheduled_opening_results(
         window_end = run.window_end
     if run is not None and run.status == "SUCCESS":
         if not retry_pending_details:
-            return _scheduled_response(run, skipped_existing_run=True)
-        pending_detail_exists = db.scalar(
-            select(BidOpeningRoundModel.id).where(
-                BidOpeningRoundModel.business_type == BusinessType.SERVICE.value,
-                BidOpeningRoundModel.status.in_(
-                    [OpeningStatus.OPENED.value, OpeningStatus.AWARDED.value]
-                ),
-                BidOpeningRoundModel.entries_collected_at.is_(None),
-            ).limit(1)
-        )
-        if pending_detail_exists is None:
             return _scheduled_response(run, skipped_existing_run=True)
     if run is not None and run.status == "RUNNING":
         started_at = run.started_at
