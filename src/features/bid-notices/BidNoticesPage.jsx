@@ -762,6 +762,7 @@ function BidNoticesPage() {
         open={archiveOpen}
         onClose={() => setArchiveOpen(false)}
         width={1180}
+        zIndex={1000}
         extra={<Button onClick={() => loadArchive(archivePage)} loading={archiveLoading}>보관함 새로고침</Button>}
       >
         <Table
@@ -889,6 +890,7 @@ function BidNoticesPage() {
         width={760}
         open={detailOpen}
         onClose={closeDetail}
+        zIndex={1100}
         extra={detail?.id && !detail.from_archive ? (
           <Popconfirm title="이 공고를 검토함에서 제외할까요?" description="14일 보관함에서 다시 검토 목록으로 복구할 수 있습니다." onConfirm={() => dismissNotice(detail.id)} okText="제외" cancelText="취소">
             <Button danger>내 목록에서 제외</Button>
