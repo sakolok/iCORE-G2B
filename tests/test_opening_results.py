@@ -737,6 +737,48 @@ class OpeningResultServiceTests(unittest.TestCase):
         self.assertEqual(len(matches), 1)
         self.assertEqual(matches[0].matched_keywords, "연수")
 
+    def test_pending_matched_detail_is_prioritized_before_new_matches(self):
+        pending = self.completed_summary()
+        pending["bidNtceNo"] = "R26BK00000002"
+        pending["bidNtceNm"] = "AI 순위 상세 대기 공고"
+        pending_key = build_round_external_key(pending, BusinessType.SERVICE.value)
+        self.db.add(
+            BidOpeningRoundModel(
+                external_key=pending_key,
+                business_type=BusinessType.SERVICE.value,
+                bid_notice_no=pending["bidNtceNo"],
+                bid_notice_ord=pending["bidNtceOrd"],
+                bid_class_no=pending["bidClsfcNo"],
+                rebid_no=pending["rbidNo"],
+                title=pending["bidNtceNm"],
+                status=OpeningStatus.OPENED.value,
+                collected_at=datetime.now(timezone.utc),
+            )
+        )
+        self.db.add(
+            BidResultSnapshotModel(
+                entity_type="ROUND",
+                entity_key=pending_key,
+                payload_hash="pending-detail-priority",
+                raw_payload=json.dumps(pending),
+            )
+        )
+        self.db.commit()
+
+        current = self.completed_summary()
+        current["bidNtceNo"] = "R26BK00000003"
+        current["bidNtceNm"] = "AI 신규 공고"
+        client = StubOpeningResultClient([current])
+        with patch.object(client, "fetch_entries", wraps=client.fetch_entries) as fetch_entries:
+            with patch(
+                "app.g2b.opening_results.service.MAX_ENTRY_DETAIL_FETCHES_PER_COLLECTION",
+                1,
+            ):
+                collect_opening_results(self.db, self.request, client)
+
+        self.assertEqual(fetch_entries.call_count, 1)
+        self.assertEqual(fetch_entries.call_args.args[0]["bidNtceNo"], pending["bidNtceNo"])
+
     def test_default_collection_enqueues_matched_missing_business_amount(self):
         matched = self.completed_summary()
         unmatched = self.completed_summary()
@@ -2512,23 +2554,23 @@ class OpeningResultServiceTests(unittest.TestCase):
         self.assertEqual(completed_run.status, "SUCCESS")
         self.assertIsNone(completed_run.error_message)
 
-    def test_entry_failure_does_not_abort_other_collection_work(self):
+    def test_all_entry_lookup_failures_mark_the_scheduled_run_as_failed(self):
         now = datetime(2026, 7, 15, 2, 0, tzinfo=timezone.utc)
         failing_client = self.make_client()
         failing_client.fetch_entries = Mock(
             side_effect=OpeningResultApiError("temporary entry failure")
         )
 
-        response = run_scheduled_opening_results(
-            self.db,
-            now=now,
-            client=failing_client,
-        )
+        with self.assertRaises(OpeningResultApiError):
+            run_scheduled_opening_results(
+                self.db,
+                now=now,
+                client=failing_client,
+            )
 
         completed_run = self.db.scalar(select(BidOpeningCollectionRunModel))
-        self.assertEqual(response.run_status, "SUCCESS")
-        self.assertEqual(response.skipped_count, 1)
-        self.assertEqual(completed_run.status, "SUCCESS")
+        self.assertEqual(completed_run.status, "FAILED")
+        self.assertIn("순위·점수 상세 API 조회가 모두 실패", completed_run.error_message)
         self.assertEqual(
             self.db.scalar(select(func.count(BidOpeningRoundModel.id))),
             1,

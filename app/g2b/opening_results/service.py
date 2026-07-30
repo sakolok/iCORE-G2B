@@ -478,6 +478,17 @@ def collect_opening_results(
     client = client or OpeningResultApiClient(OpeningResultApiConfig.from_env())
     business_type = request.business_type.value
     global_claim_token = _claim_global_collection_lease(db, business_type)
+    preexisting_pending_detail_keys = set(
+        db.scalars(
+            select(BidOpeningRoundModel.external_key).where(
+                BidOpeningRoundModel.business_type == business_type,
+                BidOpeningRoundModel.status.in_(
+                    (OpeningStatus.OPENED.value, OpeningStatus.AWARDED.value)
+                ),
+                BidOpeningRoundModel.entries_collected_at.is_(None),
+            )
+        )
+    )
 
     inserted_round_count = 0
     updated_round_count = 0
@@ -489,6 +500,7 @@ def collect_opening_results(
     entry_candidates: dict[str, dict[str, Any]] = {}
     entry_lookup_empty_count = 0
     entry_lookup_error_count = 0
+    attempted_entry_lookup_count = 0
 
     try:
         summaries: list[dict[str, Any]] = []
@@ -626,7 +638,14 @@ def collect_opening_results(
                 except (TypeError, ValueError):
                     continue
         if entry_candidates:
-            selected_entry_candidates = list(entry_candidates.items())[
+            # Retry matched rows that were already pending before this run before
+            # spending the per-run API budget on newly collected rows.
+            retry_detail_keys = pending_detail_keys & preexisting_pending_detail_keys
+            prioritized_entry_candidates = sorted(
+                entry_candidates.items(),
+                key=lambda candidate: candidate[0] not in retry_detail_keys,
+            )
+            selected_entry_candidates = prioritized_entry_candidates[
                 :MAX_ENTRY_DETAIL_FETCHES_PER_COLLECTION
             ]
             for external_key, source in selected_entry_candidates:
@@ -640,6 +659,7 @@ def collect_opening_results(
                     OpeningStatus.AWARDED.value,
                 }:
                     continue
+                attempted_entry_lookup_count += 1
                 try:
                     fetched, inserted, updated = _collect_round_entries(
                         db,
@@ -680,13 +700,21 @@ def collect_opening_results(
         global_claim_token=global_claim_token,
     )
     logger.info(
-        "Opening-result detail collection: candidates=%s, fetched_entries=%s, "
+        "Opening-result detail collection: candidates=%s, attempted=%s, fetched_entries=%s, "
         "empty_responses=%s, api_errors=%s",
         min(len(entry_candidates), MAX_ENTRY_DETAIL_FETCHES_PER_COLLECTION),
+        attempted_entry_lookup_count,
         fetched_entry_count,
         entry_lookup_empty_count,
         entry_lookup_error_count,
     )
+    if attempted_entry_lookup_count and (
+        entry_lookup_error_count == attempted_entry_lookup_count
+    ):
+        raise OpeningResultApiError(
+            "개찰결과 순위·점수 상세 API 조회가 모두 실패했습니다. "
+            "다음 수집 주기에 다시 시도합니다."
+        )
 
     return CollectOpeningResultsResponse(
         fetched_round_count=len(processed_round_keys),
