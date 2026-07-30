@@ -580,18 +580,37 @@ def _analysis_row(
 def _primary_notice_attachment(
     attachments: list[tuple[str, str]],
 ) -> tuple[str, str] | None:
-    candidates: list[tuple[int, int, str, str]] = []
+    format_priority = {
+        "pdf": 0,
+        "hwpx": 1,
+        "txt": 2,
+        "html": 2,
+        "htm": 2,
+        "hwp": 9,
+    }
+    candidates: list[tuple[int, int, int, str, str]] = []
     for position, (name, url) in enumerate(attachments):
         normalized_name = re.sub(r"[\s_\-·()\[\]]+", "", name).casefold()
+        suffix = name.rsplit(".", 1)[-1].lower() if "." in name else ""
         if any(token in normalized_name for token in NON_PRIMARY_DOCUMENT_TOKENS):
             continue
         for rank, token in enumerate(PRIMARY_NOTICE_DOCUMENT_TOKENS):
             if token in normalized_name:
-                candidates.append((rank, position, name, url))
+                candidates.append(
+                    (
+                        rank,
+                        format_priority.get(suffix, 8),
+                        position,
+                        name,
+                        url,
+                    )
+                )
                 break
     if not candidates:
         return None
-    _, _, name, url = min(candidates, key=lambda item: (item[0], item[1]))
+    _, _, _, name, url = min(
+        candidates, key=lambda item: (item[0], item[1], item[2])
+    )
     return name, url
 
 

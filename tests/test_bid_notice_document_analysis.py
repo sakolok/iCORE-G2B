@@ -19,6 +19,7 @@ from app.g2b.bid_notices.document_analysis import (
     MAX_ANALYSIS_ATTEMPTS,
     _analyze_text,
     _document_fetcher_enabled_for,
+    _primary_notice_attachment,
     _retry_at,
     _download_attachment,
     _download_attachment_via_fetcher,
@@ -101,6 +102,32 @@ class BidNoticeDocumentAnalysisTests(unittest.TestCase):
 
         self.assertEqual(findings["industry_codes"], "0036, 1468")
         self.assertEqual(findings["industry_status"], "DOCUMENT_VALUE")
+
+    def test_primary_notice_attachment_prefers_pdf_over_legacy_hwp(self):
+        attachment = _primary_notice_attachment(
+            [
+                (
+                    "1. 공고문_테스트.hwp",
+                    "https://www.g2b.go.kr/file/notice.hwp",
+                ),
+                (
+                    "1. 공고문_테스트.pdf",
+                    "https://www.g2b.go.kr/file/notice.pdf",
+                ),
+                (
+                    "2. 제안요청서_테스트.hwpx",
+                    "https://www.g2b.go.kr/file/request.hwpx",
+                ),
+            ]
+        )
+
+        self.assertEqual(
+            attachment,
+            (
+                "1. 공고문_테스트.pdf",
+                "https://www.g2b.go.kr/file/notice.pdf",
+            ),
+        )
 
     def test_document_fetcher_rollout_can_target_one_notice(self):
         notice = self._add_matched_notice()
