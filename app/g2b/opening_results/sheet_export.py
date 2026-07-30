@@ -229,6 +229,7 @@ def _has_complete_notice_context(context: BidNoticeSheetContext | None) -> bool:
     return context is not None and not missing_bid_notice_context_fields(
         context,
         require_region_restriction=False,
+        require_proposal_deadline=False,
     )
 
 

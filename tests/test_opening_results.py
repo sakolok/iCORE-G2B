@@ -281,9 +281,9 @@ class OpeningResultClientTests(unittest.TestCase):
         )
         self.assertNotIn("inqryDiv", session.calls[0]["params"])
         self.assertEqual(session.calls[0]["params"]["bidNtceNo"], "R26BK00000001")
-        self.assertEqual(session.calls[0]["params"]["bidNtceOrd"], "000")
-        self.assertEqual(session.calls[0]["params"]["bidClsfcNo"], "1")
-        self.assertEqual(session.calls[0]["params"]["rbidNo"], "0")
+        self.assertNotIn("bidNtceOrd", session.calls[0]["params"])
+        self.assertNotIn("bidClsfcNo", session.calls[0]["params"])
+        self.assertNotIn("rbidNo", session.calls[0]["params"])
 
     def test_fetch_entries_discards_other_notice_rows(self):
         session = FakeSession(
@@ -309,6 +309,47 @@ class OpeningResultClientTests(unittest.TestCase):
 
         self.assertEqual(rows, [{"bidNtceNo": "R26BK00000001", "opengRank": "1"}])
         self.assertEqual(len(session.calls), 1)
+
+    def test_fetch_entries_normalizes_zero_padded_round_codes(self):
+        session = FakeSession(
+            [
+                api_payload(
+                    [
+                        {
+                            "bidNtceNo": "R26BK00000001",
+                            "bidNtceOrd": "0",
+                            "bidClsfcNo": "001",
+                            "rbidNo": "00",
+                            "opengRank": "1",
+                        },
+                        {
+                            "bidNtceNo": "R26BK00000001",
+                            "bidNtceOrd": "2",
+                            "bidClsfcNo": "1",
+                            "rbidNo": "0",
+                            "opengRank": "1",
+                        },
+                    ],
+                    2,
+                )
+            ]
+        )
+        client = OpeningResultApiClient(
+            OpeningResultApiConfig(base_url="https://example.test", service_key="key"),
+            session=session,
+        )
+
+        rows = client.fetch_entries(
+            {
+                "bidNtceNo": "R26BK00000001",
+                "bidNtceOrd": "00",
+                "bidClsfcNo": "1",
+                "rbidNo": "0",
+            }
+        )
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["opengRank"], "1")
 
     def test_repeated_page_is_rejected(self):
         repeated = api_payload([{"bidNtceNo": "A"}], 3)
@@ -1502,6 +1543,33 @@ class OpeningResultServiceTests(unittest.TestCase):
         self.assertEqual(detail.winner_company_name, "최종낙찰기업")
         self.assertEqual(detail.sheet_export_status, "READY")
         self.assertEqual(detail.notice_url, "https://www.g2b.go.kr/notice/detail")
+
+    def test_sheet_export_is_ready_without_proposal_deadline(self):
+        collect_opening_results(self.db, self.request, self.make_client())
+        result_id = self.db.scalar(select(BidOpeningRoundModel.id))
+        self.add_bid_notice(proposal_deadline=None)
+        self.db.commit()
+
+        response = fetch_results(
+            q=None,
+            status=None,
+            opened_from=datetime(2026, 7, 14, tzinfo=timezone.utc),
+            opened_to=datetime(2026, 7, 16, tzinfo=timezone.utc),
+            page=1,
+            page_size=30,
+            auth=self.auth,
+            db=self.db,
+        )
+        rows, missing_context_keys, missing_result_ids = build_sheet_rows(
+            self.db,
+            [result_id],
+        )
+
+        self.assertEqual(response.items[0].sheet_export_status, "READY")
+        self.assertTrue(response.items[0].sheet_exportable)
+        self.assertEqual(missing_context_keys, [])
+        self.assertEqual(missing_result_ids, [])
+        self.assertEqual(rows[0][4], "")
 
     def test_duplicate_notice_context_uses_latest_complete_record_for_notice_link(self):
         collect_opening_results(self.db, self.request, self.make_client())

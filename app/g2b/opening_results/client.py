@@ -208,17 +208,28 @@ class OpeningResultApiClient:
         if not bid_notice_no:
             return []
         params: dict[str, Any] = {"bidNtceNo": bid_notice_no}
-        for name in ("bidNtceOrd", "bidClsfcNo", "rbidNo"):
-            value = str(summary.get(name) or "").strip()
-            if value:
-                params[name] = value
         rows = self._fetch_all(
             self.ENTRY_PATH,
             params,
             max_pages=1,
         )
-        return [
-            row
-            for row in rows
-            if str(row.get("bidNtceNo") or "").strip() == bid_notice_no
-        ]
+        return [row for row in rows if self._matches_entry_round(row, summary)]
+
+    @staticmethod
+    def _matches_entry_round(row: dict[str, Any], summary: dict[str, Any]) -> bool:
+        if str(row.get("bidNtceNo") or "").strip() != str(
+            summary.get("bidNtceNo") or ""
+        ).strip():
+            return False
+        for name in ("bidNtceOrd", "bidClsfcNo", "rbidNo"):
+            expected = str(summary.get(name) or "").strip()
+            actual = str(row.get(name) or "").strip()
+            if expected and actual and OpeningResultApiClient._canonical_code(
+                expected
+            ) != OpeningResultApiClient._canonical_code(actual):
+                return False
+        return True
+
+    @staticmethod
+    def _canonical_code(value: str) -> str:
+        return str(int(value)) if value.isdigit() else value

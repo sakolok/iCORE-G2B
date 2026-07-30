@@ -184,6 +184,7 @@ def missing_bid_notice_context_fields(
     notice: Any,
     *,
     require_region_restriction: bool = True,
+    require_proposal_deadline: bool = True,
 ) -> list[str]:
     missing: list[str] = []
     if canonical_bid_notice_identity(
@@ -208,7 +209,10 @@ def missing_bid_notice_context_fields(
         missing.append("region_restriction")
     if getattr(notice, "base_amount", None) is None:
         missing.append("base_amount")
-    for field_name in ("proposal_deadline", "is_two_stage_bid"):
+    required_optional_fields = ["is_two_stage_bid"]
+    if require_proposal_deadline:
+        required_optional_fields.insert(0, "proposal_deadline")
+    for field_name in required_optional_fields:
         if getattr(notice, field_name, None) is None:
             missing.append(field_name)
     return missing

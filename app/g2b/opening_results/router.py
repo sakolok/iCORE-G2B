@@ -198,6 +198,7 @@ def _summary_responses(
                 missing_bid_notice_context_fields(
                     context,
                     require_region_restriction=False,
+                    require_proposal_deadline=False,
                 )
             )
 
