@@ -401,12 +401,13 @@ def _upsert_item(
         ).scalars().all()
         row = select_canonical_scraper_notice(same_official_notice)
     attachment_changed = False
-    if row is not None and skip_existing:
+    if row is not None:
         previous_attachments = _stored_attachment_signature(row.source_payload)
         current_attachments = _attachment_signature(item)
         attachment_changed = bool(
             current_attachments and current_attachments != previous_attachments
         )
+    if row is not None and skip_existing:
         if not attachment_changed:
             if row.work_type in {None, "용역"}:
                 row.work_type = classify_work_type(item, work_type)
