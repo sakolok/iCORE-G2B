@@ -15,6 +15,9 @@ from app.g2b.bid_notices.collector import (
 )
 from app.g2b.bid_notices.document_analysis import (
     AttachmentDownloadError,
+    DOWNLOAD_CONNECT_TIMEOUT_SECONDS,
+    MAX_ANALYSIS_ATTEMPTS,
+    _retry_at,
     _download_attachment,
     force_bid_notice_document_reanalysis,
     queue_new_matched_bid_notice_document_preparations,
@@ -70,6 +73,13 @@ class BidNoticeDocumentAnalysisTests(unittest.TestCase):
     def tearDown(self):
         self.db.close()
         self.engine.dispose()
+
+    def test_attachment_retry_policy_uses_two_retries_and_short_delays(self):
+        self.assertEqual(DOWNLOAD_CONNECT_TIMEOUT_SECONDS, 15)
+        self.assertEqual(MAX_ANALYSIS_ATTEMPTS, 3)
+        self.assertEqual(_retry_at(self.now, 1), self.now + timedelta(minutes=5))
+        self.assertEqual(_retry_at(self.now, 2), self.now + timedelta(minutes=10))
+        self.assertIsNone(_retry_at(self.now, 3))
 
     def _add_matched_notice(self, index: int = 1) -> ScraperNoticeModel:
         notice = ScraperNoticeModel(
@@ -136,7 +146,7 @@ class BidNoticeDocumentAnalysisTests(unittest.TestCase):
         self.assertTrue(complete.closed)
         self.assertEqual(requests_get.call_count, 2)
         self.assertFalse(requests_get.call_args.kwargs["allow_redirects"])
-        self.assertEqual(requests_get.call_args.kwargs["timeout"], (5, 25))
+        self.assertEqual(requests_get.call_args.kwargs["timeout"], (15, 25))
         self.assertIn("User-Agent", requests_get.call_args.kwargs["headers"])
 
     @patch("app.g2b.bid_notices.document_analysis.requests.get")
