@@ -41,6 +41,7 @@ from app.g2b.bid_notices.matching import (
     update_user_bid_notice_profile,
 )
 from app.g2b.bid_notices.models import (
+    BidNoticeDocumentAnalysisModel,
     BidNoticeSheetExportModel,
     UserBidNoticeMatchModel,
     UserBidNoticeStateModel,
@@ -191,11 +192,30 @@ def _notice_response(
     matched_keyword: str | None,
     *,
     include_attachments: bool = False,
+    document_analysis: BidNoticeDocumentAnalysisModel | None = None,
 ) -> BidNoticeListItem:
     def display_document_value(value: str | None, source: str | None) -> str | None:
         if value and source == "DOCUMENT":
             return f"{value} (문서분석)"
         return value
+
+    document_analysis_reason = None
+    if document_analysis is not None:
+        if document_analysis.status == "REVIEW_REQUIRED":
+            document_analysis_reason = (
+                "분석 가능한 공고문 첨부파일 없음"
+                if document_analysis.error_message
+                and "분석 가능한 입찰공고" in document_analysis.error_message
+                else "관련 문구 미검출"
+            )
+        elif document_analysis.status == "UNSUPPORTED":
+            document_analysis_reason = "지원하지 않는 문서 형식"
+        elif document_analysis.status == "FAILED":
+            document_analysis_reason = "문서 분석 실패 · 재시도 대기"
+        elif document_analysis.status == "RUNNING":
+            document_analysis_reason = "문서 분석 중"
+        elif document_analysis.status == "PENDING":
+            document_analysis_reason = "문서 분석 대기"
 
     return BidNoticeListItem(
         id=notice.id,
@@ -222,6 +242,8 @@ def _notice_response(
         industry_restriction_api_status=notice.industry_restriction_api_status,
         industry_restriction_source=notice.industry_restriction_source,
         industry_restriction_evidence=notice.industry_restriction_evidence,
+        document_analysis_status=document_analysis.status if document_analysis else None,
+        document_analysis_reason=document_analysis_reason,
         icore_industry_code_match=notice.icore_industry_code_match,
         is_two_stage_bid=notice.is_two_stage_bid,
         joint_supply_allowed=notice.joint_supply_allowed,
@@ -237,6 +259,25 @@ def _archived_notice_response(item) -> ArchivedBidNoticeListItem:
         handled_at=item.handled_at,
         expires_at=item.handled_at + timedelta(days=14),
         can_restore=item.can_restore,
+    )
+
+
+def _latest_document_analysis(
+    db: Session,
+    *,
+    notice_id: int,
+) -> BidNoticeDocumentAnalysisModel | None:
+    return db.scalar(
+        select(BidNoticeDocumentAnalysisModel)
+        .where(
+            BidNoticeDocumentAnalysisModel.notice_id == notice_id,
+            BidNoticeDocumentAnalysisModel.is_primary_notice_document.is_(True),
+        )
+        .order_by(
+            BidNoticeDocumentAnalysisModel.analyzed_at.desc(),
+            BidNoticeDocumentAnalysisModel.id.desc(),
+        )
+        .limit(1)
     )
 
 
@@ -581,7 +622,12 @@ def fetch_bid_notice_detail(
         attachments_updated = True
     if attachments_updated:
         db.commit()
-    return _notice_response(notice, matched_keyword, include_attachments=True)
+    return _notice_response(
+        notice,
+        matched_keyword,
+        include_attachments=True,
+        document_analysis=_latest_document_analysis(db, notice_id=notice.id),
+    )
 
 
 @router.delete("/items/{notice_id}", response_model=DismissBidNoticeResponse)

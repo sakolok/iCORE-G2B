@@ -204,6 +204,9 @@ class BidNoticeDocumentAnalysisTests(unittest.TestCase):
         self.assertIsNone(stored.industry_restriction_codes)
         self.assertEqual(stored.industry_restriction_api_status, INDUSTRY_API_EMPTY)
         self.assertEqual(analysis.status, "REVIEW_REQUIRED")
+        self.assertEqual(analysis.error_message, "관련 문구 미검출")
+        response = _notice_response(stored, "AI", document_analysis=analysis)
+        self.assertEqual(response.document_analysis_reason, "관련 문구 미검출")
 
     @patch("app.g2b.bid_notices.document_analysis._extract_text")
     @patch("app.g2b.bid_notices.document_analysis._download_attachment")

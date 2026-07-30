@@ -99,6 +99,8 @@ class BidNoticeListItem(BaseModel):
     industry_restriction_api_status: str | None = None
     industry_restriction_source: str | None = None
     industry_restriction_evidence: str | None = None
+    document_analysis_status: str | None = None
+    document_analysis_reason: str | None = None
     icore_industry_code_match: bool | None
     is_two_stage_bid: bool | None
     joint_supply_allowed: bool | None

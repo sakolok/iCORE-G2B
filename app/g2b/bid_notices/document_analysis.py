@@ -860,7 +860,9 @@ def _process_claimed_analysis(
             )
             else "REVIEW_REQUIRED"
         )
-        row.error_message = None
+        row.error_message = (
+            "관련 문구 미검출" if row.status == "REVIEW_REQUIRED" else None
+        )
         row.analyzed_at = current
         row.claim_token = None
         row.claimed_at = None
