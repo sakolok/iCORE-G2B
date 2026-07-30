@@ -5,6 +5,7 @@ from urllib.parse import urlparse
 from uuid import uuid4
 
 from sqlalchemy import and_, exists, func, or_, select, update
+from sqlalchemy.dialects.mysql import insert as mysql_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -375,8 +376,8 @@ def sync_user_matches(
                 current_keys.add(round_row.external_key)
                 match = existing_by_key.get(round_row.external_key)
                 if match is None:
-                    db.add(
-                        UserOpeningResultMatchModel(
+                    if db.bind is not None and db.bind.dialect.name == "mysql":
+                        insert_statement = mysql_insert(UserOpeningResultMatchModel).values(
                             organization_id=profile.organization_id,
                             user_id=profile.user_id,
                             round_id=round_row.id,
@@ -384,8 +385,25 @@ def sync_user_matches(
                             matched_keywords=decision.matched_keyword,
                             is_current_match=True,
                         )
-                    )
-                    changed_count += 1
+                        result = db.execute(
+                            insert_statement.on_duplicate_key_update(
+                                id=UserOpeningResultMatchModel.id
+                            )
+                        )
+                        if result.rowcount:
+                            changed_count += 1
+                    else:
+                        db.add(
+                            UserOpeningResultMatchModel(
+                                organization_id=profile.organization_id,
+                                user_id=profile.user_id,
+                                round_id=round_row.id,
+                                result_external_key=round_row.external_key,
+                                matched_keywords=decision.matched_keyword,
+                                is_current_match=True,
+                            )
+                        )
+                        changed_count += 1
                     continue
                 changed = (
                     match.organization_id != profile.organization_id
