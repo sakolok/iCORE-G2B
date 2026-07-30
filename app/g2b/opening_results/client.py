@@ -109,7 +109,13 @@ class OpeningResultApiClient:
             return [item for item in items if isinstance(item, dict)]
         return []
 
-    def _fetch_all(self, path: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+    def _fetch_all(
+        self,
+        path: str,
+        params: dict[str, Any],
+        *,
+        max_pages: int | None = None,
+    ) -> list[dict[str, Any]]:
         page = 1
         rows: list[dict[str, Any]] = []
         seen_page_signatures: set[str] = set()
@@ -147,6 +153,9 @@ class OpeningResultApiClient:
                 )
             seen_page_signatures.add(page_signature)
             rows.extend(page_rows)
+
+            if max_pages is not None and page >= max_pages:
+                break
 
             try:
                 total_count = int(str(body.get("totalCount") or "0"))
@@ -202,4 +211,13 @@ class OpeningResultApiClient:
             value = str(summary.get(name) or "").strip()
             if value:
                 params[name] = value
-        return self._fetch_all(self.SUMMARY_PATHS[business_type], params)
+        rows = self._fetch_all(
+            self.SUMMARY_PATHS[business_type],
+            params,
+            max_pages=1,
+        )
+        return [
+            row
+            for row in rows
+            if str(row.get("bidNtceNo") or "").strip() == bid_notice_no
+        ]

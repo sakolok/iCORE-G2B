@@ -254,7 +254,9 @@ class OpeningResultClientTests(unittest.TestCase):
         self.assertEqual(session.calls[0]["params"]["inqryDiv"], "1")
 
     def test_fetch_entries_uses_business_specific_notice_lookup(self):
-        session = FakeSession([api_payload([{"opengRank": "1"}], 1)])
+        session = FakeSession(
+            [api_payload([{"bidNtceNo": "R26BK00000001", "opengRank": "1"}], 1)]
+        )
         client = OpeningResultApiClient(
             OpeningResultApiConfig(
                 base_url="https://example.test",
@@ -273,7 +275,7 @@ class OpeningResultClientTests(unittest.TestCase):
             business_type=BusinessType.CONSTRUCTION,
         )
 
-        self.assertEqual(rows, [{"opengRank": "1"}])
+        self.assertEqual(rows, [{"bidNtceNo": "R26BK00000001", "opengRank": "1"}])
         self.assertTrue(
             session.calls[0]["url"].endswith("/getOpengResultListInfoCnstwk")
         )
@@ -282,6 +284,31 @@ class OpeningResultClientTests(unittest.TestCase):
         self.assertEqual(session.calls[0]["params"]["bidNtceOrd"], "000")
         self.assertEqual(session.calls[0]["params"]["bidClsfcNo"], "1")
         self.assertEqual(session.calls[0]["params"]["rbidNo"], "0")
+
+    def test_fetch_entries_discards_other_notice_rows(self):
+        session = FakeSession(
+            [
+                api_payload(
+                    [
+                        {"bidNtceNo": "R26BK00000001", "opengRank": "1"},
+                        {"bidNtceNo": "R26BK00000002", "opengRank": "1"},
+                    ],
+                    2,
+                )
+            ]
+        )
+        client = OpeningResultApiClient(
+            OpeningResultApiConfig(
+                base_url="https://example.test",
+                service_key="key",
+            ),
+            session=session,
+        )
+
+        rows = client.fetch_entries({"bidNtceNo": "R26BK00000001"})
+
+        self.assertEqual(rows, [{"bidNtceNo": "R26BK00000001", "opengRank": "1"}])
+        self.assertEqual(len(session.calls), 1)
 
     def test_repeated_page_is_rejected(self):
         repeated = api_payload([{"bidNtceNo": "A"}], 3)
