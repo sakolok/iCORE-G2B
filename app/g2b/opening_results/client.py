@@ -195,11 +195,10 @@ class OpeningResultApiClient:
         bid_notice_no = str(summary.get("bidNtceNo") or "").strip()
         if not bid_notice_no:
             return []
-        # The completed-opening endpoint uses inquiry division 2 for a
-        # notice-number lookup. Without it, the API accepts the request but
-        # returns an empty list, which leaves completed bids permanently
-        # pending their bidder-rank details.
-        params: dict[str, Any] = {"inqryDiv": "2", "bidNtceNo": bid_notice_no}
+        # The completed-opening endpoint requires inquiry division 1 even
+        # when a bid notice number narrows the result. Without it, the API
+        # accepts the request but returns an empty list.
+        params: dict[str, Any] = {"inqryDiv": "1", "bidNtceNo": bid_notice_no}
         for name in ("bidNtceOrd", "bidClsfcNo", "rbidNo"):
             value = str(summary.get(name) or "").strip()
             if value:
