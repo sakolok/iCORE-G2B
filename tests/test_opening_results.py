@@ -252,6 +252,35 @@ class OpeningResultClientTests(unittest.TestCase):
         self.assertTrue(session.calls[0]["url"].endswith("/getOpengResultListInfoServc"))
         self.assertEqual(session.calls[0]["params"]["inqryDiv"], "1")
 
+    def test_fetch_entries_uses_notice_number_lookup(self):
+        session = FakeSession([api_payload([{"opengRank": "1"}], 1)])
+        client = OpeningResultApiClient(
+            OpeningResultApiConfig(
+                base_url="https://example.test",
+                service_key="key",
+            ),
+            session=session,
+        )
+
+        rows = client.fetch_entries(
+            {
+                "bidNtceNo": "R26BK00000001",
+                "bidNtceOrd": "000",
+                "bidClsfcNo": "1",
+                "rbidNo": "0",
+            }
+        )
+
+        self.assertEqual(rows, [{"opengRank": "1"}])
+        self.assertTrue(
+            session.calls[0]["url"].endswith("/getOpengResultListInfoOpengCompt")
+        )
+        self.assertEqual(session.calls[0]["params"]["inqryDiv"], "2")
+        self.assertEqual(session.calls[0]["params"]["bidNtceNo"], "R26BK00000001")
+        self.assertEqual(session.calls[0]["params"]["bidNtceOrd"], "000")
+        self.assertEqual(session.calls[0]["params"]["bidClsfcNo"], "1")
+        self.assertEqual(session.calls[0]["params"]["rbidNo"], "0")
+
     def test_repeated_page_is_rejected(self):
         repeated = api_payload([{"bidNtceNo": "A"}], 3)
         client = OpeningResultApiClient(
