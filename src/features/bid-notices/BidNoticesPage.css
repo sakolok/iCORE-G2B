@@ -42,6 +42,8 @@
 .bid-notices-destination-item .ant-typography-paragraph { margin: 4px 0 0; }
 .bid-notice-attachments { margin-top: 16px; }
 .bid-notice-attachments .ant-card-head { min-height: 42px; }
+.bid-notice-document-evidence { margin-top: 12px; }
+.bid-notice-document-evidence .ant-card-head { min-height: 42px; }
 .bid-notices-selection-dock { position: sticky; z-index: 20; bottom: 16px; border-color: #c9ddfb; border-radius: 16px; background: rgba(255, 255, 255, .97); box-shadow: 0 12px 38px rgba(25, 31, 40, .12); backdrop-filter: blur(14px); }
 .bid-notices-selection-dock .ant-card-body { padding: 13px 16px; }
 .bid-notices-selection-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }

@@ -930,14 +930,6 @@ function BidNoticesPage() {
                 <Text type="secondary">{detail.document_analysis_reason || "문서 분석 완료"}</Text>
               </Descriptions.Item>
             ) : null}
-            {(detail.region_restriction_source === "DOCUMENT" || detail.industry_restriction_source === "DOCUMENT") ? (
-              <Descriptions.Item label="문서 분석 근거" span={2}>
-                <Space direction="vertical" size={2}>
-                  {detail.region_restriction_source === "DOCUMENT" ? <Text type="secondary">지역: {detail.region_restriction_evidence || "첨부 문서에서 확인"}</Text> : null}
-                  {detail.industry_restriction_source === "DOCUMENT" ? <Text type="secondary">업종: {detail.industry_restriction_evidence || "첨부 문서에서 확인"}</Text> : null}
-                </Space>
-              </Descriptions.Item>
-            ) : null}
             <Descriptions.Item label="공식 공고" span={2}>
               {externalUrl(detail.notice_url) ? <Button type="link" href={externalUrl(detail.notice_url)} target="_blank" rel="noopener noreferrer">나라장터 공고 바로가기</Button> : <Text type="secondary">연결된 공식 공고 링크가 없습니다.</Text>}
             </Descriptions.Item>
@@ -962,6 +954,18 @@ function BidNoticesPage() {
                 ))}
               </Space>
             ) : <Text type="secondary">나라장터 공고에 연결된 첨부파일이 없습니다.</Text>}
+          </Card>
+        ) : null}
+        {detail && (detail.region_restriction_source === "DOCUMENT" || detail.industry_restriction_source === "DOCUMENT") ? (
+          <Card className="bid-notice-document-evidence" size="small" title="문서 분석 근거">
+            <Space direction="vertical" size={6}>
+              {detail.region_restriction_source === "DOCUMENT" ? (
+                <Text type="secondary">지역: {detail.region_restriction_evidence || "첨부 문서에서 확인"}</Text>
+              ) : null}
+              {detail.industry_restriction_source === "DOCUMENT" ? (
+                <Text type="secondary">업종: {detail.industry_restriction_evidence || "첨부 문서에서 확인"}</Text>
+              ) : null}
+            </Space>
           </Card>
         ) : null}
       </Drawer>
