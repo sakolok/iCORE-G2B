@@ -253,7 +253,7 @@ class OpeningResultClientTests(unittest.TestCase):
         self.assertTrue(session.calls[0]["url"].endswith("/getOpengResultListInfoServc"))
         self.assertEqual(session.calls[0]["params"]["inqryDiv"], "1")
 
-    def test_fetch_entries_uses_business_specific_notice_lookup(self):
+    def test_fetch_entries_uses_exact_completed_opening_lookup(self):
         session = FakeSession(
             [api_payload([{"bidNtceNo": "R26BK00000001", "opengRank": "1"}], 1)]
         )
@@ -277,9 +277,9 @@ class OpeningResultClientTests(unittest.TestCase):
 
         self.assertEqual(rows, [{"bidNtceNo": "R26BK00000001", "opengRank": "1"}])
         self.assertTrue(
-            session.calls[0]["url"].endswith("/getOpengResultListInfoCnstwk")
+            session.calls[0]["url"].endswith("/getOpengResultListInfoOpengCompt")
         )
-        self.assertEqual(session.calls[0]["params"]["inqryDiv"], "2")
+        self.assertNotIn("inqryDiv", session.calls[0]["params"])
         self.assertEqual(session.calls[0]["params"]["bidNtceNo"], "R26BK00000001")
         self.assertEqual(session.calls[0]["params"]["bidNtceOrd"], "000")
         self.assertEqual(session.calls[0]["params"]["bidClsfcNo"], "1")

@@ -46,6 +46,7 @@ class OpeningResultApiConfig:
 
 
 class OpeningResultApiClient:
+    ENTRY_PATH = "/getOpengResultListInfoOpengCompt"
     SUMMARY_PATHS = {
         BusinessType.SERVICE: "/getOpengResultListInfoServc",
         BusinessType.GOODS: "/getOpengResultListInfoThng",
@@ -206,13 +207,13 @@ class OpeningResultApiClient:
         bid_notice_no = str(summary.get("bidNtceNo") or "").strip()
         if not bid_notice_no:
             return []
-        params: dict[str, Any] = {"inqryDiv": "2", "bidNtceNo": bid_notice_no}
+        params: dict[str, Any] = {"bidNtceNo": bid_notice_no}
         for name in ("bidNtceOrd", "bidClsfcNo", "rbidNo"):
             value = str(summary.get(name) or "").strip()
             if value:
                 params[name] = value
         rows = self._fetch_all(
-            self.SUMMARY_PATHS[business_type],
+            self.ENTRY_PATH,
             params,
             max_pages=1,
         )
