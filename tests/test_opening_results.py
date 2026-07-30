@@ -678,7 +678,7 @@ class OpeningResultServiceTests(unittest.TestCase):
             MAX_ENTRY_DETAIL_FETCHES_PER_COLLECTION,
         )
 
-    def test_global_collection_collects_all_shared_details_and_matches_user_afterward(self):
+    def test_collection_fetches_details_only_for_current_user_matches(self):
         allowed = self.completed_summary()
         allowed["bidNtceNm"] = "교원 직무연수 운영"
         excluded_region = self.completed_summary()
@@ -729,10 +729,10 @@ class OpeningResultServiceTests(unittest.TestCase):
         )
         self.assertEqual(result.fetched_round_count, 3)
         self.assertEqual(result.skipped_count, 0)
-        self.assertEqual(client.fetch_entry_call_count, 3)
+        self.assertEqual(client.fetch_entry_call_count, 1)
         self.assertEqual(
             self.db.scalar(select(func.count(BidOpeningEntryModel.id))),
-            6,
+            2,
         )
         self.assertEqual(len(matches), 1)
         self.assertEqual(matches[0].matched_keywords, "연수")
@@ -1014,7 +1014,7 @@ class OpeningResultServiceTests(unittest.TestCase):
             2,
         )
 
-    def test_unmatched_shared_round_collects_detail_before_later_profile_match(self):
+    def test_unmatched_round_waits_until_a_user_profile_matches(self):
         profile = self.db.scalar(
             select(UserResultProfileModel).where(
                 UserResultProfileModel.user_id == self.user.id
@@ -1023,6 +1023,7 @@ class OpeningResultServiceTests(unittest.TestCase):
         profile.keywords = "로봇"
         source = self.completed_summary()
         external_key = build_round_external_key(source, BusinessType.SERVICE.value)
+        current = datetime.now(timezone.utc)
         round_row = BidOpeningRoundModel(
             external_key=external_key,
             business_type=BusinessType.SERVICE.value,
@@ -1032,8 +1033,8 @@ class OpeningResultServiceTests(unittest.TestCase):
             rebid_no=source["rbidNo"],
             title=source["bidNtceNm"],
             status=OpeningStatus.OPENED.value,
-            opened_at=datetime(2026, 7, 15, 11, 0, tzinfo=timezone.utc),
-            collected_at=datetime(2026, 7, 15, 11, 5, tzinfo=timezone.utc),
+            opened_at=current,
+            collected_at=current,
         )
         self.db.add(round_row)
         self.db.add(
@@ -1054,12 +1055,12 @@ class OpeningResultServiceTests(unittest.TestCase):
         )
         collect_opening_results(self.db, self.request, detail_client)
 
-        self.assertEqual(detail_client.fetch_entry_call_count, 1)
+        self.assertEqual(detail_client.fetch_entry_call_count, 0)
         self.db.refresh(round_row)
-        self.assertIsNotNone(round_row.entries_collected_at)
+        self.assertIsNone(round_row.entries_collected_at)
         self.assertEqual(
             self.db.scalar(select(func.count(BidOpeningEntryModel.id))),
-            2,
+            0,
         )
         update_user_result_profile(
             self.db,
@@ -1076,8 +1077,11 @@ class OpeningResultServiceTests(unittest.TestCase):
         )
         self.db.commit()
 
+        collect_opening_results(self.db, self.request, detail_client)
+
         self.db.refresh(round_row)
         self.assertIsNotNone(round_row.entries_collected_at)
+        self.assertEqual(detail_client.fetch_entry_call_count, 1)
         self.assertEqual(
             self.db.scalar(select(func.count(BidOpeningEntryModel.id))),
             2,

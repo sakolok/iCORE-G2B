@@ -582,9 +582,22 @@ def collect_opening_results(
             global_claim_token=global_claim_token,
         )
         db.commit()
+        matched_detail_keys = set(
+            db.scalars(
+                select(UserOpeningResultMatchModel.result_external_key).where(
+                    UserOpeningResultMatchModel.is_current_match.is_(True)
+                )
+            )
+        )
+        entry_candidates = {
+            external_key: source
+            for external_key, source in entry_candidates.items()
+            if external_key in matched_detail_keys
+        }
         source_rounds = db.scalars(
             select(BidOpeningRoundModel).where(
-                BidOpeningRoundModel.business_type == business_type
+                BidOpeningRoundModel.business_type == business_type,
+                BidOpeningRoundModel.external_key.in_(matched_detail_keys),
             )
         ).all()
         pending_detail_keys = {
