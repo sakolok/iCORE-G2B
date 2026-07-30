@@ -1,4 +1,5 @@
 import json
+import logging
 from datetime import date, datetime, time, timedelta, timezone
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
@@ -27,6 +28,7 @@ from app.g2b.bid_notices.collector import (
     fetch_participant_region_restriction,
 )
 from app.g2b.bid_notices.document_analysis import (
+    queue_new_matched_bid_notice_document_preparations,
     run_pending_bid_notice_document_analysis,
 )
 from app.g2b.bid_notices.matching import (
@@ -99,6 +101,7 @@ from app.services.auth_service import (
 
 router = APIRouter(prefix="/api/v1/bid-notices", tags=["g2b-bid-notices"])
 KST = ZoneInfo("Asia/Seoul")
+logger = logging.getLogger(__name__)
 
 
 def _destination_response(destination) -> BidNoticeSheetDestinationResponse:
@@ -188,6 +191,11 @@ def _notice_response(
     *,
     include_attachments: bool = False,
 ) -> BidNoticeListItem:
+    def display_document_value(value: str | None, source: str | None) -> str | None:
+        if value and source == "DOCUMENT":
+            return f"{value} (문서분석)"
+        return value
+
     return BidNoticeListItem(
         id=notice.id,
         bid_notice_no=notice.bid_notice_no,
@@ -201,11 +209,15 @@ def _notice_response(
         published_at=notice.published_at,
         deadline_at=notice.deadline_at,
         notice_url=notice.notice_url,
-        region_restriction=notice.region_restriction,
+        region_restriction=display_document_value(
+            notice.region_restriction, notice.region_restriction_source
+        ),
         region_restriction_api_status=notice.region_restriction_api_status,
         region_restriction_source=notice.region_restriction_source,
         region_restriction_evidence=notice.region_restriction_evidence,
-        industry_restriction_codes=notice.industry_restriction_codes,
+        industry_restriction_codes=display_document_value(
+            notice.industry_restriction_codes, notice.industry_restriction_source
+        ),
         industry_restriction_api_status=notice.industry_restriction_api_status,
         industry_restriction_source=notice.industry_restriction_source,
         industry_restriction_evidence=notice.industry_restriction_evidence,
@@ -253,6 +265,10 @@ def collect_bid_notice_data(
             keywords=keywords,
         )
         sync_enabled_bid_notice_matches(db)
+        queue_new_matched_bid_notice_document_preparations(
+            db,
+            notice_ids=result.get("new_notice_ids", []),
+        )
         db.commit()
     except BidNoticeCollectionError as error:
         raise HTTPException(status_code=502, detail=str(error)) from error
@@ -266,7 +282,18 @@ def collect_bid_notice_data_on_schedule(
     db: Session = Depends(get_db),
 ) -> CollectBidNoticesResponse:
     try:
-        response = CollectBidNoticesResponse(**collect_scheduled_bid_notices(db))
+        result = collect_scheduled_bid_notices(db)
+        queued_count = queue_new_matched_bid_notice_document_preparations(
+            db,
+            notice_ids=result.get("new_notice_ids", []),
+        )
+        db.commit()
+        logger.info(
+            "Bid-notice collection queued document preparation: new_notices=%s queued=%s",
+            len(result.get("new_notice_ids", [])),
+            queued_count,
+        )
+        response = CollectBidNoticesResponse(**result)
         purge_expired_source_data(db)
         return response
     except BidNoticeCollectionError as error:
@@ -284,13 +311,21 @@ def analyze_bid_notice_documents_on_schedule(
     batch_size: int = Query(default=10, ge=1, le=20),
     prepare_queue: bool = Query(default=True),
 ) -> BidNoticeDocumentAnalysisRunResponse:
-    return BidNoticeDocumentAnalysisRunResponse(
-        **run_pending_bid_notice_document_analysis(
-            db,
-            batch_size=batch_size,
-            prepare_queue=prepare_queue,
-        )
+    result = run_pending_bid_notice_document_analysis(
+        db,
+        batch_size=batch_size,
+        prepare_queue=prepare_queue,
     )
+    logger.info(
+        "Bid-notice document analysis completed: preparation_claimed=%s prepared=%s "
+        "analyzed=%s review_required=%s failed=%s",
+        result["candidate_count"],
+        result["queued_count"],
+        result["analyzed_count"],
+        result["review_required_count"],
+        result["failed_count"],
+    )
+    return BidNoticeDocumentAnalysisRunResponse(**result)
 
 
 @router.get("/settings", response_model=BidNoticeSettingsResponse)

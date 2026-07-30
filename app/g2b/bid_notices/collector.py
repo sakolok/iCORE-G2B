@@ -359,6 +359,22 @@ def fetch_explicit_region_restriction(
     )
 
 
+def _attachment_signature(source: dict[str, Any]) -> tuple[str, ...]:
+    return tuple(
+        str(source.get(f"ntceSpecDocUrl{index}") or "").strip()
+        for index in range(1, 11)
+        if str(source.get(f"ntceSpecDocUrl{index}") or "").strip()
+    )
+
+
+def _stored_attachment_signature(source_payload: str | None) -> tuple[str, ...]:
+    try:
+        source = json.loads(source_payload or "{}")
+    except (TypeError, ValueError):
+        return ()
+    return _attachment_signature(source) if isinstance(source, dict) else ()
+
+
 def _upsert_item(
     db: Session,
     item: dict[str, Any],
@@ -366,6 +382,7 @@ def _upsert_item(
     now: datetime,
     *,
     skip_existing: bool = False,
+    document_candidate_ids: list[int] | None = None,
 ) -> bool:
     notice_no = _optional_text(item.get("bidNtceNo"), 160)
     notice_ord = _optional_text(item.get("bidNtceOrd"), 20) or "00"
@@ -383,10 +400,17 @@ def _upsert_item(
             )
         ).scalars().all()
         row = select_canonical_scraper_notice(same_official_notice)
+    attachment_changed = False
     if row is not None and skip_existing:
-        if row.work_type in {None, "용역"}:
-            row.work_type = classify_work_type(item, work_type)
-        return False
+        previous_attachments = _stored_attachment_signature(row.source_payload)
+        current_attachments = _attachment_signature(item)
+        attachment_changed = bool(
+            current_attachments and current_attachments != previous_attachments
+        )
+        if not attachment_changed:
+            if row.work_type in {None, "용역"}:
+                row.work_type = classify_work_type(item, work_type)
+            return False
     created = row is None
     if row is None:
         row = ScraperNoticeModel(
@@ -435,6 +459,9 @@ def _upsert_item(
     row.source_payload = json.dumps(item, ensure_ascii=False, sort_keys=True, default=str)
     row.last_seen_at = now
     row.last_run_id = "bid-notice-collector"
+    if document_candidate_ids is not None and (created or attachment_changed):
+        db.flush()
+        document_candidate_ids.append(row.id)
     return created
 
 
@@ -450,7 +477,7 @@ def collect_bid_notices(
     now: datetime | None = None,
     window_start: datetime | None = None,
     window_end: datetime | None = None,
-) -> dict[str, int | str]:
+) -> dict[str, int | str | list[int]]:
     normalized_keywords = [str(keyword).strip() for keyword in keywords if str(keyword).strip()]
     if not normalized_keywords:
         raise BidNoticeCollectionError("수집하려면 조건 설정에 포함 키워드를 한 개 이상 저장하세요.")
@@ -484,6 +511,7 @@ def collect_bid_notices(
                         rows.append((item, label))
         collected_at = now or datetime.now(timezone.utc)
         inserted = 0
+        document_candidate_ids: list[int] = []
         for item, label in rows:
             inserted += int(
                 _upsert_item(
@@ -492,6 +520,7 @@ def collect_bid_notices(
                     label,
                     collected_at,
                     skip_existing=skip_existing,
+                    document_candidate_ids=document_candidate_ids,
                 )
             )
         run.fetched_count = len(rows)
@@ -505,6 +534,7 @@ def collect_bid_notices(
             "fetched_count": len(rows),
             "inserted_count": inserted,
             "updated_count": 0 if skip_existing else len(rows) - inserted,
+            "new_notice_ids": document_candidate_ids,
         }
     except Exception as error:
         run.status = "FAILED"
@@ -520,7 +550,7 @@ def collect_scheduled_bid_notices(
     db: Session,
     *,
     now: datetime | None = None,
-) -> dict[str, int | str]:
+) -> dict[str, int | str | list[int]]:
     collected_at = now or datetime.now(timezone.utc)
     keywords = get_enabled_bid_notice_keywords(db)
     if not keywords:
@@ -529,6 +559,7 @@ def collect_scheduled_bid_notices(
             "fetched_count": 0,
             "inserted_count": 0,
             "updated_count": 0,
+            "new_notice_ids": [],
         }
     collection_date = collected_at.astimezone(KST).date()
     window_start_date = collection_date - timedelta(days=13)

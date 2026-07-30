@@ -387,18 +387,16 @@ jobs:
             exit 1
           fi
 
-          BID_NOTICE_DOCUMENT_ANALYSIS_PREPARE_TARGET_URL="$API_URL/api/v1/bid-notices/internal/analyze-documents?batch_size=10&prepare_queue=true"
-          BID_NOTICE_DOCUMENT_ANALYSIS_WORKER_TARGET_URL="$API_URL/api/v1/bid-notices/internal/analyze-documents?batch_size=10&prepare_queue=false"
-          BID_NOTICE_DOCUMENT_ANALYSIS_PREPARE_SCHEDULE="5 8,11,14,17 * * *"
+          BID_NOTICE_DOCUMENT_ANALYSIS_TARGET_URL="$API_URL/api/v1/bid-notices/internal/analyze-documents?batch_size=10"
+          BID_NOTICE_DOCUMENT_ANALYSIS_FIRST_SCHEDULE="5 8,11,14,17 * * *"
           BID_NOTICE_DOCUMENT_ANALYSIS_WORKER_SCHEDULE="10 8,11,14,17 * * *"
           BID_NOTICE_DOCUMENT_ANALYSIS_WORKER_COUNT=4
           for worker_index in $(seq 1 "$BID_NOTICE_DOCUMENT_ANALYSIS_WORKER_COUNT"); do
             scheduler_job_id="${{ env.BID_NOTICE_DOCUMENT_ANALYSIS_SCHEDULER_JOB_ID }}"
-            document_analysis_target_url="$BID_NOTICE_DOCUMENT_ANALYSIS_PREPARE_TARGET_URL"
-            document_analysis_schedule="$BID_NOTICE_DOCUMENT_ANALYSIS_PREPARE_SCHEDULE"
+            document_analysis_target_url="$BID_NOTICE_DOCUMENT_ANALYSIS_TARGET_URL"
+            document_analysis_schedule="$BID_NOTICE_DOCUMENT_ANALYSIS_FIRST_SCHEDULE"
             if [ "$worker_index" -gt 1 ]; then
               scheduler_job_id="${scheduler_job_id}-${worker_index}"
-              document_analysis_target_url="$BID_NOTICE_DOCUMENT_ANALYSIS_WORKER_TARGET_URL"
               document_analysis_schedule="$BID_NOTICE_DOCUMENT_ANALYSIS_WORKER_SCHEDULE"
             fi
             bid_notice_document_analysis_args=(

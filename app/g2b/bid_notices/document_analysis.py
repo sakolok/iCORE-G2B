@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 from xml.etree import ElementTree
 
 import requests
-from sqlalchemy import and_, distinct, or_, select, update
+from sqlalchemy import and_, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -35,6 +35,7 @@ from app.g2b.bid_notices.collector import (
 )
 from app.g2b.bid_notices.models import (
     BidNoticeDocumentAnalysisModel,
+    BidNoticeDocumentPreparationModel,
     UserBidNoticeMatchModel,
 )
 
@@ -47,7 +48,6 @@ except Exception:  # pragma: no cover
 ANALYZER_VERSION = "document-rules-v1"
 MAX_ATTACHMENT_BYTES = 12 * 1024 * 1024
 MAX_EXTRACTED_TEXT_LENGTH = 250_000
-RECENT_NOTICE_DAYS = 14
 DEFAULT_BATCH_SIZE = 10
 MAX_BATCH_SIZE = 20
 MAX_ANALYSIS_ATTEMPTS = 3
@@ -461,51 +461,123 @@ def _apply_document_results(db: Session, notice: ScraperNoticeModel) -> None:
     )
 
 
-def _queue_candidates(
+def queue_new_matched_bid_notice_document_preparations(
+    db: Session,
+    *,
+    notice_ids: list[int],
+) -> int:
+    """Queue only newly collected (or attachment-updated) notices that still match a user."""
+    unique_ids = sorted({notice_id for notice_id in notice_ids if notice_id > 0})
+    if not unique_ids:
+        return 0
+
+    matched_ids = set(
+        db.scalars(
+            select(UserBidNoticeMatchModel.notice_id).where(
+                UserBidNoticeMatchModel.notice_id.in_(unique_ids),
+                UserBidNoticeMatchModel.is_current_match.is_(True),
+            )
+        ).all()
+    )
+    if not matched_ids:
+        return 0
+
+    existing_rows = {
+        row.notice_id: row
+        for row in db.scalars(
+            select(BidNoticeDocumentPreparationModel).where(
+                BidNoticeDocumentPreparationModel.notice_id.in_(matched_ids)
+            )
+        ).all()
+    }
+    queued = 0
+    for notice_id in matched_ids:
+        row = existing_rows.get(notice_id)
+        if row is None:
+            db.add(BidNoticeDocumentPreparationModel(notice_id=notice_id))
+            queued += 1
+            continue
+        if row.status == "RUNNING":
+            continue
+        row.status = "PENDING"
+        row.attempt_count = 0
+        row.error_message = None
+        row.claim_token = None
+        row.claimed_at = None
+        row.next_retry_at = None
+        row.prepared_at = None
+        queued += 1
+    db.flush()
+    return queued
+
+
+def _claimable_preparation_condition(current: datetime):
+    stale_before = current - STALE_CLAIM_AFTER
+    return or_(
+        BidNoticeDocumentPreparationModel.status == "PENDING",
+        and_(
+            BidNoticeDocumentPreparationModel.status == "FAILED",
+            BidNoticeDocumentPreparationModel.attempt_count < MAX_ANALYSIS_ATTEMPTS,
+            or_(
+                BidNoticeDocumentPreparationModel.next_retry_at.is_(None),
+                BidNoticeDocumentPreparationModel.next_retry_at <= current,
+            ),
+        ),
+        and_(
+            BidNoticeDocumentPreparationModel.status == "RUNNING",
+            BidNoticeDocumentPreparationModel.claimed_at.is_not(None),
+            BidNoticeDocumentPreparationModel.claimed_at < stale_before,
+        ),
+    )
+
+
+def _claim_preparation_batch(
     db: Session,
     *,
     current: datetime,
-) -> tuple[int, int, int]:
-    cutoff = current - timedelta(days=RECENT_NOTICE_DAYS)
-    candidate_ids = db.execute(
-        select(distinct(UserBidNoticeMatchModel.notice_id))
-        .join(ScraperNoticeModel, ScraperNoticeModel.id == UserBidNoticeMatchModel.notice_id)
-        .where(
-            UserBidNoticeMatchModel.is_current_match.is_(True),
-            ScraperNoticeModel.published_at >= cutoff,
+    batch_size: int,
+) -> tuple[str, list[BidNoticeDocumentPreparationModel]]:
+    claim_token = str(uuid.uuid4())
+    candidate_ids = db.scalars(
+        select(BidNoticeDocumentPreparationModel.id)
+        .where(_claimable_preparation_condition(current))
+        .order_by(
+            BidNoticeDocumentPreparationModel.created_at,
+            BidNoticeDocumentPreparationModel.id,
         )
-    ).scalars().all()
-    queued = review_required = 0
-    for notice_id in candidate_ids:
-        notice = db.get(ScraperNoticeModel, notice_id)
-        if notice is None:
-            continue
-        needs_region, needs_industry = _refresh_api_context(notice)
-        if not needs_region and not needs_industry:
-            continue
-        attachment = _primary_notice_attachment(_ensure_notice_attachments(notice))
-        if attachment is None:
-            review_required += int(
-                _mark_missing_primary_document(
-                    db,
-                    notice_id=notice.id,
-                    needs_region=needs_region,
-                    needs_industry=needs_industry,
-                )
+        .limit(batch_size * 3)
+    ).all()
+    claimed_ids: list[int] = []
+    for preparation_id in candidate_ids:
+        if len(claimed_ids) == batch_size:
+            break
+        result = db.execute(
+            update(BidNoticeDocumentPreparationModel)
+            .where(
+                BidNoticeDocumentPreparationModel.id == preparation_id,
+                _claimable_preparation_condition(current),
             )
-            continue
-        attachment_name, attachment_url = attachment
-        row = _analysis_row(
-            db,
-            notice_id=notice.id,
-            attachment_name=attachment_name,
-            attachment_url=attachment_url,
-            needs_region=needs_region,
-            needs_industry=needs_industry,
+            .values(
+                status="RUNNING",
+                claim_token=claim_token,
+                claimed_at=current,
+                next_retry_at=None,
+            )
         )
-        if row.status not in {"SUCCEEDED", "REVIEW_REQUIRED", "UNSUPPORTED", "RUNNING"}:
-            queued += 1
-    return len(candidate_ids), queued, review_required
+        if result.rowcount:
+            claimed_ids.append(preparation_id)
+    db.commit()
+    if not claimed_ids:
+        return claim_token, []
+    rows = db.scalars(
+        select(BidNoticeDocumentPreparationModel)
+        .where(
+            BidNoticeDocumentPreparationModel.id.in_(claimed_ids),
+            BidNoticeDocumentPreparationModel.claim_token == claim_token,
+        )
+        .order_by(BidNoticeDocumentPreparationModel.id)
+    ).all()
+    return claim_token, rows
 
 
 def _claimable_analysis_condition(current: datetime):
@@ -528,6 +600,18 @@ def _claimable_analysis_condition(current: datetime):
     )
 
 
+def _prepared_document_analysis_condition():
+    return (
+        select(BidNoticeDocumentPreparationModel.id)
+        .where(
+            BidNoticeDocumentPreparationModel.notice_id
+            == BidNoticeDocumentAnalysisModel.notice_id,
+            BidNoticeDocumentPreparationModel.status == "PREPARED",
+        )
+        .exists()
+    )
+
+
 def _claim_analysis_batch(
     db: Session,
     *,
@@ -541,6 +625,7 @@ def _claim_analysis_batch(
         .where(
             BidNoticeDocumentAnalysisModel.is_primary_notice_document.is_(True),
             condition,
+            _prepared_document_analysis_condition(),
         )
         .order_by(BidNoticeDocumentAnalysisModel.created_at, BidNoticeDocumentAnalysisModel.id)
         .limit(batch_size * 3)
@@ -555,6 +640,7 @@ def _claim_analysis_batch(
                 BidNoticeDocumentAnalysisModel.id == analysis_id,
                 BidNoticeDocumentAnalysisModel.is_primary_notice_document.is_(True),
                 _claimable_analysis_condition(current),
+                _prepared_document_analysis_condition(),
             )
             .values(
                 status="RUNNING",
@@ -583,6 +669,87 @@ def _retry_at(current: datetime, attempt_count: int) -> datetime | None:
     if attempt_count >= MAX_ANALYSIS_ATTEMPTS:
         return None
     return current + RETRY_DELAYS[min(attempt_count - 1, len(RETRY_DELAYS) - 1)]
+
+
+def _finish_preparation(
+    row: BidNoticeDocumentPreparationModel,
+    *,
+    status: str,
+    current: datetime,
+    error_message: str | None = None,
+) -> None:
+    row.status = status
+    row.error_message = error_message[:1200] if error_message else None
+    row.claim_token = None
+    row.claimed_at = None
+    row.prepared_at = current
+    row.next_retry_at = None
+
+
+def _fail_preparation(
+    row: BidNoticeDocumentPreparationModel,
+    *,
+    current: datetime,
+    error_message: str,
+) -> None:
+    row.status = "FAILED"
+    row.error_message = error_message[:1200]
+    row.claim_token = None
+    row.claimed_at = None
+    row.next_retry_at = _retry_at(current, row.attempt_count)
+
+
+def _process_claimed_preparation(
+    db: Session,
+    *,
+    row: BidNoticeDocumentPreparationModel,
+    claim_token: str,
+    current: datetime,
+) -> tuple[int, int, int]:
+    notice = db.get(ScraperNoticeModel, row.notice_id)
+    if notice is None or row.claim_token != claim_token or row.status != "RUNNING":
+        return 0, 0, 0
+
+    row.attempt_count += 1
+    try:
+        needs_region, needs_industry = _refresh_api_context(notice)
+        if not needs_region and not needs_industry:
+            _finish_preparation(row, status="SKIPPED", current=current)
+            db.commit()
+            return 0, 0, 0
+
+        attachment = _primary_notice_attachment(_ensure_notice_attachments(notice))
+        if attachment is None:
+            reviewed = _mark_missing_primary_document(
+                db,
+                notice_id=notice.id,
+                needs_region=needs_region,
+                needs_industry=needs_industry,
+            )
+            _finish_preparation(row, status="REVIEW_REQUIRED", current=current)
+            db.commit()
+            return 0, int(reviewed), 0
+
+        attachment_name, attachment_url = attachment
+        _analysis_row(
+            db,
+            notice_id=notice.id,
+            attachment_name=attachment_name,
+            attachment_url=attachment_url,
+            needs_region=needs_region,
+            needs_industry=needs_industry,
+        )
+        _finish_preparation(row, status="PREPARED", current=current)
+        db.commit()
+        return 1, 0, 0
+    except requests.RequestException as error:
+        _fail_preparation(row, current=current, error_message=str(error))
+        db.commit()
+        return 0, 0, 1
+    except Exception as error:
+        _fail_preparation(row, current=current, error_message=str(error))
+        db.commit()
+        return 0, 0, 1
 
 
 def _process_claimed_analysis(
@@ -663,10 +830,26 @@ def run_pending_bid_notice_document_analysis(
 ) -> dict[str, int]:
     current = now or _utcnow()
     bounded_batch_size = max(1, min(batch_size, MAX_BATCH_SIZE))
-    candidate_count = queued = review_required = 0
-    if prepare_queue:
-        candidate_count, queued, review_required = _queue_candidates(db, current=current)
-        db.commit()
+    # The scheduler used to designate one worker as a 14-day queue builder.
+    # Every worker now claims a bounded batch from the durable new-notice queue.
+    del prepare_queue
+    preparation_token, preparation_rows = _claim_preparation_batch(
+        db,
+        current=current,
+        batch_size=bounded_batch_size,
+    )
+    prepared = review_required = preparation_failed = 0
+    for row in preparation_rows:
+        prepared_count, reviewed, failed_count = _process_claimed_preparation(
+            db,
+            row=row,
+            claim_token=preparation_token,
+            current=current,
+        )
+        prepared += prepared_count
+        review_required += reviewed
+        preparation_failed += failed_count
+
     claim_token, claimed_rows = _claim_analysis_batch(
         db,
         current=current,
@@ -685,10 +868,10 @@ def run_pending_bid_notice_document_analysis(
         failed += failed_count
 
     return {
-        "candidate_count": candidate_count,
-        "queued_count": queued,
+        "candidate_count": len(preparation_rows),
+        "queued_count": prepared,
         "claimed_count": len(claimed_rows),
         "analyzed_count": analyzed,
         "review_required_count": review_required,
-        "failed_count": failed,
+        "failed_count": preparation_failed + failed,
     }

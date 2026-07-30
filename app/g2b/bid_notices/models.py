@@ -74,6 +74,33 @@ class BidNoticeDocumentAnalysisModel(Base):
     )
 
 
+class BidNoticeDocumentPreparationModel(Base):
+    __tablename__ = "g2b_bid_notice_document_preparations"
+    __table_args__ = (
+        UniqueConstraint("notice_id", name="uq_bid_notice_document_preparation"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    notice_id: Mapped[int] = mapped_column(
+        ForeignKey("scraper_notices.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    status: Mapped[str] = mapped_column(String(30), nullable=False, default="PENDING", index=True)
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    claim_token: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    next_retry_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
+    prepared_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow, onupdate=_utcnow
+    )
+
+
 class UserBidNoticeProfileModel(Base):
     __tablename__ = "user_bid_notice_profiles"
     __table_args__ = (UniqueConstraint("user_id", name="uq_user_bid_notice_profile"),)

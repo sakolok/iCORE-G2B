@@ -98,6 +98,12 @@ def _joint_supply_text(value: bool | None) -> str:
     return "가능" if value else "불가"
 
 
+def _document_analysis_value(value: str | None, source: str | None) -> str:
+    if not value:
+        return ""
+    return f"{value} (문서분석)" if source == "DOCUMENT" else value
+
+
 def _notice_key(row: list[str | int | float]) -> str:
     return str(row[0]).strip()
 
@@ -112,9 +118,15 @@ def build_bid_notice_sheet_rows(
             _format_notice_schedule(notice),
             notice.demand_agency_name or notice.agency or "",
             float(notice.base_amount) if notice.base_amount is not None else "",
-            notice.industry_restriction_codes or "",
+            _document_analysis_value(
+                notice.industry_restriction_codes,
+                notice.industry_restriction_source,
+            ),
             _joint_supply_text(notice.joint_supply_allowed),
-            notice.region_restriction or "",
+            _document_analysis_value(
+                notice.region_restriction,
+                notice.region_restriction_source,
+            ),
             notice.notice_url or "",
             _attachment_urls(notice),
         ]

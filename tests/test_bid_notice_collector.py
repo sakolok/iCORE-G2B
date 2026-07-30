@@ -179,6 +179,7 @@ class BidNoticeCollectorTests(unittest.TestCase):
                 "bidNtceOrd": "00",
                 "bidNtceNm": "AI 데이터 분석 물품 구매",
                 "bidNtceDt": "202607241000",
+                "ntceSpecDocUrl1": "https://www.g2b.go.kr/file/notice-12-v1.pdf",
             }
         ]
         update_user_bid_notice_profile(
@@ -211,8 +212,10 @@ class BidNoticeCollectorTests(unittest.TestCase):
 
         self.assertEqual(first["inserted_count"], 1)
         self.assertEqual(first["updated_count"], 0)
+        self.assertEqual(len(first["new_notice_ids"]), 1)
         self.assertEqual(second["inserted_count"], 0)
         self.assertEqual(second["updated_count"], 0)
+        self.assertEqual(second["new_notice_ids"], [])
         current_matches = self.db.scalars(
             select(UserBidNoticeMatchModel).where(
                 UserBidNoticeMatchModel.is_current_match.is_(True)
@@ -230,6 +233,13 @@ class BidNoticeCollectorTests(unittest.TestCase):
         self.assertTrue(
             all(call.kwargs["start_at"].date().isoformat() == "2026-07-11" for call in fetch_operation.call_args_list)
         )
+
+        fetch_operation.return_value[0]["ntceSpecDocUrl1"] = (
+            "https://www.g2b.go.kr/file/notice-12-v2.pdf"
+        )
+        attachment_updated = collect_scheduled_bid_notices(self.db, now=now)
+        self.assertEqual(attachment_updated["inserted_count"], 0)
+        self.assertEqual(attachment_updated["new_notice_ids"], first["new_notice_ids"])
 
     @patch("app.g2b.bid_notices.collector.requests.get")
     def test_notice_detail_source_uses_operation_matching_work_type(self, request_get):
