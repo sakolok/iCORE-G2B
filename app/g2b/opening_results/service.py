@@ -729,8 +729,11 @@ def run_scheduled_opening_results(
     *,
     now: datetime | None = None,
     client: OpeningResultApiClient | None = None,
+    retry_pending_details: bool = False,
 ) -> ScheduledCollectOpeningResultsResponse:
     run_key, window_start, window_end = build_scheduled_collection_window(now)
+    if retry_pending_details:
+        run_key = f"{run_key}:RETRY"
     claimed_at = datetime.now(timezone.utc)
     lease_cutoff = claimed_at - timedelta(minutes=COLLECTION_LEASE_MINUTES)
     claim_token = str(uuid4())

@@ -298,9 +298,13 @@ def collect_results_on_schedule(
     _: None = Depends(verify_scraper_internal_token),
     __: None = Depends(verify_cloud_scheduler_oidc_token),
     db: Session = Depends(get_db),
+    retry_pending_details: bool = Query(default=False),
 ) -> ScheduledCollectOpeningResultsResponse:
     try:
-        response = run_scheduled_opening_results(db)
+        response = run_scheduled_opening_results(
+            db,
+            retry_pending_details=retry_pending_details,
+        )
         if response.skipped_existing_run and response.run_status != "SUCCESS":
             raise HTTPException(
                 status_code=409,

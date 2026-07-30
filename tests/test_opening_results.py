@@ -2021,6 +2021,23 @@ class OpeningResultServiceTests(unittest.TestCase):
             self.db.scalar(select(func.count(BidOpeningCollectionRunModel.id))), 1
         )
 
+    def test_detail_recovery_uses_a_separate_run_for_the_same_slot(self):
+        client = self.make_client()
+        now = datetime(2026, 7, 15, 2, 0, tzinfo=timezone.utc)
+
+        first = run_scheduled_opening_results(self.db, now=now, client=client)
+        retry = run_scheduled_opening_results(
+            self.db,
+            now=now,
+            client=client,
+            retry_pending_details=True,
+        )
+
+        self.assertEqual(first.run_key, "SERVICE:2026071511")
+        self.assertEqual(retry.run_key, "SERVICE:2026071511:RETRY")
+        self.assertFalse(retry.skipped_existing_run)
+        self.assertEqual(client.search_round_call_count, 2)
+
     def test_schedule_window_uses_configured_kst_boundaries(self):
         kst = timezone(timedelta(hours=9))
         cases = [
