@@ -1,6 +1,7 @@
 import hashlib
 import io
 import json
+import logging
 import re
 import time
 import uuid
@@ -103,10 +104,14 @@ INDUSTRY_CONTEXT_TERMS = ("업종", "사업자등록", "면허", "업종코드",
 
 
 class AttachmentDownloadError(Exception):
-    def __init__(self, code: str, *, retryable: bool):
+    def __init__(self, code: str, *, retryable: bool, diagnostic: str | None = None):
         super().__init__(code)
         self.code = code
         self.retryable = retryable
+        self.diagnostic = diagnostic
+
+
+logger = logging.getLogger(__name__)
 
 
 def _utcnow() -> datetime:
@@ -313,8 +318,11 @@ def _download_attachment(url: str) -> tuple[bytes, str]:
         except requests.RequestException as error:
             retryable = _is_retryable_download_error(error)
             if not retryable or request_attempt == DOWNLOAD_REQUEST_ATTEMPTS - 1:
+                host = (urlparse(url).hostname or "").lower()
                 raise AttachmentDownloadError(
-                    _download_error_code(error), retryable=retryable
+                    _download_error_code(error),
+                    retryable=retryable,
+                    diagnostic=f"{type(error).__name__} host={host}",
                 ) from error
             time.sleep(DOWNLOAD_RETRY_DELAY_SECONDS)
 
@@ -970,7 +978,16 @@ def _process_claimed_analysis(
         return int(row.status == "SUCCEEDED"), int(row.status == "REVIEW_REQUIRED"), 0
     except AttachmentDownloadError as error:
         row.status = "FAILED"
-        row.error_message = error.code
+        row.error_message = (
+            f"{error.code}: {error.diagnostic}"
+            if error.diagnostic
+            else error.code
+        )[:1200]
+        logger.warning(
+            "Bid-notice attachment download failed: code=%s diagnostic=%s",
+            error.code,
+            error.diagnostic or "none",
+        )
         if error.retryable:
             row.next_retry_at = _retry_at(current, row.attempt_count)
         else:
