@@ -884,7 +884,7 @@ def _process_claimed_analysis(
         return 0, 1, 0
     except requests.RequestException as error:
         row.status = "FAILED"
-        row.error_message = str(error)[:1200]
+        row.error_message = f"DOWNLOAD_ERROR: {error}"[:1200]
         row.next_retry_at = _retry_at(current, row.attempt_count)
         row.claim_token = None
         row.claimed_at = None
@@ -892,7 +892,7 @@ def _process_claimed_analysis(
         return 0, 0, 1
     except Exception as error:
         row.status = "FAILED"
-        row.error_message = str(error)[:1200]
+        row.error_message = f"PROCESSING_ERROR: {error}"[:1200]
         row.next_retry_at = _retry_at(current, row.attempt_count)
         row.claim_token = None
         row.claimed_at = None

@@ -211,7 +211,13 @@ def _notice_response(
         elif document_analysis.status == "UNSUPPORTED":
             document_analysis_reason = "지원하지 않는 문서 형식"
         elif document_analysis.status == "FAILED":
-            document_analysis_reason = "문서 분석 실패 · 재시도 대기"
+            document_analysis_reason = (
+                "첨부파일 다운로드 실패 · 재시도 대기"
+                if (document_analysis.error_message or "").startswith("DOWNLOAD_ERROR:")
+                else "문서 텍스트 추출 실패 · 재시도 대기"
+                if (document_analysis.error_message or "").startswith("PROCESSING_ERROR:")
+                else "문서 분석 실패 · 재시도 대기"
+            )
         elif document_analysis.status == "RUNNING":
             document_analysis_reason = "문서 분석 중"
         elif document_analysis.status == "PENDING":

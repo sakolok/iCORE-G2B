@@ -364,3 +364,6 @@ class BidNoticeDocumentAnalysisTests(unittest.TestCase):
         self.assertEqual(after_retry["failed_count"], 1)
         self.assertEqual(analysis.status, "FAILED")
         self.assertEqual(analysis.attempt_count, 2)
+        self.assertTrue(analysis.error_message.startswith("DOWNLOAD_ERROR:"))
+        response = _notice_response(self.db.get(ScraperNoticeModel, notice.id), "AI", document_analysis=analysis)
+        self.assertEqual(response.document_analysis_reason, "첨부파일 다운로드 실패 · 재시도 대기")
