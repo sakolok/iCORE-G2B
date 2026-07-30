@@ -92,6 +92,7 @@ from app.g2b.opening_results.sheet_export import (
     get_sheet_service_account_email,
 )
 from app.g2b.opening_results.service import (
+    MAX_ENTRY_DETAIL_FETCHES_PER_COLLECTION,
     build_round_external_key,
     build_scheduled_collection_window,
     collect_opening_results,
@@ -590,6 +591,22 @@ class OpeningResultServiceTests(unittest.TestCase):
         )
         self.assertEqual(
             self.db.scalar(select(func.count(BidResultSnapshotModel.id))), 4
+        )
+
+    def test_collection_limits_entry_detail_requests_per_run(self):
+        summaries = []
+        for index in range(MAX_ENTRY_DETAIL_FETCHES_PER_COLLECTION + 1):
+            summary = self.completed_summary(rebid_no=str(index))
+            summary["bidNtceNo"] = f"R26BK{index:08d}"
+            summaries.append(summary)
+
+        client = StubOpeningResultClient(summaries)
+
+        collect_opening_results(self.db, self.request, client)
+
+        self.assertEqual(
+            client.fetch_entry_call_count,
+            MAX_ENTRY_DETAIL_FETCHES_PER_COLLECTION,
         )
 
     def test_global_collection_collects_all_shared_details_and_matches_user_afterward(self):

@@ -44,6 +44,7 @@ KST = ZoneInfo("Asia/Seoul")
 COLLECTION_SLOT_HOURS = (8, 11, 14, 17)
 COLLECTION_LEASE_MINUTES = 45
 FRONT_LIST_DAYS = 14
+MAX_ENTRY_DETAIL_FETCHES_PER_COLLECTION = 60
 
 
 class OpeningResultCollectionLeaseLostError(RuntimeError):
@@ -597,7 +598,9 @@ def collect_opening_results(
                 except (TypeError, ValueError):
                     continue
         if entry_candidates:
-            for external_key, source in entry_candidates.items():
+            for external_key, source in list(entry_candidates.items())[
+                :MAX_ENTRY_DETAIL_FETCHES_PER_COLLECTION
+            ]:
                 round_row = db.scalar(
                     select(BidOpeningRoundModel).where(
                         BidOpeningRoundModel.external_key == external_key
