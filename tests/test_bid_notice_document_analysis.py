@@ -17,8 +17,10 @@ from app.g2b.bid_notices.document_analysis import (
     AttachmentDownloadError,
     DOWNLOAD_CONNECT_TIMEOUT_SECONDS,
     MAX_ANALYSIS_ATTEMPTS,
+    _document_fetcher_enabled_for,
     _retry_at,
     _download_attachment,
+    _download_attachment_via_fetcher,
     force_bid_notice_document_reanalysis,
     queue_new_matched_bid_notice_document_preparations,
     run_pending_bid_notice_document_analysis,
@@ -47,6 +49,7 @@ class _DownloadResponse:
         self.url = url
         self.headers = headers or {"Content-Type": "application/pdf"}
         self._content = content
+        self.content = content
         self.closed = False
 
     def raise_for_status(self):
@@ -80,6 +83,59 @@ class BidNoticeDocumentAnalysisTests(unittest.TestCase):
         self.assertEqual(_retry_at(self.now, 1), self.now + timedelta(minutes=5))
         self.assertEqual(_retry_at(self.now, 2), self.now + timedelta(minutes=10))
         self.assertIsNone(_retry_at(self.now, 3))
+
+    def test_document_fetcher_rollout_can_target_one_notice(self):
+        notice = self._add_matched_notice()
+        with patch.dict(
+            "os.environ",
+            {
+                "G2B_DOCUMENT_FETCHER_ENABLED": "true",
+                "G2B_DOCUMENT_FETCHER_URL": "https://fetcher.example.run.app",
+                "G2B_DOCUMENT_FETCHER_NOTICE_IDS": "R26BK000001-000",
+            },
+            clear=False,
+        ):
+            self.assertTrue(_document_fetcher_enabled_for(notice))
+
+        with patch.dict(
+            "os.environ",
+            {
+                "G2B_DOCUMENT_FETCHER_ENABLED": "false",
+                "G2B_DOCUMENT_FETCHER_URL": "https://fetcher.example.run.app",
+                "G2B_DOCUMENT_FETCHER_NOTICE_IDS": "R26BK000001-000",
+            },
+            clear=False,
+        ):
+            self.assertFalse(_document_fetcher_enabled_for(notice))
+
+    @patch("app.g2b.bid_notices.document_analysis.requests.post")
+    @patch("app.g2b.bid_notices.document_analysis.google_id_token.fetch_id_token")
+    def test_document_fetcher_download_uses_authenticated_service(
+        self, fetch_id_token, requests_post
+    ):
+        fetch_id_token.return_value = "identity-token"
+        response = _DownloadResponse(content=b"proxied-pdf")
+        requests_post.return_value = response
+        with patch.dict(
+            "os.environ",
+            {
+                "G2B_DOCUMENT_FETCHER_URL": "https://fetcher.example.run.app",
+                "G2B_DOCUMENT_FETCHER_AUDIENCE": "https://fetcher.example.run.app",
+            },
+            clear=False,
+        ):
+            content, content_type = _download_attachment_via_fetcher(
+                "https://www.g2b.go.kr/file/notice.pdf"
+            )
+
+        self.assertEqual(content, b"proxied-pdf")
+        self.assertEqual(content_type, "application/pdf")
+        fetch_id_token.assert_called_once()
+        self.assertEqual(
+            requests_post.call_args.kwargs["headers"]["Authorization"],
+            "Bearer identity-token",
+        )
+        self.assertTrue(response.closed)
 
     def _add_matched_notice(self, index: int = 1) -> ScraperNoticeModel:
         notice = ScraperNoticeModel(

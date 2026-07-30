@@ -20,7 +20,10 @@ env:
   API_IMAGE_NAME: icore-api
   WORKER_IMAGE_NAME: icore-g2b-worker
   CLOUD_RUN_API_SERVICE: icore-api
+  CLOUD_RUN_DOC_FETCHER_SERVICE: icore-doc-fetcher
   CLOUD_RUN_WORKER_SERVICE: icore-g2b-worker
+  DOC_FETCHER_NETWORK: icore-doc-fetcher-vpc
+  DOC_FETCHER_SUBNET: icore-doc-fetcher-an3
   CLOUD_SCHEDULER_LOCATION: asia-northeast3
   OPENING_RESULTS_SCHEDULER_JOB_ID: icore-g2b-opening-results-12h
   PRE_SPECIFICATIONS_SCHEDULER_JOB_ID: icore-g2b-pre-specifications-daily
@@ -279,6 +282,52 @@ jobs:
                 --to-revisions="$PREVIOUS_REVISION=100" \
                 --quiet
             fi
+            exit 1
+          fi
+
+      - name: Deploy private document fetcher
+        run: |
+          set -euo pipefail
+          API_IMAGE=${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.API_IMAGE_NAME }}
+          API_SERVICE_ACCOUNT="icore-api@${{ env.PROJECT_ID }}.iam.gserviceaccount.com"
+
+          gcloud run deploy "${{ env.CLOUD_RUN_DOC_FETCHER_SERVICE }}" \
+            --project="${{ env.PROJECT_ID }}" \
+            --region="${{ env.GAR_LOCATION }}" \
+            --platform=managed \
+            --no-allow-unauthenticated \
+            --image="$API_IMAGE:${{ github.sha }}" \
+            --service-account="$API_SERVICE_ACCOUNT" \
+            --network="${{ env.DOC_FETCHER_NETWORK }}" \
+            --subnet="${{ env.DOC_FETCHER_SUBNET }}" \
+            --vpc-egress=all-traffic \
+            --command=uvicorn \
+            --args=doc_fetcher_main:app,--host,0.0.0.0,--port,8000 \
+            --port=8000 \
+            --memory=256Mi \
+            --cpu=1 \
+            --concurrency=4 \
+            --min-instances=0 \
+            --max-instances=4 \
+            --timeout=120 \
+            --quiet
+
+          gcloud run services add-iam-policy-binding \
+            "${{ env.CLOUD_RUN_DOC_FETCHER_SERVICE }}" \
+            --project="${{ env.PROJECT_ID }}" \
+            --region="${{ env.GAR_LOCATION }}" \
+            --member="serviceAccount:$API_SERVICE_ACCOUNT" \
+            --role=roles/run.invoker \
+            --quiet
+
+          ready=$(gcloud run services describe \
+            "${{ env.CLOUD_RUN_DOC_FETCHER_SERVICE }}" \
+            --project="${{ env.PROJECT_ID }}" \
+            --region="${{ env.GAR_LOCATION }}" \
+            --format=json |
+            jq -r '.status.conditions[] | select(.type == "Ready") | .status')
+          if [ "$ready" != "True" ]; then
+            echo "Document fetcher service is not ready."
             exit 1
           fi
 

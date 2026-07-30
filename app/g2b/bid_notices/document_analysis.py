@@ -2,6 +2,7 @@ import hashlib
 import io
 import json
 import logging
+import os
 import re
 import time
 import uuid
@@ -12,6 +13,8 @@ from urllib.parse import urljoin, urlparse
 from xml.etree import ElementTree
 
 import requests
+from google.auth.transport.requests import Request as GoogleAuthRequest
+from google.oauth2 import id_token as google_id_token
 from sqlalchemy import and_, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -60,6 +63,8 @@ DOWNLOAD_READ_TIMEOUT_SECONDS = 25
 DOWNLOAD_REQUEST_ATTEMPTS = 2
 DOWNLOAD_RETRY_DELAY_SECONDS = 1
 MAX_ATTACHMENT_REDIRECTS = 3
+DOCUMENT_FETCHER_CONNECT_TIMEOUT_SECONDS = 5
+DOCUMENT_FETCHER_READ_TIMEOUT_SECONDS = 120
 DOWNLOAD_HEADERS = {
     "Accept": "application/pdf,application/octet-stream;q=0.9,*/*;q=0.8",
     "User-Agent": "Mozilla/5.0 (compatible; iCORE-G2B-DocumentAnalysis/1.0)",
@@ -327,6 +332,87 @@ def _download_attachment(url: str) -> tuple[bytes, str]:
             time.sleep(DOWNLOAD_RETRY_DELAY_SECONDS)
 
     raise AttachmentDownloadError("DOWNLOAD_REQUEST_ERROR", retryable=True)
+
+
+def _env_enabled(name: str) -> bool:
+    return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _document_fetcher_enabled_for(notice: ScraperNoticeModel) -> bool:
+    if not _env_enabled("G2B_DOCUMENT_FETCHER_ENABLED"):
+        return False
+    if not os.getenv("G2B_DOCUMENT_FETCHER_URL", "").strip():
+        return False
+
+    targets = {
+        value.strip()
+        for value in os.getenv("G2B_DOCUMENT_FETCHER_NOTICE_IDS", "").split(",")
+        if value.strip()
+    }
+    if not targets:
+        return True
+
+    notice_no = str(notice.bid_notice_no or notice.notice_id or "").strip()
+    notice_ord = str(notice.bid_notice_ord or "").strip()
+    notice_keys = {
+        str(notice.id),
+        str(notice.notice_id or "").strip(),
+        notice_no,
+    }
+    if notice_no and notice_ord:
+        notice_keys.add(f"{notice_no}-{notice_ord}")
+    return bool(targets & notice_keys)
+
+
+def _download_attachment_via_fetcher(url: str) -> tuple[bytes, str]:
+    if not _is_g2b_url(url):
+        raise AttachmentDownloadError("DOWNLOAD_INVALID_SOURCE", retryable=False)
+
+    service_url = os.getenv("G2B_DOCUMENT_FETCHER_URL", "").strip().rstrip("/")
+    if not service_url.startswith("https://"):
+        raise AttachmentDownloadError(
+            "DOWNLOAD_FETCHER_CONFIG_INVALID", retryable=False
+        )
+    audience = (
+        os.getenv("G2B_DOCUMENT_FETCHER_AUDIENCE", "").strip().rstrip("/")
+        or service_url
+    )
+    try:
+        token = google_id_token.fetch_id_token(GoogleAuthRequest(), audience)
+        response = requests.post(
+            f"{service_url}/fetch",
+            json={"url": url},
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=(
+                DOCUMENT_FETCHER_CONNECT_TIMEOUT_SECONDS,
+                DOCUMENT_FETCHER_READ_TIMEOUT_SECONDS,
+            ),
+        )
+    except requests.RequestException as error:
+        raise AttachmentDownloadError(
+            "DOWNLOAD_FETCHER_NETWORK",
+            retryable=True,
+            diagnostic=type(error).__name__,
+        ) from error
+    except Exception as error:
+        raise AttachmentDownloadError(
+            "DOWNLOAD_FETCHER_AUTH",
+            retryable=True,
+            diagnostic=type(error).__name__,
+        ) from error
+
+    try:
+        if response.status_code != 200:
+            retryable = response.status_code in {408, 425, 429} or response.status_code >= 500
+            raise AttachmentDownloadError(
+                f"DOWNLOAD_FETCHER_HTTP_{response.status_code}",
+                retryable=retryable,
+            )
+        if len(response.content) > MAX_ATTACHMENT_BYTES:
+            raise AttachmentDownloadError("DOWNLOAD_SIZE_LIMIT", retryable=False)
+        return response.content, (response.headers.get("Content-Type") or "").lower()
+    finally:
+        response.close()
 
 
 def _extract_hwpx_text(content: bytes) -> str:
@@ -948,7 +1034,10 @@ def _process_claimed_analysis(
         return 0, 0, 0
     row.attempt_count += 1
     try:
-        content, content_type = _download_attachment(row.attachment_url)
+        if _document_fetcher_enabled_for(notice):
+            content, content_type = _download_attachment_via_fetcher(row.attachment_url)
+        else:
+            content, content_type = _download_attachment(row.attachment_url)
         row.content_sha256 = hashlib.sha256(content).hexdigest()
         findings = _analyze_text(_extract_text(row.attachment_name, content, content_type))
         row.region_result = findings["region_result"]
