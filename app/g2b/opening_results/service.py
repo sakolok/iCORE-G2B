@@ -32,6 +32,7 @@ from app.g2b.opening_results.matching import (
     visible_result_predicates,
 )
 from app.g2b.opening_results.schemas import (
+    BusinessType,
     CollectOpeningResultsRequest,
     CollectOpeningResultsResponse,
     OpeningResultListQuery,
@@ -376,7 +377,10 @@ def _collect_round_entries(
     round_row: BidOpeningRoundModel,
     source: dict[str, Any],
 ) -> tuple[int, int, int]:
-    entries = client.fetch_entries(source)
+    entries = client.fetch_entries(
+        source,
+        business_type=BusinessType(round_row.business_type),
+    )
     if not entries:
         round_row.entries_collected_at = None
         db.flush()

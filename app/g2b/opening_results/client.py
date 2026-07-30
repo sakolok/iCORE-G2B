@@ -58,8 +58,6 @@ class OpeningResultApiClient:
         BusinessType.CONSTRUCTION: "/getScsbidListSttusCnstwk",
         BusinessType.FOREIGN: "/getScsbidListSttusFrgcpt",
     }
-    ENTRY_PATH = "/getOpengResultListInfoOpengCompt"
-
     def __init__(
         self,
         config: OpeningResultApiConfig,
@@ -191,16 +189,17 @@ class OpeningResultApiClient:
             },
         )
 
-    def fetch_entries(self, summary: dict[str, Any]) -> list[dict[str, Any]]:
+    def fetch_entries(
+        self,
+        summary: dict[str, Any],
+        business_type: BusinessType = BusinessType.SERVICE,
+    ) -> list[dict[str, Any]]:
         bid_notice_no = str(summary.get("bidNtceNo") or "").strip()
         if not bid_notice_no:
             return []
-        # The completed-opening endpoint requires inquiry division 1 even
-        # when a bid notice number narrows the result. Without it, the API
-        # accepts the request but returns an empty list.
-        params: dict[str, Any] = {"inqryDiv": "1", "bidNtceNo": bid_notice_no}
+        params: dict[str, Any] = {"inqryDiv": "2", "bidNtceNo": bid_notice_no}
         for name in ("bidNtceOrd", "bidClsfcNo", "rbidNo"):
             value = str(summary.get(name) or "").strip()
             if value:
                 params[name] = value
-        return self._fetch_all(self.ENTRY_PATH, params)
+        return self._fetch_all(self.SUMMARY_PATHS[business_type], params)

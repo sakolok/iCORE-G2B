@@ -253,7 +253,7 @@ class OpeningResultClientTests(unittest.TestCase):
         self.assertTrue(session.calls[0]["url"].endswith("/getOpengResultListInfoServc"))
         self.assertEqual(session.calls[0]["params"]["inqryDiv"], "1")
 
-    def test_fetch_entries_uses_completed_opening_query(self):
+    def test_fetch_entries_uses_business_specific_notice_lookup(self):
         session = FakeSession([api_payload([{"opengRank": "1"}], 1)])
         client = OpeningResultApiClient(
             OpeningResultApiConfig(
@@ -269,14 +269,15 @@ class OpeningResultClientTests(unittest.TestCase):
                 "bidNtceOrd": "000",
                 "bidClsfcNo": "1",
                 "rbidNo": "0",
-            }
+            },
+            business_type=BusinessType.CONSTRUCTION,
         )
 
         self.assertEqual(rows, [{"opengRank": "1"}])
         self.assertTrue(
-            session.calls[0]["url"].endswith("/getOpengResultListInfoOpengCompt")
+            session.calls[0]["url"].endswith("/getOpengResultListInfoCnstwk")
         )
-        self.assertEqual(session.calls[0]["params"]["inqryDiv"], "1")
+        self.assertEqual(session.calls[0]["params"]["inqryDiv"], "2")
         self.assertEqual(session.calls[0]["params"]["bidNtceNo"], "R26BK00000001")
         self.assertEqual(session.calls[0]["params"]["bidNtceOrd"], "000")
         self.assertEqual(session.calls[0]["params"]["bidClsfcNo"], "1")
@@ -348,7 +349,7 @@ class StubOpeningResultClient:
     def search_winners(self, business_type, start_at, end_at):
         return list(self.winners)
 
-    def fetch_entries(self, summary):
+    def fetch_entries(self, summary, business_type=BusinessType.SERVICE):
         self.fetch_entry_call_count += 1
         key = (
             summary.get("bidNtceNo"),
