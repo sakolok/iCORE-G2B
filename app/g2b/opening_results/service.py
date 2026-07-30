@@ -13,7 +13,11 @@ from sqlalchemy.orm import Session
 from app.data.models import ScraperNoticeModel
 from app.g2b.bid_notice import canonical_bid_notice_order
 from app.g2b.keyword_policy import normalize_keywords
-from app.g2b.opening_results.client import OpeningResultApiClient, OpeningResultApiConfig
+from app.g2b.opening_results.client import (
+    OpeningResultApiClient,
+    OpeningResultApiConfig,
+    OpeningResultApiError,
+)
 from app.g2b.opening_results.enrichment_queue import (
     enqueue_notice_enrichment_jobs,
 )
@@ -615,12 +619,16 @@ def collect_opening_results(
                     OpeningStatus.AWARDED.value,
                 }:
                     continue
-                fetched, inserted, updated = _collect_round_entries(
-                    db,
-                    client,
-                    round_row,
-                    source,
-                )
+                try:
+                    fetched, inserted, updated = _collect_round_entries(
+                        db,
+                        client,
+                        round_row,
+                        source,
+                    )
+                except OpeningResultApiError:
+                    skipped_count += 1
+                    continue
                 fetched_entry_count += fetched
                 inserted_entry_count += inserted
                 updated_entry_count += updated

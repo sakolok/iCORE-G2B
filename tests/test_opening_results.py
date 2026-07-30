@@ -2429,22 +2429,23 @@ class OpeningResultServiceTests(unittest.TestCase):
         self.assertEqual(completed_run.status, "SUCCESS")
         self.assertIsNone(completed_run.error_message)
 
-    def test_entry_failure_retries_without_duplicate_canonical_rows(self):
+    def test_entry_failure_does_not_abort_other_collection_work(self):
         now = datetime(2026, 7, 15, 2, 0, tzinfo=timezone.utc)
         failing_client = self.make_client()
         failing_client.fetch_entries = Mock(
             side_effect=OpeningResultApiError("temporary entry failure")
         )
 
-        with self.assertRaises(OpeningResultApiError):
-            run_scheduled_opening_results(
-                self.db,
-                now=now,
-                client=failing_client,
-            )
+        response = run_scheduled_opening_results(
+            self.db,
+            now=now,
+            client=failing_client,
+        )
 
-        failed_run = self.db.scalar(select(BidOpeningCollectionRunModel))
-        self.assertEqual(failed_run.status, "FAILED")
+        completed_run = self.db.scalar(select(BidOpeningCollectionRunModel))
+        self.assertEqual(response.run_status, "SUCCESS")
+        self.assertEqual(response.skipped_count, 1)
+        self.assertEqual(completed_run.status, "SUCCESS")
         self.assertEqual(
             self.db.scalar(select(func.count(BidOpeningRoundModel.id))),
             1,
@@ -2454,13 +2455,14 @@ class OpeningResultServiceTests(unittest.TestCase):
             0,
         )
 
-        response = run_scheduled_opening_results(
+        retry_response = run_scheduled_opening_results(
             self.db,
             now=now,
             client=self.make_client(),
+            retry_pending_details=True,
         )
 
-        self.assertEqual(response.run_status, "SUCCESS")
+        self.assertEqual(retry_response.run_status, "SUCCESS")
         self.assertEqual(
             self.db.scalar(select(func.count(BidOpeningRoundModel.id))),
             1,
