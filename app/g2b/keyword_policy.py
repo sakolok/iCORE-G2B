@@ -61,21 +61,41 @@ def _contains_keyword(text: str, keyword: str) -> bool:
     return keyword in text
 
 
+def _contains_keyword_with_spacing(title: Any, keyword: Any) -> bool:
+    """Allow spacing differences without turning adjacent Korean words into a keyword."""
+    normalized_title = _clean_keyword(title).casefold()
+    normalized_keyword = _clean_keyword(keyword).casefold()
+    if not normalized_title or not normalized_keyword:
+        return False
+
+    if _contains_keyword(normalized_title, normalized_keyword):
+        return True
+
+    # Two-syllable Korean terms such as "교육" are common enough that joining
+    # adjacent words ("대교 육교") creates frequent false positives.  Keep
+    # those terms contiguous; longer terms still support spacing differences.
+    if re.fullmatch(r"[가-힣]{1,2}", normalized_keyword):
+        return False
+
+    return _contains_keyword(
+        _comparison_value(normalized_title), _comparison_value(normalized_keyword)
+    )
+
+
 def evaluate_keyword_title(
     title: Any,
     keywords: Iterable[Any] | str | None,
     excluded_keywords: Iterable[Any] | str | None = None,
 ) -> KeywordDecision:
-    comparison_title = _comparison_value(title)
     includes = normalize_keywords(keywords)
     excludes = normalize_keywords(excluded_keywords)
 
     for excluded in excludes:
-        if _contains_keyword(comparison_title, _comparison_value(excluded)):
+        if _contains_keyword_with_spacing(title, excluded):
             return KeywordDecision(keep=False, excluded_keyword=excluded)
 
     for included in includes:
-        if _contains_keyword(comparison_title, _comparison_value(included)):
+        if _contains_keyword_with_spacing(title, included):
             return KeywordDecision(keep=True, matched_keyword=included)
 
     return KeywordDecision(keep=False)

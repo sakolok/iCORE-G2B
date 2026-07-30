@@ -88,6 +88,14 @@ class KeywordPolicyTests(unittest.TestCase):
             evaluate_keyword_title(title, ["AI"], ["AI인프라"]).keep
         )
 
+    def test_two_syllable_korean_keyword_does_not_cross_word_boundary(self):
+        self.assertFalse(
+            evaluate_keyword_title("구포대교 육교형계단 보수공사", ["교육"]).keep
+        )
+        self.assertTrue(
+            evaluate_keyword_title("AI대학교교육 시스템 구축", ["교육"]).keep
+        )
+
     def test_api_scraper_source_setting_remains_available(self):
         with patch("app.g2b.bid_notices.service.requests.get") as mocked_get:
             mocked_get.return_value.raise_for_status.return_value = None
