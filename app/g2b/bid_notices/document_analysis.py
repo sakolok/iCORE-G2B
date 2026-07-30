@@ -106,6 +106,9 @@ REGION_NAMES = (
 )
 REGION_CONTEXT_TERMS = ("참가가능지역", "지역제한", "주된 영업소", "소재지")
 INDUSTRY_CONTEXT_TERMS = ("업종", "사업자등록", "면허", "업종코드", "등록코드")
+INDUSTRY_CODE_LABEL_PATTERN = re.compile(
+    r"(?:업종(?:제한)?\s*\(?\s*코드|등록\s*코드|면허\s*(?:코드|번호))"
+)
 
 
 class AttachmentDownloadError(Exception):
@@ -460,6 +463,23 @@ def _first_evidence(contexts: list[str]) -> str | None:
     return None
 
 
+def _industry_codes_from_context(context: str) -> list[str]:
+    codes: list[str] = []
+    for label in INDUSTRY_CODE_LABEL_PATTERN.finditer(context):
+        tail = context[label.end() : label.end() + 120]
+        code_sequence = re.match(
+            r"\s*\)?\s*[:：\-]?\s*[\[(]?\s*"
+            r"(\d{4}(?:\s*(?:,|·|/|및|또는)\s*\d{4})*)",
+            tail,
+        )
+        if code_sequence is None:
+            continue
+        for code in re.findall(r"(?<!\d)(\d{4})(?!\d)", code_sequence.group(1)):
+            if code not in codes:
+                codes.append(code)
+    return codes
+
+
 def _analyze_text(text: str) -> dict[str, str | None]:
     text = text[:MAX_EXTRACTED_TEXT_LENGTH]
     region_contexts = _context_lines(text, REGION_CONTEXT_TERMS)
@@ -472,7 +492,7 @@ def _analyze_text(text: str) -> dict[str, str | None]:
     industry_contexts = _context_lines(text, INDUSTRY_CONTEXT_TERMS)
     codes: list[str] = []
     for context in industry_contexts:
-        for code in re.findall(r"(?<!\d)(\d{4})(?!\d)", context):
+        for code in _industry_codes_from_context(context):
             if code not in codes:
                 codes.append(code)
 
@@ -1062,6 +1082,7 @@ def _process_claimed_analysis(
         row.analyzed_at = current
         row.claim_token = None
         row.claimed_at = None
+        db.flush()
         _apply_document_results(db, notice)
         db.commit()
         return int(row.status == "SUCCEEDED"), int(row.status == "REVIEW_REQUIRED"), 0

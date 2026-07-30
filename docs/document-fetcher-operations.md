@@ -27,6 +27,11 @@ gcloud run services update icore-api \
   --project=iceu-kolok91 \
   --region=asia-northeast3 \
   --update-env-vars=G2B_DOCUMENT_FETCHER_ENABLED=false
+
+gcloud run services update-traffic icore-api \
+  --project=iceu-kolok91 \
+  --region=asia-northeast3 \
+  --to-latest
 ```
 
 롤백 후 `/api/health` 응답과 일반 목록 조회가 정상인지 확인한다.

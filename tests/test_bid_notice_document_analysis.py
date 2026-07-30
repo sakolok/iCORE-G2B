@@ -17,6 +17,7 @@ from app.g2b.bid_notices.document_analysis import (
     AttachmentDownloadError,
     DOWNLOAD_CONNECT_TIMEOUT_SECONDS,
     MAX_ANALYSIS_ATTEMPTS,
+    _analyze_text,
     _document_fetcher_enabled_for,
     _retry_at,
     _download_attachment,
@@ -70,7 +71,7 @@ class BidNoticeDocumentAnalysisTests(unittest.TestCase):
     def setUp(self):
         self.engine = create_engine("sqlite+pysqlite:///:memory:")
         Base.metadata.create_all(self.engine)
-        self.db = Session(self.engine)
+        self.db = Session(self.engine, autoflush=False)
         self.now = datetime(2026, 7, 29, 9, tzinfo=timezone.utc)
 
     def tearDown(self):
@@ -83,6 +84,23 @@ class BidNoticeDocumentAnalysisTests(unittest.TestCase):
         self.assertEqual(_retry_at(self.now, 1), self.now + timedelta(minutes=5))
         self.assertEqual(_retry_at(self.now, 2), self.now + timedelta(minutes=10))
         self.assertIsNone(_retry_at(self.now, 3))
+
+    def test_industry_code_analysis_ignores_years_and_phone_numbers(self):
+        findings = _analyze_text(
+            "사업자등록증 사본을 제출합니다. 입찰번호 관재2026-12. "
+            "전화 063-450-7063, 팩스 450-7777. 관련기본법에 따라 등록한 업체."
+        )
+
+        self.assertIsNone(findings["industry_codes"])
+        self.assertIsNone(findings["industry_status"])
+
+    def test_industry_code_analysis_accepts_explicit_code_label(self):
+        findings = _analyze_text(
+            "입찰참가자격은 업종제한 코드 0036, 1468을 등록한 업체입니다."
+        )
+
+        self.assertEqual(findings["industry_codes"], "0036, 1468")
+        self.assertEqual(findings["industry_status"], "DOCUMENT_VALUE")
 
     def test_document_fetcher_rollout_can_target_one_notice(self):
         notice = self._add_matched_notice()
