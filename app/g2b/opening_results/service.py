@@ -1,5 +1,6 @@
 import hashlib
 import json
+import logging
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any
@@ -50,6 +51,7 @@ COLLECTION_SLOT_HOURS = (8, 11, 14, 17)
 COLLECTION_LEASE_MINUTES = 45
 FRONT_LIST_DAYS = 14
 MAX_ENTRY_DETAIL_FETCHES_PER_COLLECTION = 60
+logger = logging.getLogger(__name__)
 
 
 class OpeningResultCollectionLeaseLostError(RuntimeError):
@@ -485,6 +487,8 @@ def collect_opening_results(
     skipped_count = 0
     processed_round_keys: set[str] = set()
     entry_candidates: dict[str, dict[str, Any]] = {}
+    entry_lookup_empty_count = 0
+    entry_lookup_error_count = 0
 
     try:
         summaries: list[dict[str, Any]] = []
@@ -609,9 +613,10 @@ def collect_opening_results(
                 except (TypeError, ValueError):
                     continue
         if entry_candidates:
-            for external_key, source in list(entry_candidates.items())[
+            selected_entry_candidates = list(entry_candidates.items())[
                 :MAX_ENTRY_DETAIL_FETCHES_PER_COLLECTION
-            ]:
+            ]
+            for external_key, source in selected_entry_candidates:
                 round_row = db.scalar(
                     select(BidOpeningRoundModel).where(
                         BidOpeningRoundModel.external_key == external_key
@@ -629,9 +634,13 @@ def collect_opening_results(
                         round_row,
                         source,
                     )
-                except OpeningResultApiError:
+                except OpeningResultApiError as error:
+                    entry_lookup_error_count += 1
                     skipped_count += 1
+                    logger.warning("Opening-result detail lookup failed: %s", error)
                     continue
+                if fetched == 0:
+                    entry_lookup_empty_count += 1
                 fetched_entry_count += fetched
                 inserted_entry_count += inserted
                 updated_entry_count += updated
@@ -656,6 +665,14 @@ def collect_opening_results(
         db,
         business_type=business_type,
         global_claim_token=global_claim_token,
+    )
+    logger.info(
+        "Opening-result detail collection: candidates=%s, fetched_entries=%s, "
+        "empty_responses=%s, api_errors=%s",
+        min(len(entry_candidates), MAX_ENTRY_DETAIL_FETCHES_PER_COLLECTION),
+        fetched_entry_count,
+        entry_lookup_empty_count,
+        entry_lookup_error_count,
     )
 
     return CollectOpeningResultsResponse(
