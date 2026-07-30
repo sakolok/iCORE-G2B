@@ -772,7 +772,19 @@ def run_scheduled_opening_results(
         window_start = run.window_start
         window_end = run.window_end
     if run is not None and run.status == "SUCCESS":
-        return _scheduled_response(run, skipped_existing_run=True)
+        if not retry_pending_details:
+            return _scheduled_response(run, skipped_existing_run=True)
+        pending_detail_exists = db.scalar(
+            select(BidOpeningRoundModel.id).where(
+                BidOpeningRoundModel.business_type == BusinessType.SERVICE.value,
+                BidOpeningRoundModel.status.in_(
+                    [OpeningStatus.OPENED.value, OpeningStatus.AWARDED.value]
+                ),
+                BidOpeningRoundModel.entries_collected_at.is_(None),
+            ).limit(1)
+        )
+        if pending_detail_exists is None:
+            return _scheduled_response(run, skipped_existing_run=True)
     if run is not None and run.status == "RUNNING":
         started_at = run.started_at
         if started_at.tzinfo is None:

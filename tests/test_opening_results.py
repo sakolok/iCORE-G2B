@@ -2049,7 +2049,8 @@ class OpeningResultServiceTests(unittest.TestCase):
         )
 
     def test_detail_recovery_uses_a_separate_run_for_the_same_slot(self):
-        client = self.make_client()
+        summary = self.completed_summary()
+        client = StubOpeningResultClient([summary], winners=[self.winner()])
         now = datetime(2026, 7, 15, 2, 0, tzinfo=timezone.utc)
 
         first = run_scheduled_opening_results(self.db, now=now, client=client)
@@ -2064,6 +2065,16 @@ class OpeningResultServiceTests(unittest.TestCase):
         self.assertEqual(retry.run_key, "SERVICE:2026071511:RETRY")
         self.assertFalse(retry.skipped_existing_run)
         self.assertEqual(client.search_round_call_count, 1)
+
+        second_retry = run_scheduled_opening_results(
+            self.db,
+            now=now,
+            client=client,
+            retry_pending_details=True,
+        )
+
+        self.assertFalse(second_retry.skipped_existing_run)
+        self.assertEqual(client.fetch_entry_call_count, 3)
 
     def test_schedule_window_uses_configured_kst_boundaries(self):
         kst = timezone(timedelta(hours=9))
