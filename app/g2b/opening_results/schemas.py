@@ -43,6 +43,7 @@ class CollectOpeningResultsRequest(BaseModel):
     end_at: datetime
     business_type: BusinessType = BusinessType.SERVICE
     include_entries: bool = True
+    include_source_collection: bool = True
 
     @model_validator(mode="after")
     def validate_window(self):

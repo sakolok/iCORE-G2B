@@ -2063,7 +2063,7 @@ class OpeningResultServiceTests(unittest.TestCase):
         self.assertEqual(first.run_key, "SERVICE:2026071511")
         self.assertEqual(retry.run_key, "SERVICE:2026071511:RETRY")
         self.assertFalse(retry.skipped_existing_run)
-        self.assertEqual(client.search_round_call_count, 2)
+        self.assertEqual(client.search_round_call_count, 1)
 
     def test_schedule_window_uses_configured_kst_boundaries(self):
         kst = timezone(timedelta(hours=9))
@@ -2455,14 +2455,16 @@ class OpeningResultServiceTests(unittest.TestCase):
             0,
         )
 
+        retry_client = self.make_client()
         retry_response = run_scheduled_opening_results(
             self.db,
             now=now,
-            client=self.make_client(),
+            client=retry_client,
             retry_pending_details=True,
         )
 
         self.assertEqual(retry_response.run_status, "SUCCESS")
+        self.assertEqual(retry_client.search_round_call_count, 0)
         self.assertEqual(
             self.db.scalar(select(func.count(BidOpeningRoundModel.id))),
             1,

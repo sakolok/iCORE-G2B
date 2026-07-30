@@ -487,16 +487,19 @@ def collect_opening_results(
     entry_candidates: dict[str, dict[str, Any]] = {}
 
     try:
-        summaries = client.search_rounds(
-            request.business_type,
-            request.start_at,
-            request.end_at,
-        )
-        winners = client.search_winners(
-            request.business_type,
-            request.start_at,
-            request.end_at,
-        )
+        summaries: list[dict[str, Any]] = []
+        winners: list[dict[str, Any]] = []
+        if request.include_source_collection:
+            summaries = client.search_rounds(
+                request.business_type,
+                request.start_at,
+                request.end_at,
+            )
+            winners = client.search_winners(
+                request.business_type,
+                request.start_at,
+                request.end_at,
+            )
         winners_by_key = _winner_index(winners, business_type)
         for summary in summaries:
             try:
@@ -839,6 +842,7 @@ def run_scheduled_opening_results(
     request = CollectOpeningResultsRequest(
         start_at=window_start,
         end_at=window_end,
+        include_source_collection=not retry_pending_details,
     )
     try:
         result = collect_opening_results(
