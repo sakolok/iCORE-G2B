@@ -28,6 +28,7 @@ from app.g2b.bid_notices.collector import (
     fetch_participant_region_restriction,
 )
 from app.g2b.bid_notices.document_analysis import (
+    force_bid_notice_document_reanalysis,
     queue_new_matched_bid_notice_document_preparations,
     run_pending_bid_notice_document_analysis,
 )
@@ -310,15 +311,43 @@ def analyze_bid_notice_documents_on_schedule(
     db: Session = Depends(get_db),
     batch_size: int = Query(default=10, ge=1, le=20),
     prepare_queue: bool = Query(default=True),
+    notice_title: str | None = Query(default=None, min_length=1, max_length=500),
 ) -> BidNoticeDocumentAnalysisRunResponse:
+    target_notice_id: int | None = None
+    if notice_title:
+        title = notice_title.strip()
+        matches = db.scalars(
+            select(ScraperNoticeModel)
+            .where(
+                or_(
+                    ScraperNoticeModel.business_name == title,
+                    ScraperNoticeModel.title == title,
+                )
+            )
+            .limit(2)
+        ).all()
+        if not matches:
+            raise HTTPException(status_code=404, detail="지정한 입찰공고를 찾을 수 없습니다.")
+        if len(matches) > 1:
+            raise HTTPException(status_code=409, detail="동일한 공고명이 여러 건입니다.")
+        target_notice_id = matches[0].id
+        try:
+            force_bid_notice_document_reanalysis(db, notice_id=target_notice_id)
+            db.commit()
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
     result = run_pending_bid_notice_document_analysis(
         db,
-        batch_size=batch_size,
+        batch_size=1 if target_notice_id else batch_size,
         prepare_queue=prepare_queue,
+        notice_ids=[target_notice_id] if target_notice_id else None,
     )
+    result["target_notice_id"] = target_notice_id
     logger.info(
-        "Bid-notice document analysis completed: preparation_claimed=%s prepared=%s "
-        "analyzed=%s review_required=%s failed=%s",
+        "Bid-notice document analysis completed: target_notice_id=%s preparation_claimed=%s "
+        "prepared=%s analyzed=%s review_required=%s failed=%s",
+        target_notice_id,
         result["candidate_count"],
         result["queued_count"],
         result["analyzed_count"],

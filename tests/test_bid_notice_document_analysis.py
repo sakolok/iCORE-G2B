@@ -14,6 +14,7 @@ from app.g2b.bid_notices.collector import (
     INDUSTRY_API_VALUE,
 )
 from app.g2b.bid_notices.document_analysis import (
+    force_bid_notice_document_reanalysis,
     queue_new_matched_bid_notice_document_preparations,
     run_pending_bid_notice_document_analysis,
 )
@@ -275,6 +276,52 @@ class BidNoticeDocumentAnalysisTests(unittest.TestCase):
             self.db.scalar(
                 select(BidNoticeDocumentAnalysisModel).where(
                     BidNoticeDocumentAnalysisModel.notice_id == unqueued_notice.id
+                )
+            )
+        )
+
+    @patch("app.g2b.bid_notices.document_analysis._extract_text")
+    @patch("app.g2b.bid_notices.document_analysis._download_attachment")
+    @patch("app.g2b.bid_notices.document_analysis.fetch_explicit_region_restriction")
+    @patch("app.g2b.bid_notices.document_analysis.fetch_industry_restriction_codes")
+    @patch("app.g2b.bid_notices.document_analysis.fetch_participant_region_restriction")
+    def test_targeted_reanalysis_only_claims_the_requested_notice(
+        self,
+        fetch_region,
+        fetch_industry,
+        fetch_explicit_region,
+        download_attachment,
+        extract_text,
+    ):
+        target_notice = self._add_matched_notice()
+        other_notice = self._add_matched_notice(2)
+        fetch_region.return_value = (None, REGION_API_EMPTY)
+        fetch_explicit_region.return_value = (None, None)
+        fetch_industry.return_value = (None, INDUSTRY_API_EMPTY)
+        download_attachment.return_value = (b"pdf", "application/pdf")
+        extract_text.return_value = "지역제한 없음\n업종제한 없음"
+
+        self.assertEqual(self._queue_for_document_analysis(target_notice, other_notice), 2)
+        first = run_pending_bid_notice_document_analysis(
+            self.db,
+            now=self.now,
+            notice_ids=[target_notice.id],
+        )
+        force_bid_notice_document_reanalysis(self.db, notice_id=target_notice.id)
+        self.db.commit()
+        second = run_pending_bid_notice_document_analysis(
+            self.db,
+            now=self.now + timedelta(minutes=1),
+            notice_ids=[target_notice.id],
+        )
+
+        self.assertEqual(first["analyzed_count"], 1)
+        self.assertEqual(second["analyzed_count"], 1)
+        self.assertEqual(download_attachment.call_count, 2)
+        self.assertIsNone(
+            self.db.scalar(
+                select(BidNoticeDocumentAnalysisModel).where(
+                    BidNoticeDocumentAnalysisModel.notice_id == other_notice.id
                 )
             )
         )

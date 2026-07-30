@@ -511,6 +511,67 @@ def queue_new_matched_bid_notice_document_preparations(
     return queued
 
 
+def force_bid_notice_document_reanalysis(
+    db: Session,
+    *,
+    notice_id: int,
+) -> None:
+    """Reset one notice for an operator-requested document reanalysis."""
+    notice = db.get(ScraperNoticeModel, notice_id)
+    if notice is None:
+        raise ValueError("지정한 입찰공고를 찾을 수 없습니다.")
+    preparation = db.scalar(
+        select(BidNoticeDocumentPreparationModel).where(
+            BidNoticeDocumentPreparationModel.notice_id == notice_id
+        )
+    )
+    if preparation is None:
+        preparation = BidNoticeDocumentPreparationModel(notice_id=notice_id)
+        db.add(preparation)
+    elif preparation.status == "RUNNING":
+        raise ValueError("해당 공고의 문서분석이 이미 실행 중입니다.")
+    else:
+        preparation.status = "PENDING"
+        preparation.attempt_count = 0
+        preparation.error_message = None
+        preparation.claim_token = None
+        preparation.claimed_at = None
+        preparation.next_retry_at = None
+        preparation.prepared_at = None
+
+    if notice.region_restriction_source == "DOCUMENT":
+        notice.region_restriction = None
+        notice.region_restriction_api_status = REGION_API_EMPTY
+        notice.region_restriction_source = None
+        notice.region_restriction_evidence = None
+    if notice.industry_restriction_source == "DOCUMENT":
+        notice.industry_restriction_codes = None
+        notice.industry_restriction_api_status = INDUSTRY_API_EMPTY
+        notice.industry_restriction_source = None
+        notice.industry_restriction_evidence = None
+
+    db.execute(
+        update(BidNoticeDocumentAnalysisModel)
+        .where(BidNoticeDocumentAnalysisModel.notice_id == notice_id)
+        .values(
+            is_primary_notice_document=False,
+            status="PENDING",
+            attempt_count=0,
+            claim_token=None,
+            claimed_at=None,
+            next_retry_at=None,
+            analyzed_at=None,
+            error_message=None,
+            region_result=None,
+            region_status=None,
+            industry_codes=None,
+            industry_status=None,
+            evidence=None,
+        )
+    )
+    db.flush()
+
+
 def _claimable_preparation_condition(current: datetime):
     stale_before = current - STALE_CLAIM_AFTER
     return or_(
@@ -536,11 +597,17 @@ def _claim_preparation_batch(
     *,
     current: datetime,
     batch_size: int,
+    notice_ids: list[int] | None = None,
 ) -> tuple[str, list[BidNoticeDocumentPreparationModel]]:
     claim_token = str(uuid.uuid4())
+    candidate_conditions = [_claimable_preparation_condition(current)]
+    if notice_ids:
+        candidate_conditions.append(
+            BidNoticeDocumentPreparationModel.notice_id.in_(notice_ids)
+        )
     candidate_ids = db.scalars(
         select(BidNoticeDocumentPreparationModel.id)
-        .where(_claimable_preparation_condition(current))
+        .where(*candidate_conditions)
         .order_by(
             BidNoticeDocumentPreparationModel.created_at,
             BidNoticeDocumentPreparationModel.id,
@@ -551,12 +618,15 @@ def _claim_preparation_batch(
     for preparation_id in candidate_ids:
         if len(claimed_ids) == batch_size:
             break
+        claim_conditions = [
+            BidNoticeDocumentPreparationModel.id == preparation_id,
+            _claimable_preparation_condition(current),
+        ]
+        if notice_ids:
+            claim_conditions.append(BidNoticeDocumentPreparationModel.notice_id.in_(notice_ids))
         result = db.execute(
             update(BidNoticeDocumentPreparationModel)
-            .where(
-                BidNoticeDocumentPreparationModel.id == preparation_id,
-                _claimable_preparation_condition(current),
-            )
+            .where(*claim_conditions)
             .values(
                 status="RUNNING",
                 claim_token=claim_token,
@@ -617,16 +687,20 @@ def _claim_analysis_batch(
     *,
     current: datetime,
     batch_size: int,
+    notice_ids: list[int] | None = None,
 ) -> tuple[str, list[BidNoticeDocumentAnalysisModel]]:
     claim_token = str(uuid.uuid4())
     condition = _claimable_analysis_condition(current)
+    candidate_conditions = [
+        BidNoticeDocumentAnalysisModel.is_primary_notice_document.is_(True),
+        condition,
+        _prepared_document_analysis_condition(),
+    ]
+    if notice_ids:
+        candidate_conditions.append(BidNoticeDocumentAnalysisModel.notice_id.in_(notice_ids))
     candidate_ids = db.scalars(
         select(BidNoticeDocumentAnalysisModel.id)
-        .where(
-            BidNoticeDocumentAnalysisModel.is_primary_notice_document.is_(True),
-            condition,
-            _prepared_document_analysis_condition(),
-        )
+        .where(*candidate_conditions)
         .order_by(BidNoticeDocumentAnalysisModel.created_at, BidNoticeDocumentAnalysisModel.id)
         .limit(batch_size * 3)
     ).all()
@@ -634,14 +708,17 @@ def _claim_analysis_batch(
     for analysis_id in candidate_ids:
         if len(claimed_ids) == batch_size:
             break
+        claim_conditions = [
+            BidNoticeDocumentAnalysisModel.id == analysis_id,
+            BidNoticeDocumentAnalysisModel.is_primary_notice_document.is_(True),
+            _claimable_analysis_condition(current),
+            _prepared_document_analysis_condition(),
+        ]
+        if notice_ids:
+            claim_conditions.append(BidNoticeDocumentAnalysisModel.notice_id.in_(notice_ids))
         result = db.execute(
             update(BidNoticeDocumentAnalysisModel)
-            .where(
-                BidNoticeDocumentAnalysisModel.id == analysis_id,
-                BidNoticeDocumentAnalysisModel.is_primary_notice_document.is_(True),
-                _claimable_analysis_condition(current),
-                _prepared_document_analysis_condition(),
-            )
+            .where(*claim_conditions)
             .values(
                 status="RUNNING",
                 claim_token=claim_token,
@@ -827,6 +904,7 @@ def run_pending_bid_notice_document_analysis(
     now: datetime | None = None,
     batch_size: int = DEFAULT_BATCH_SIZE,
     prepare_queue: bool = True,
+    notice_ids: list[int] | None = None,
 ) -> dict[str, int]:
     current = now or _utcnow()
     bounded_batch_size = max(1, min(batch_size, MAX_BATCH_SIZE))
@@ -837,6 +915,7 @@ def run_pending_bid_notice_document_analysis(
         db,
         current=current,
         batch_size=bounded_batch_size,
+        notice_ids=notice_ids,
     )
     prepared = review_required = preparation_failed = 0
     for row in preparation_rows:
@@ -854,6 +933,7 @@ def run_pending_bid_notice_document_analysis(
         db,
         current=current,
         batch_size=bounded_batch_size,
+        notice_ids=notice_ids,
     )
     analyzed = failed = 0
     for row in claimed_rows:
